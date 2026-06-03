@@ -32,13 +32,10 @@ bound to a Workspace.
 
 ## Editing skills
 
-Skills are **canonical in `.agents/skills/`** because **Codex loads skills from
-`.agents/skills/`**. Claude Code instead requires them at the plugin root's
-`skills/`, so `skills/` is a load-bearing symlink → `.agents/skills/`. That
-symlink direction is deliberate: it serves both harnesses from one source. Don't
-flip it (it would break Codex discovery). **Edit `.agents/skills/`, not
-`skills/`.** The four skills: `session-start`, `init`, `session-log`,
-`consolidate`.
+Skills live in `skills/` — a single real directory, no symlink, no split. Both
+harnesses load from there: Claude Code from the plugin root's `skills/`, and
+Codex when launched in this directory. The four skills: `session-start`, `init`,
+`session-log`, `consolidate`.
 
 ## Validating the plugin
 
