@@ -16,7 +16,7 @@ The test each tool must pass is to state its purpose without "and": *Norn keeps 
 
 > Norn and Mimir are forthcoming. Saga's Phase 1 stands on its own against a markdown knowledge vault; the Norn/Mimir seams are Phase 2.
 
-## The four skills
+## The five skills
 
 Skill names are prefixed/descriptive so they stay unambiguous when installed
 standalone (the Claude Code plugin also namespaces them as `saga:<name>`).
@@ -25,6 +25,7 @@ standalone (the Claude Code plugin also namespaces them as `saga:<name>`).
 | --- | --- |
 | `start-session` | Saga's entry point. Assembles the **Session Primer** (User Profile + Shared Memory + Workspace Brief) and routes the work. |
 | `initialize-saga` | Binds a project to a vault Workspace and scaffolds or self-heals it. |
+| `grill-me` | Breaks a subject down by relentless interrogation, stress-testing a plan against the workspace glossary and decisions and writing both as clarity lands. |
 | `write-session-log` | At a work boundary, writes the merged **Session Log** memorializing what happened — decisions, deviations, and Consolidation Candidates. |
 | `consolidate-sessions` | Lifts Consolidation Candidates out of frozen Session Logs into maintained context — durable knowledge to the workspace, follow-ups to tasks, user observations to the partner-model log. |
 
@@ -55,7 +56,7 @@ Gemini CLI, opencode, and others:
 npx skills add dbtlr/saga --skill '*'
 ```
 
-This is confirmed working: all four skills load in Codex. Codex does **not**
+This is confirmed working: the skills load in Codex. Codex does **not**
 read skills from the working directory, and its native `plugin marketplace add`
 flow expects plugins nested under `plugins/<name>/` (Saga is a root plugin), so
 the `skills` CLI is the supported route. Codex **App** users can also add Saga
@@ -68,7 +69,7 @@ A **Session** is bounded by a body of work, not by a single context window. `sta
 
 ## Repository layout
 
-- `skills/` — the four skill sources (`start-session`, `initialize-saga`, `write-session-log`, `consolidate-sessions`), discovered by both harnesses and the cross-harness `skills` CLI.
+- `skills/` — the five skill sources (`start-session`, `initialize-saga`, `grill-me`, `write-session-log`, `consolidate-sessions`), discovered by both harnesses and the cross-harness `skills` CLI.
 - `scripts/build_primer.py` — resolves Project Binding → Vault Registry → vault root and merges the Active Context.
 - `resources/`, `templates/` — shared skill resources and document templates.
 - `tests/` — primer-merge tests.
