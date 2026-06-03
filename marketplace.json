@@ -1,0 +1,22 @@
+{
+  "name": "saga",
+  "interface": {
+    "displayName": "Saga",
+    "description": "Workflow orchestrator for agentic coding sessions — weaves the knowledge tool (Norn) and the work tool (Mimir) into one coherent session.",
+    "repository": "https://github.com/dbtlr/saga"
+  },
+  "plugins": [
+    {
+      "name": "saga",
+      "source": {
+        "source": "github",
+        "repo": "dbtlr/saga",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Coding"
+    }
+  ]
+}

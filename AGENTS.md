@@ -32,12 +32,19 @@ bound to a Workspace.
 
 ## Editing skills
 
-Skills live in `skills/` — a single real directory, no symlink, no split. Both
-harnesses load from there: Claude Code via `.claude-plugin/plugin.json` (it
-auto-discovers the plugin root's `skills/`), and Codex via
-`.codex-plugin/plugin.json` (its `"skills": "./skills/"` pointer) when launched
-in this directory. The four skills: `session-start`, `init`, `session-log`,
-`consolidate`.
+Skills live in `skills/` — a single real directory, no symlink, no split. The
+four: `session-start`, `init`, `session-log`, `consolidate`. They're discovered
+by Claude Code (via `.claude-plugin/plugin.json`, auto-discovering the plugin
+root's `skills/`), by Codex (via `.codex-plugin/plugin.json` + `marketplace.json`
+when installed from GitHub — Codex copies the plugin into its own cache, it does
+NOT read skills from the working directory), and by the cross-harness `skills`
+CLI (`npx skills add dbtlr/saga`), which symlinks them into `~/.agents/skills/`.
+
+**Skill `SKILL.md` frontmatter must be valid YAML** — descriptions with a
+colon-space (`foo: bar`) parse as a nested mapping and get silently dropped by
+strict parsers (Codex, the `skills` CLI). Use an em-dash or quote the value.
+Claude Code's loader is lenient and won't catch it; neither does
+`plugin-validator`. Verify with `python3 -c "import yaml; ..."` if unsure.
 
 ## Validating the plugin
 

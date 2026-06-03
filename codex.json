@@ -1,0 +1,13 @@
+{
+  "name": "saga",
+  "version": "0.1.0",
+  "description": "Workflow orchestrator for agentic coding sessions — weaves the knowledge tool (Norn) and the work tool (Mimir) into one coherent session.",
+  "instructions": "Read AGENTS.md for repo conventions (tests run via stdlib unittest; skills live in skills/). At the start of a primary session, run the session-start skill to assemble the Session Primer and route the work.",
+  "tools": {
+    "allowed": [
+      "shell",
+      "file_read",
+      "file_write"
+    ]
+  }
+}

@@ -42,9 +42,37 @@ Once installed, a primary session starts with:
 /saga:session-start
 ```
 
-**Codex** discovers the same skills via `.codex-plugin/plugin.json` (its
-`"skills": "./skills/"` pointer) when launched in this directory — no separate
-install step.
+### Codex
+
+Codex installs Saga from GitHub (it copies the plugin into its own cache — it
+does **not** read skills from the working directory). The repo ships a
+`marketplace.json` (github self-reference) and a `.codex-plugin/plugin.json`
+declaration. Register and install:
+
+```bash
+git clone git@github.com:dbtlr/saga.git ~/.codex/plugins/saga
+mkdir -p ~/.agents/plugins
+cat > ~/.agents/plugins/marketplace.json <<'EOF'
+{
+  "name": "saga",
+  "interface": { "displayName": "Saga" },
+  "plugins": [{
+    "name": "saga",
+    "source": { "source": "local", "path": "../../.codex/plugins/saga" },
+    "policy": { "installation": "AVAILABLE" },
+    "category": "Coding"
+  }]
+}
+EOF
+```
+
+Then restart Codex and enable **Saga** from Plugins. Skills are also installable
+standalone across any agent (Codex, Cursor, Gemini, …) via the cross-harness
+`skills` CLI, which symlinks them into `~/.agents/skills/`:
+
+```bash
+npx skills add dbtlr/saga --skill '*'
+```
 
 ## How it fits together
 
@@ -52,12 +80,14 @@ A **Session** is bounded by a body of work, not by a single context window. `ses
 
 ## Repository layout
 
-- `skills/` — the four skill sources (`session-start`, `init`, `session-log`, `consolidate`). Loaded by Claude Code from the plugin root and by Codex when launched in this directory.
+- `skills/` — the four skill sources (`session-start`, `init`, `session-log`, `consolidate`), discovered by both harnesses and the cross-harness `skills` CLI.
 - `scripts/build_primer.py` — resolves Project Binding → Vault Registry → vault root and merges the Active Context.
 - `resources/`, `templates/` — shared skill resources and document templates.
 - `tests/` — primer-merge tests.
 - `.claude-plugin/` — Claude Code plugin manifest and the local `saga-dev` marketplace.
 - `.codex-plugin/` — Codex plugin declaration (`plugin.json`), pointing at `skills/`.
+- `marketplace.json` — cross-harness marketplace manifest (github self-reference to `dbtlr/saga`).
+- `codex.json` — Codex config (instructions, allowed tools).
 
 ## License
 
