@@ -1,0 +1,5 @@
+CLAUDE.local.md
+.claude/settings.local.json
+.saga.toml
+__pycache__/
+*.pyc

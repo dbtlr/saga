@@ -1,0 +1,9 @@
+{
+  "name": "saga",
+  "description": "Workflow orchestrator for agentic coding sessions — weaves the knowledge tool (Norn) and the work tool (Mimir) into one coherent session, end to end.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Drew Butler",
+    "email": "drew@dbtlr.com"
+  }
+}
