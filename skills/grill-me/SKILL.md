@@ -26,4 +26,4 @@ When a term resolves or a decision lands, write it **there and then** — don't 
 - Term → `glossary.md` via `templates/glossary.md`.
 - Hard-to-reverse, surprising, real-trade-off decision → a new ADR in `decisions/` via `templates/decision.md`. Offer ADRs *sparingly* (apply the 3-test).
 
-Both live in the **workspace** — never repo-root `CONTEXT.md`/`docs/adr/`, never under `artifacts/` (ADR 0009).
+Both live in the **workspace** — never repo-root `CONTEXT.md`/`docs/adr/`, never under `artifacts/`.

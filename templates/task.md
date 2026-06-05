@@ -16,4 +16,4 @@ modified: {{TIMESTAMP}}
      Session Log or ADR that surfaced this. Reference related notes with links. -->
 
 <!-- status: backlog | in-progress | done (or your workspace's convention).
-     Tasks are work state — retained in <workspace>/tasks/ until Mimir owns them (ADR 0009). -->
+     Tasks are work state — retained in <workspace>/tasks/ until Mimir owns them. -->

@@ -24,7 +24,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_primer.py"
 
 ## 2. Hold the through-line
 
-A **Session** is bounded by a body of work, not by one context window (ADR 0001). The primer is what you re-load on each resumption — keep the work's through-line across compactions and new windows.
+A **Session** is bounded by a body of work, not by one context window. The primer is what you re-load on each resumption — keep the work's through-line across compactions and new windows.
 
 ## 3. Decisions & glossary are live
 
@@ -36,17 +36,15 @@ The workspace `glossary.md` and `decisions/` are **constraints on the work, not 
 
 This is general practice, not gated behind any one skill. Depth — the 3-criteria ADR test, the glossary discipline, cascade-care — is in `resources/decisions-and-glossary.md` (under `${CLAUDE_PLUGIN_ROOT}`); reach for it when writing or updating either.
 
-## 4. Specs & plans go to the vault — mandatory
+## 4. Specs & plans are transient — never workspace knowledge
 
-When a flow generates a **spec or plan** — a Superpowers brainstorm/plan/spec, or any coding-agent design artifact — it is an **Agent Artifact**, not a workspace note and not a repo file. **You must write it to the vault**, never into this repo or the Workspace (ADR 0009):
+When the Superpowers **brainstorm** skill writes a spec, or its **writing-plans** skill writes a plan, that file exists for **execution**: the spec gets alignment, the plan gives the agent something to follow. It is **not** knowledge. Once the work merges, nothing in it can't be found in the code, and the *why* that isn't in the code belongs in a **decision** or the **Session Log**. So the spec/plan is a **transient review surface, deleted on merge** — never a workspace note, never a durable vault file.
 
-```
-<vault_root>/<artifacts_dir>/generated/<YYYY-MM-DD>-<plan|spec>-<kebab-title>.md
-```
+- **Don't** write it into this repo or the Workspace, and **don't** treat it as an archive.
+- If it needs reviewing in Obsidian, it goes to the transient `<artifacts_dir>/scratch/` (expected-empty, cleared on merge) — no durable frontmatter, not `notes/`, not a decision.
+- Apply the test: **would it matter if this were deleted?** For a spec/plan the answer is no — delete it. Durable conclusions lift out into the glossary, decisions, and the Brief as you go.
 
-Resolve `<vault_root>`/`<artifacts_dir>` from the Active Context (or the Project Binding + Vault Registry); take the date from `date +%Y-%m-%d` — never invent one. Agent Artifacts drift out of date by design and are kept out of the workspace so present-tense context stays high-signal; durable conclusions lift out into the glossary, decisions, and the Brief — the artifact itself stays in `generated/`.
-
-**Before writing, read `resources/frontmatter.md`** (under `${CLAUDE_PLUGIN_ROOT}`) — it carries the exact **Agent Artifact** shape (`type: agent-artifact`, `kind: spec | plan`, …) *and* the YAML string-quoting rules. Frontmatter is YAML: an unquoted `description` or `title` with a colon-space or line break parses wrong and silently drops the value, so quote per that file's guidance.
+A durable, work-bearing document that *happens* to be agent-generated (a buildable schema, an API/output contract) is the exception — that's **just a note** in the workspace `notes/`, governed by the normal §3 hygiene. "Agent-generated" never decides where something lives; its role does.
 
 ## 5. Routing surface
 
@@ -56,7 +54,7 @@ From the Active Context and what the user wants, route to:
 - **write-session-log** — at a work boundary, memorialize the Session.
 - **consolidate-sessions** — lift Consolidation Candidates from Session Logs into maintained context.
 
-(Brainstorm-steering is deferred — ADR 0003; the spec/plan artifact redirect now lives in §4.)
+(Brainstorm-steering is deferred; the spec/plan transient-disposal rule lives in §4.)
 
 ## 6. Keep the vault high-signal
 

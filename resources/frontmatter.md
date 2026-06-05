@@ -18,25 +18,11 @@ modified: YYYY-MM-DD
 ---
 ```
 
-## Agent Artifact (`type: agent-artifact`) — generated specs/plans
-
-Lives in `artifacts/generated/`. Drifts out of date by design; never a source of truth.
-
-```yaml
----
-title: <concise name>
-description: <what this artifact captures>
-type: agent-artifact
-kind: spec | plan
-created: YYYY-MM-DD
-modified: YYYY-MM-DD
-workspace: <workspace-slug>
----
-```
+> **Specs/plans get no frontmatter.** They are not knowledge — a spec/plan is a transient review surface in `artifacts/scratch/`, deleted on merge. There is no `type: agent-artifact`. A durable, work-bearing agent-generated doc (a schema, an API contract) is just a **Note** (above), in the workspace `notes/`.
 
 ## Session Log (`type: session-log`)
 
-Lives in `artifacts/session-logs/`. Frozen record of a Session.
+Lives in `artifacts/session-logs/`. Frozen while it lives; consolidation-scoped (prunable once consolidated), not a permanent archive.
 
 ```yaml
 ---
@@ -54,7 +40,7 @@ workspace: <workspace-slug>
 
 - `description` is load-bearing for progressive disclosure — write it for an agent deciding whether to open the file.
 - `created`/`modified` are absolute dates (an agent uses them to judge staleness). Use `YYYY-MM-DD`; Session Logs may include the time.
-- `kind` differentiates notes and Agent Artifacts; Session Logs set `kind: null`.
+- `kind` differentiates notes; Session Logs set `kind: null`.
 - Link between vault notes with relative markdown links by default (`[[wikilinks]]` also resolve); link style is a per-vault config (`link_style`).
 
 ## YAML string quoting

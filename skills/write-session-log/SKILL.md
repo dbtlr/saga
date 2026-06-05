@@ -5,7 +5,7 @@ description: Write the merged Session Log that memorializes a Session — what h
 
 # Saga: write-session-log
 
-Memorialize the current **Session** as one frozen record, centered on **Consolidation Candidates**. This merges what a dev-log and a partner-log captured separately today (ADR 0004).
+Memorialize the current **Session** as one frozen record, centered on **Consolidation Candidates**. This merges what a dev-log and a partner-log captured separately today.
 
 > **Primary agent only.** Subagents never write Session Logs.
 
@@ -23,7 +23,7 @@ Resolve the vault root from the Project Binding + Vault Registry (or reuse what 
 ```
 <vault_root>/<artifacts_dir>/session-logs/<YYYY-MM-DD-HHMM>-<slug>.md
 ```
-Never write a Session Log inside the workspace (ADR 0009). Use an accurate timestamp (`date "+%Y-%m-%d %H:%M %Z"`) — never invent one.
+Never write a Session Log inside the workspace. Use an accurate timestamp (`date "+%Y-%m-%d %H:%M %Z"`) — never invent one.
 
 ## What to write
 

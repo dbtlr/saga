@@ -25,4 +25,4 @@ A **Consolidation Candidate** is an item a Session Log flags as worth lifting ou
 | Future opportunities | `<workspace>/tasks/` | → Mimir |
 | User observations | append to legacy `partner_model_log.jsonl` | → own `user.md` regeneration |
 
-The frozen sources (Session Logs, Agent Artifacts) remain as archive after consolidation.
+The Session Log is the only consolidation source. Once consolidated it is **spent** — frozen but prunable, not a permanent archive.

@@ -45,4 +45,4 @@ Use `templates/glossary.md`.
 
 ## Where these live
 
-In a bound Saga workspace, both live in the **workspace** (`glossary.md`, `decisions/`) — never repo-root `CONTEXT.md` or `docs/adr/`, and never under `artifacts/` (ADR 0009). `initialize-saga` scaffolds them; you only ever extend what exists.
+In a bound Saga workspace, both live in the **workspace** (`glossary.md`, `decisions/`) — never repo-root `CONTEXT.md` or `docs/adr/`, and never under `artifacts/`. `initialize-saga` scaffolds them; you only ever extend what exists.

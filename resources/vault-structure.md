@@ -17,9 +17,9 @@ Saga writes everything into the configured **vault root** (resolved from the Vau
       notes/                 #   design docs (Relevant Context)
       tasks/                 #   work-state stand-in (Phase 1, until Mimir)
       archive/               #   superseded workspace knowledge
-  artifacts/                 # frozen, archival, out-of-date by design
-    generated/               #   Agent Artifacts (specs, plans)
-    session-logs/            #   Session Logs
+  artifacts/                 # transient, non-knowledge material (kept out of workspaces)
+    session-logs/            #   Session Logs (consolidation-scoped, prunable once consolidated)
+    scratch/                 #   spec/plan review surfaces, deleted on merge (no durable frontmatter)
 ```
 
 ## Active Context vs Relevant Context
@@ -34,9 +34,10 @@ Saga writes everything into the configured **vault root** (resolved from the Vau
 | Durable product knowledge | Workspace Brief / `decisions/` / `notes/` |
 | Domain term | `glossary.md` |
 | Hard-to-reverse decision | `decisions/` (ADR) |
-| Generated spec/plan | `artifacts/generated/` |
+| Durable agent-generated reference (schema, API/output contract) | `<workspace>/notes/` (it's just a Note) |
+| Spec/plan (Superpowers brainstorm/writing-plans output) | `artifacts/scratch/` — transient, **deleted on merge** |
 | Session Log | `artifacts/session-logs/` |
 | Follow-up work (Phase 1) | `<workspace>/tasks/` |
 | Superseded knowledge | `<workspace>/archive/` (with a why-archived footnote) |
 
-Never put Agent Artifacts or Session Logs inside a workspace — they'd bloat present-tense context (ADR 0009).
+Never put Session Logs inside a workspace — they'd bloat present-tense context. Specs/plans aren't knowledge at all: review them, then delete on merge.

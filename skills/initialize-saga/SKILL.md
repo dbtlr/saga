@@ -43,8 +43,8 @@ Only when the target vault isn't in the registry.
    link_style     = "relative"
    ```
 3. Scaffold the vault skeleton if missing (see `resources/vault-structure.md`):
-   - `artifacts/generated/`, `artifacts/session-logs/`
-   - `Workspaces/shared/` with `user.md` (User Profile) and `memory.md` (Shared Memory). Seed them lightly if absent (a short user-profile interview can fill `user.md` later). If a legacy `partner_model.md` exists, offer to copy-and-curate it into `user.md` + `memory.md` (ADR 0012) rather than migrating in place.
+   - `artifacts/session-logs/`, `artifacts/scratch/` (no `generated/` — specs/plans are transient, deleted on merge)
+   - `Workspaces/shared/` with `user.md` (User Profile) and `memory.md` (Shared Memory). Seed them lightly if absent (a short user-profile interview can fill `user.md` later). If a legacy `partner_model.md` exists, offer to copy-and-curate it into `user.md` + `memory.md` rather than migrating in place.
 
 ## 3. Resolve the workspace name
 

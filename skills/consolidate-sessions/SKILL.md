@@ -5,7 +5,7 @@ description: Lift Consolidation Candidates out of frozen Session Logs into maint
 
 # Saga: consolidate-sessions
 
-Inspect the record of work and lift durable truth out of it into maintained context. Phase 1 is a shallow stand-in (ADR 0006): it routes candidates directly into the vault; the Norn/Mimir fan-out is deferred.
+Inspect the record of work and lift durable truth out of it into maintained context. Phase 1 is a shallow stand-in: it routes candidates directly into the vault; the Norn/Mimir fan-out is deferred.
 
 > **Primary agent only.**
 
@@ -30,7 +30,7 @@ Per `resources/consolidation-candidates.md`:
 - Promote durable knowledge into the right maintained file; **don't duplicate** what's already there.
 - For a hard-to-reverse decision, write a real ADR from `templates/decision.md`.
 - For a follow-up / tech-debt / open-question, write a task note from `templates/task.md` (`status: backlog`).
-- Leave the frozen Session Logs as-is — they remain the archive.
+- A consolidated Session Log is **spent** — leave it frozen, but it's now prunable, not a permanent archive.
 
 ## 3. Record the run
 

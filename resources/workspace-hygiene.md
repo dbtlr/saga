@@ -14,7 +14,7 @@ Guidance Session Start teaches the agent so it keeps the vault high-signal and d
 ## Where to put new files
 
 - Domain term → `glossary.md`. Hard-to-reverse decision → an ADR in `decisions/`. Design doc/research → `notes/`.
-- Generated spec/plan → `artifacts/generated/` (never the workspace). Session Log → `artifacts/session-logs/`.
+- Spec/plan → transient: `artifacts/scratch/`, **deleted on merge** (never the workspace, never knowledge). A durable agent-generated reference (schema, contract) is just a note → `notes/`. Session Log → `artifacts/session-logs/`.
 - Don't create files speculatively; prefer extending the Brief or an existing note.
 
 ## Closing out a session
