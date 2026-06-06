@@ -1,13 +1,30 @@
 ---
 name: start-session
-description: Saga's session entry point — assemble the Session Primer (Active Context) and route the work. Invoked at the start of a primary session (via the CLAUDE.local.md instruction in Phase 1). Subagents never load this.
+description: Use at the very start of every session in a Saga workspace, before any other response or action — assembles the Session Primer (User Profile + Shared Memory + Workspace Brief) and routes the work. Invoke it proactively at the start of any session. Primary agent only — subagents never load this.
 ---
 
 # Saga: start-session
 
 The always-on entry point for a Saga session. Assemble the **Session Primer**, hold it as starting context, then route to the right Saga skill.
 
-> **Primary agent only.** Subagents never route on their own — if you are a subagent, stop here.
+<SUBAGENT-STOP>
+If you were dispatched as a subagent to execute a specific task, skip this skill entirely — implementation only. The controller session owns session start and vault integration. Subagents never route on their own.
+</SUBAGENT-STOP>
+
+<EXTREMELY-IMPORTANT>
+If you are a primary agent and there is even a **1% chance** this is the start of a session, you ABSOLUTELY MUST run this skill before anything else — before any response, any clarifying question, any code exploration, any file read. This is not negotiable and you cannot rationalize your way out of it.
+
+These thoughts mean STOP — you are rationalizing:
+
+| Thought | Reality |
+|---------|---------|
+| "This is just a quick question" | Questions open sessions. Build the primer first. |
+| "Let me just check the repo/files first" | The primer is the context you'd check *against*. It comes first. |
+| "I'll load context after I answer" | There is no after — starting context must be held from the first response. |
+| "I'll wait until I'm told to start" | The trigger lives here, in this skill. Nothing else will tell you. Run it. |
+
+Building the Session Primer first is not optional. The one exception is the quiet exit in §1: if the primer reports the project is not a Saga workspace, stop silently and proceed normally — do not pitch initialization.
+</EXTREMELY-IMPORTANT>
 
 ## 1. Build the Session Primer
 
@@ -18,7 +35,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_primer.py"
 ```
 (When developing in-repo: `python3 scripts/build_primer.py`.)
 
-- If it prints `SAGA_UNINITIALIZED: …`, this project has no Project Binding (`.saga.toml`). Tell the user the project isn't bound to a vault Workspace and offer to run **initialize-saga**, then stop.
+- If it prints `SAGA_UNINITIALIZED: …`, this project has no Project Binding (`.saga.toml`) — it isn't a Saga workspace. **Stop silently and proceed with the user's request normally; do not mention Saga or pitch initialization.** This skill triggers on *any* session (the trigger lives in the skill, not in a per-project file), so an unbound project is the common, expected case — exit quietly. Only route to **initialize-saga** if the user is explicitly setting up Saga (e.g. "/saga:initialize-saga", "initialize my workspace", "bind this repo to a vault").
 - If it reports the vault isn't registered, run **initialize-saga** to register/repair it (self-heal).
 - Otherwise, treat the printed payload as your **Active Context** for the session — User Profile, Shared Memory, and Workspace Brief. Internalize it; don't echo it back to the user.
 
