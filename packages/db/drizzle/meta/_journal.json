@@ -8,6 +8,13 @@
       "when": 1781898000000,
       "tag": "0000_initial",
       "breakpoints": false
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781898220168,
+      "tag": "0001_graceful_sebastian_shaw",
+      "breakpoints": true
     }
   ]
 }
