@@ -3,7 +3,11 @@ import type { OxlintConfig } from "oxlint";
 
 type Override = NonNullable<OxlintConfig["overrides"]>[number];
 
-const forbid = (files: string[], layers: string[]): Override => ({
+const sagaPackage = (name: string): string[] => [`@saga/${name}`, `@saga/${name}/*`];
+const relativeLayer = (name: string): string[] => [`**/${name}`, `**/${name}/**`];
+const uiPackages = ["react", "react-dom", "@tanstack/*"];
+
+const forbid = (files: string[], imports: string[], message: string): Override => ({
   files,
   rules: {
     "no-restricted-imports": [
@@ -11,8 +15,8 @@ const forbid = (files: string[], layers: string[]): Override => ({
       {
         patterns: [
           {
-            group: layers.flatMap((layer) => [`**/${layer}`, `**/${layer}/**`]),
-            message: `Layer boundary: ${files[0]} may not import from ${layers.join(", ")}.`,
+            group: imports,
+            message,
           },
         ],
       },
@@ -33,9 +37,51 @@ export default defineConfig({
       maxWarnings: 0,
     },
     overrides: [
-      forbid(["apps/cli/**"], ["control-plane"]),
-      forbid(["apps/service/**"], ["control-plane"]),
-      forbid(["packages/**"], ["apps"]),
+      forbid(
+        ["apps/cli/**"],
+        [
+          ...sagaPackage("service"),
+          ...sagaPackage("control-plane"),
+          ...relativeLayer("service"),
+          ...relativeLayer("control-plane"),
+        ],
+        "App boundary: CLI orchestrates service/control-plane processes; it must not import their app trees.",
+      ),
+      forbid(
+        ["apps/service/**"],
+        [
+          ...sagaPackage("cli"),
+          ...sagaPackage("control-plane"),
+          ...relativeLayer("cli"),
+          ...relativeLayer("control-plane"),
+        ],
+        "App boundary: service owns runtime work and must not import CLI or control-plane app trees.",
+      ),
+      forbid(
+        ["apps/control-plane/**"],
+        [
+          ...sagaPackage("cli"),
+          ...sagaPackage("service"),
+          ...relativeLayer("cli"),
+          ...relativeLayer("service"),
+        ],
+        "App boundary: control-plane may call shared packages, not CLI or service app trees.",
+      ),
+      forbid(
+        ["packages/**"],
+        [
+          ...sagaPackage("cli"),
+          ...sagaPackage("service"),
+          ...sagaPackage("control-plane"),
+          ...relativeLayer("apps"),
+        ],
+        "Package boundary: shared packages must not import app trees.",
+      ),
+      forbid(
+        ["apps/cli/**", "apps/service/**", "packages/**"],
+        uiPackages,
+        "UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.",
+      ),
       { files: ["**/*.test.ts", "**/*.test.tsx"], rules: { "no-restricted-imports": "off" } },
     ],
   },
