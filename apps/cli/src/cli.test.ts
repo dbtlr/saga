@@ -39,6 +39,12 @@ describe("run", () => {
   test("reports unknown commands as usage errors", () => {
     const output: string[] = [];
     expect(run(["nope"], (text) => output.push(text))).toBe(2);
-    expect(output).toEqual(["error: unknown command: nope"]);
+    expect(output).toEqual(["✗ unknown command: nope"]);
+  });
+
+  test("renders usage errors without glyphs in ascii mode", () => {
+    const output: string[] = [];
+    expect(run(["--ascii", "nope"], (text) => output.push(text))).toBe(2);
+    expect(output).toEqual(["[err] unknown command: nope"]);
   });
 });
