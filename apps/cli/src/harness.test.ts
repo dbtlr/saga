@@ -127,6 +127,24 @@ describe("installHarness", () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
+  test("does not write active hooks when database migrations are stale", async () => {
+    const projectRoot = boundProject();
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerCodexSource: async () => {
+          throw new Error("database migrations are not current: 2 applied; expected 3");
+        },
+        target: "codex",
+      }),
+    ).rejects.toThrow("database migrations are not current");
+
+    expect(existsSync(join(projectRoot, ".codex", "hooks.json"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".codex", "saga-codex-hook.sh"))).toBe(false);
+    expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
+  });
+
   test("records local binding before hook activation dependencies", async () => {
     const projectRoot = boundProject();
     mkdirSync(join(projectRoot, ".gitignore"));

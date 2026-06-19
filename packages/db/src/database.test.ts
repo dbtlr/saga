@@ -1,7 +1,24 @@
-import { describe, expect, test } from "vitest";
 import { RuntimeConfigLive } from "@saga/runtime";
 import { Effect } from "effect";
-import { DatabaseLive, DatabaseTag, makeDatabase } from "./database.js";
+import { describe, expect, test } from "vitest";
+import {
+  assertMigrationsCurrent,
+  DatabaseLive,
+  DatabaseTag,
+  EXPECTED_MIGRATION_COUNT,
+  makeDatabase,
+  type DatabaseService,
+} from "./database.js";
+
+function serviceWithMigrationCount(count: number): DatabaseService {
+  return {
+    close: () => Effect.void,
+    db: undefined as never,
+    sql: {
+      unsafe: async () => [{ count: String(count) }],
+    } as never,
+  };
+}
 
 describe("makeDatabase", () => {
   test("requires DATABASE_URL", async () => {
@@ -44,5 +61,28 @@ describe("DatabaseLive", () => {
     );
 
     await expect(Effect.runPromise(program)).resolves.toBeUndefined();
+  });
+});
+
+describe("assertMigrationsCurrent", () => {
+  test("fails when fewer than the expected migrations are applied", async () => {
+    await expect(
+      Effect.runPromise(
+        assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT - 1)),
+      ),
+    ).rejects.toMatchObject({
+      message: `database migrations are not current: ${String(EXPECTED_MIGRATION_COUNT - 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Run saga init to apply migrations.`,
+    });
+  });
+
+  test("returns migration status when migrations are current", async () => {
+    await expect(
+      Effect.runPromise(
+        assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT)),
+      ),
+    ).resolves.toEqual({
+      applied: EXPECTED_MIGRATION_COUNT,
+      expected: EXPECTED_MIGRATION_COUNT,
+    });
   });
 });
