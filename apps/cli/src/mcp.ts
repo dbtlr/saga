@@ -15,8 +15,12 @@ export async function runMcpCommand(
 ): Promise<string | undefined> {
   const server = createProjectMcpServer();
   for await (const line of readJsonLines(stdin)) {
-    const response = await server.handle(parseJsonRpcRequest(line));
-    if (response !== undefined) write(JSON.stringify(response));
+    try {
+      const response = await server.handle(parseJsonRpcRequest(line));
+      if (response !== undefined) write(JSON.stringify(response));
+    } catch (error) {
+      write(JSON.stringify(jsonRpcInputError(error)));
+    }
   }
   return undefined;
 }
@@ -113,6 +117,17 @@ function parseJsonRpcRequest(line: string): JsonRpcRequest {
     jsonrpc: "2.0",
     method: parsed.method,
     params: parsed.params,
+  };
+}
+
+function jsonRpcInputError(error: unknown) {
+  return {
+    error: {
+      code: error instanceof SyntaxError ? -32700 : -32600,
+      message: error instanceof Error ? error.message : String(error),
+    },
+    id: null,
+    jsonrpc: "2.0",
   };
 }
 

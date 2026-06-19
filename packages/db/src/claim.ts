@@ -4,7 +4,7 @@ import {
   type ClaimKind,
   type ClaimEvidence,
 } from "@saga/claims";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { claimEvents, currentClaims, type ClaimEvent, type CurrentClaim } from "./schema.js";
@@ -96,24 +96,6 @@ export function insertClaimEventAndProject(
 
       const event = insertedEvent ?? (await findExistingClaimEvent(service, input));
       const state = stateForEventType(input.eventType);
-      const [existingCurrentClaim] = await service.db
-        .select()
-        .from(currentClaims)
-        .where(
-          and(
-            eq(currentClaims.workspaceId, input.workspaceId),
-            eq(currentClaims.claimKey, input.claimKey),
-          ),
-        )
-        .limit(1);
-
-      if (
-        existingCurrentClaim !== undefined &&
-        !shouldProjectClaimEvent(existingCurrentClaim, state, observedAt)
-      ) {
-        return { currentClaim: existingCurrentClaim, event };
-      }
-
       const [currentClaim] = await service.db
         .insert(currentClaims)
         .values({
@@ -141,14 +123,13 @@ export function insertClaimEventAndProject(
             updatedAt: new Date(),
           },
           target: [currentClaims.workspaceId, currentClaims.claimKey],
+          where: projectionAdvanceSql(state, observedAt),
         })
         .returning();
 
-      if (currentClaim === undefined) {
-        throw new ClaimProjectionError({ message: "current claim projection returned no row" });
-      }
+      if (currentClaim !== undefined) return { currentClaim, event };
 
-      return { currentClaim, event };
+      return { currentClaim: await findExistingCurrentClaim(service, input), event };
     },
     catch: (cause) =>
       cause instanceof ClaimProjectionError
@@ -200,6 +181,28 @@ async function findExistingClaimEvent(
   return event;
 }
 
+async function findExistingCurrentClaim(
+  service: DatabaseService,
+  input: InsertClaimEventInput,
+): Promise<CurrentClaim> {
+  const [currentClaim] = await service.db
+    .select()
+    .from(currentClaims)
+    .where(
+      and(
+        eq(currentClaims.workspaceId, input.workspaceId),
+        eq(currentClaims.claimKey, input.claimKey),
+      ),
+    )
+    .limit(1);
+
+  if (currentClaim === undefined) {
+    throw new ClaimProjectionError({ message: "current claim projection returned no row" });
+  }
+
+  return currentClaim;
+}
+
 function stateForEventType(eventType: ClaimEventType): ClaimState {
   if (eventType === "supported") return "supported";
   if (eventType === "contradicted") return "contradicted";
@@ -207,19 +210,22 @@ function stateForEventType(eventType: ClaimEventType): ClaimState {
   return "candidate";
 }
 
-function shouldProjectClaimEvent(
-  existing: CurrentClaim,
-  nextState: ClaimState,
-  nextObservedAt: Date,
-): boolean {
-  const existingTime = existing.observedAt.getTime();
-  const nextTime = nextObservedAt.getTime();
-  if (nextTime < existingTime) return false;
-
-  const existingPrecedence = statePrecedence(existing.state);
+function projectionAdvanceSql(nextState: ClaimState, nextObservedAt: Date): SQL {
   const nextPrecedence = statePrecedence(nextState);
-  if (nextTime === existingTime) return nextPrecedence >= existingPrecedence;
-  return nextPrecedence >= existingPrecedence || existing.state === "candidate";
+  const nextObservedAtIso = nextObservedAt.toISOString();
+  const existingPrecedence = sql<number>`case ${currentClaims.state}
+    when 'rejected' then 3
+    when 'contradicted' then 2
+    when 'supported' then 1
+    else 0
+  end`;
+  return sql`(
+    ${currentClaims.observedAt} < ${nextObservedAtIso}
+    and (${currentClaims.state} = 'candidate' or ${nextPrecedence} >= ${existingPrecedence})
+  ) or (
+    ${currentClaims.observedAt} = ${nextObservedAtIso}
+    and ${nextPrecedence} >= ${existingPrecedence}
+  )`;
 }
 
 function statePrecedence(state: string): number {

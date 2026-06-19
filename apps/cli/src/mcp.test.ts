@@ -42,4 +42,23 @@ describe("runMcpCommand", () => {
     release?.();
     await running;
   });
+
+  test("returns JSON-RPC parse errors for malformed frames", async () => {
+    const output: string[] = [];
+
+    await runMcpCommand(
+      [],
+      { ascii: true, color: "never", format: "records", isTty: false },
+      (text) => output.push(text),
+      chunks("not-json\n"),
+    );
+
+    expect(JSON.parse(output[0] ?? "{}")).toMatchObject({
+      error: {
+        code: -32700,
+      },
+      id: null,
+      jsonrpc: "2.0",
+    });
+  });
 });
