@@ -10,6 +10,10 @@ describe("makeDatabase", () => {
         databaseUrl: undefined,
         environment: "test",
         logLevel: "info",
+        service: {
+          host: "127.0.0.1",
+          port: 4766,
+        },
         secrets: {
           openaiApiKey: undefined,
         },

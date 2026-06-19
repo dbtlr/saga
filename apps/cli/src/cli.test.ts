@@ -75,6 +75,7 @@ describe("run", () => {
     const handlers: CommandHandlers = {
       doctor: async () => "doctor",
       init: async (args) => `init ${args.join(",")}`,
+      service: async () => "service",
     };
 
     await expect(run(["init", "custom"], (text) => output.push(text), handlers)).resolves.toBe(0);
@@ -86,10 +87,25 @@ describe("run", () => {
     const handlers: CommandHandlers = {
       doctor: async () => "doctor ok",
       init: async () => "init",
+      service: async () => "service",
     };
 
     await expect(run(["doctor"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["doctor ok"]);
+  });
+
+  test("dispatches service through the service handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      doctor: async () => "doctor",
+      init: async () => "init",
+      service: async (args) => `service ${args.join(",")}`,
+    };
+
+    await expect(run(["service", "status"], (text) => output.push(text), handlers)).resolves.toBe(
+      0,
+    );
+    expect(output).toEqual(["service status"]);
   });
 });
 

@@ -23,6 +23,10 @@ describePostgres("postgres integration", () => {
           databaseUrl: testDatabaseUrl.toString(),
           environment: "test",
           logLevel: "info",
+          service: {
+            host: "127.0.0.1",
+            port: 4766,
+          },
           secrets: {
             openaiApiKey: undefined,
           },

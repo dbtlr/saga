@@ -35,6 +35,9 @@ importers:
       '@saga/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@saga/service':
+        specifier: workspace:*
+        version: link:../service
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
@@ -47,7 +50,14 @@ importers:
 
   apps/control-plane: {}
 
-  apps/service: {}
+  apps/service:
+    dependencies:
+      '@saga/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      effect:
+        specifier: ^3.21.4
+        version: 3.21.4
 
   packages/active-context: {}
 
