@@ -109,11 +109,16 @@ function parseJsonRpcRequest(line: string): JsonRpcRequest {
   if (!isRecord(parsed) || parsed.jsonrpc !== "2.0" || typeof parsed.method !== "string") {
     throw new Error("expected a JSON-RPC 2.0 request object");
   }
+  if (
+    parsed.id !== undefined &&
+    typeof parsed.id !== "string" &&
+    typeof parsed.id !== "number" &&
+    parsed.id !== null
+  ) {
+    throw new Error("JSON-RPC request id must be a string, number, or null");
+  }
   return {
-    id:
-      typeof parsed.id === "string" || typeof parsed.id === "number" || parsed.id === null
-        ? parsed.id
-        : undefined,
+    id: parsed.id,
     jsonrpc: "2.0",
     method: parsed.method,
     params: parsed.params,

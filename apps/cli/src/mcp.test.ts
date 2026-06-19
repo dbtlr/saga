@@ -61,4 +61,24 @@ describe("runMcpCommand", () => {
       jsonrpc: "2.0",
     });
   });
+
+  test("returns JSON-RPC invalid request errors for invalid ids", async () => {
+    const output: string[] = [];
+
+    await runMcpCommand(
+      [],
+      { ascii: true, color: "never", format: "records", isTty: false },
+      (text) => output.push(text),
+      chunks(`${JSON.stringify({ id: {}, jsonrpc: "2.0", method: "tools/list" })}\n`),
+    );
+
+    expect(JSON.parse(output[0] ?? "{}")).toMatchObject({
+      error: {
+        code: -32600,
+        message: "JSON-RPC request id must be a string, number, or null",
+      },
+      id: null,
+      jsonrpc: "2.0",
+    });
+  });
 });
