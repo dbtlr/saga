@@ -1,3 +1,5 @@
+import { errorLine, renderOptionsFromGlobals } from "./render.js";
+
 export type OutputFormat = "records" | "json" | "jsonl" | "ids";
 export type ColorMode = "auto" | "always" | "never";
 
@@ -124,8 +126,10 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
 }
 
 export function run(argv: readonly string[], write: (text: string) => void): number {
+  let options: GlobalOptions | undefined;
   try {
     const parsed = parseArgs(argv);
+    options = parsed.options;
     if (parsed.options.version) {
       write(`saga ${VERSION}`);
       return 0;
@@ -137,7 +141,7 @@ export function run(argv: readonly string[], write: (text: string) => void): num
     throw new UsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof UsageError) {
-      write(`error: ${error.message}`);
+      write(errorLine(error.message, renderOptionsFromGlobals(options ?? DEFAULT_OPTIONS)));
       return 2;
     }
     throw error;
