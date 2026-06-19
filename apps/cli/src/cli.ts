@@ -1,4 +1,6 @@
 import { runDoctor } from "./doctor.js";
+import { runHarnessCommand } from "./harness.js";
+import { runIngestCommand } from "./ingest.js";
 import { runInit } from "./init.js";
 import { runServiceCommand } from "./service.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
@@ -39,7 +41,10 @@ export const COMMANDS = {
   },
   mcp: { description: "launch the stdio MCP adapter" },
   context: { description: "preview compiled Active Context" },
-  ingest: { description: "manually ingest source data for debugging" },
+  ingest: {
+    description: "manually ingest source data for debugging",
+    subcommands: ["codex-hook"],
+  },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -68,12 +73,16 @@ export const VERSION = "0.0.0";
 
 export interface CommandHandlers {
   doctor: typeof runDoctor;
+  harness: typeof runHarnessCommand;
+  ingest: typeof runIngestCommand;
   init: typeof runInit;
   service: typeof runServiceCommand;
 }
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
   doctor: runDoctor,
+  harness: runHarnessCommand,
+  ingest: runIngestCommand,
   init: runInit,
   service: runServiceCommand,
 };
@@ -214,6 +223,14 @@ export async function run(
     }
     if (parsed.command === "doctor") {
       write(await handlers.doctor(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "harness") {
+      write(await handlers.harness(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "ingest") {
+      write(await handlers.ingest(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === "service") {

@@ -22,6 +22,14 @@ export interface InitResult {
 }
 
 export interface WorkspaceBindingFile {
+  harnesses?: {
+    codex?: {
+      hookCommand: string;
+      hooksPath: string;
+      installedAt: string;
+      target: "codex";
+    };
+  };
   project: {
     gitRemote: string | undefined;
     root: string;

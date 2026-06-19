@@ -1,5 +1,6 @@
 .saga.toml
 .saga.local.json
+.codex/
 .env
 .env.*
 !.env.example
