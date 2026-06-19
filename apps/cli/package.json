@@ -2,6 +2,9 @@
   "name": "@saga/cli",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "saga": "./src/main.ts"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",

@@ -1,1 +1,1 @@
-export const appName = "@saga/cli";
+export * from "./cli.js";

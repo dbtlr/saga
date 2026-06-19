@@ -19,7 +19,8 @@
     "oxlint": "^1.70.0",
     "turbo": "^2.9.18",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.2.1"
+    "vite-plus": "^0.2.1",
+    "vitest": "4.1.9"
   },
   "engines": {
     "node": ">=24.0.0 <27.0.0",
