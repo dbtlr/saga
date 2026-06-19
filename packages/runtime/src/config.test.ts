@@ -27,9 +27,26 @@ describe("parseRuntimeConfig", () => {
       databaseUrl: "postgres://localhost/saga",
       environment: "test",
       logLevel: "debug",
+      service: {
+        host: "127.0.0.1",
+        port: 4766,
+      },
       secrets: {
         openaiApiKey: "sk-test",
       },
+    });
+  });
+
+  test("parses service host and port", () => {
+    const { config, issues } = parseRuntimeConfig({
+      SAGA_SERVICE_HOST: "0.0.0.0",
+      SAGA_SERVICE_PORT: "5000",
+    });
+
+    expect(issues).toEqual([]);
+    expect(config.service).toEqual({
+      host: "0.0.0.0",
+      port: 5000,
     });
   });
 
@@ -37,6 +54,7 @@ describe("parseRuntimeConfig", () => {
     const { config, issues } = parseRuntimeConfig({
       SAGA_ENV: "local",
       SAGA_LOG_LEVEL: "trace",
+      SAGA_SERVICE_PORT: "nope",
     });
 
     expect(config.environment).toBe("development");
@@ -44,6 +62,7 @@ describe("parseRuntimeConfig", () => {
     expect(issues).toEqual([
       { key: "SAGA_ENV", message: "expected one of development, test, production" },
       { key: "SAGA_LOG_LEVEL", message: "expected one of debug, info, warn, error" },
+      { key: "SAGA_SERVICE_PORT", message: "expected an integer from 1 to 65535" },
     ]);
   });
 });
@@ -59,6 +78,10 @@ describe("redactRuntimeConfig", () => {
       databaseUrl: "<redacted>",
       environment: "development",
       logLevel: "info",
+      service: {
+        host: "127.0.0.1",
+        port: 4766,
+      },
       secrets: {
         openaiApiKey: "<redacted>",
       },

@@ -1,5 +1,6 @@
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
+import { runServiceCommand } from "./service.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
 export type OutputFormat = "records" | "json" | "jsonl" | "ids";
@@ -68,11 +69,13 @@ export const VERSION = "0.0.0";
 export interface CommandHandlers {
   doctor: typeof runDoctor;
   init: typeof runInit;
+  service: typeof runServiceCommand;
 }
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
   doctor: runDoctor,
   init: runInit,
+  service: runServiceCommand,
 };
 
 const COMMAND_HELP = Object.entries(COMMANDS)
@@ -211,6 +214,10 @@ export async function run(
     }
     if (parsed.command === "doctor") {
       write(await handlers.doctor(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "service") {
+      write(await handlers.service(parsed.args, renderOptions));
       return 0;
     }
 

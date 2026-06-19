@@ -10,6 +10,10 @@ export interface RuntimeConfig {
   databaseUrl: string | undefined;
   environment: SagaEnvironment;
   logLevel: LogLevel;
+  service: {
+    host: string;
+    port: number;
+  };
   secrets: {
     openaiApiKey: string | undefined;
   };
@@ -19,6 +23,10 @@ export interface RedactedRuntimeConfig {
   databaseUrl: string | undefined;
   environment: SagaEnvironment;
   logLevel: LogLevel;
+  service: {
+    host: string;
+    port: number;
+  };
   secrets: {
     openaiApiKey: string | undefined;
   };
@@ -50,6 +58,8 @@ export function RuntimeConfigLive(
 const DEFAULT_ENV_FILES = [".env", ".env.local"] as const;
 const DEFAULT_ENVIRONMENT: SagaEnvironment = "development";
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
+const DEFAULT_SERVICE_HOST = "127.0.0.1";
+const DEFAULT_SERVICE_PORT = 4766;
 const REDACTED = "<redacted>";
 
 export function loadLocalEnv(
@@ -106,6 +116,10 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
     databaseUrl: optionalString(env.DATABASE_URL),
     environment,
     logLevel,
+    service: {
+      host: optionalString(env.SAGA_SERVICE_HOST) ?? DEFAULT_SERVICE_HOST,
+      port: parsePort(env.SAGA_SERVICE_PORT, "SAGA_SERVICE_PORT", issues),
+    },
     secrets: {
       openaiApiKey: optionalString(env.OPENAI_API_KEY),
     },
@@ -119,6 +133,7 @@ export function redactRuntimeConfig(config: RuntimeConfig): RedactedRuntimeConfi
     databaseUrl: redactSecret(config.databaseUrl),
     environment: config.environment,
     logLevel: config.logLevel,
+    service: config.service,
     secrets: {
       openaiApiKey: redactSecret(config.secrets.openaiApiKey),
     },
@@ -153,6 +168,22 @@ function parseEnum<const Value extends string>(
     message: `expected one of ${allowed.join(", ")}`,
   });
   return fallback;
+}
+
+function parsePort(value: string | undefined, key: string, issues: ConfigIssue[]): number {
+  const normalized = optionalString(value);
+  if (normalized === undefined) return DEFAULT_SERVICE_PORT;
+
+  const port = Number.parseInt(normalized, 10);
+  if (Number.isInteger(port) && port > 0 && port <= 65_535 && String(port) === normalized) {
+    return port;
+  }
+
+  issues.push({
+    key,
+    message: "expected an integer from 1 to 65535",
+  });
+  return DEFAULT_SERVICE_PORT;
 }
 
 function redactSecret(value: string | undefined): string | undefined {
