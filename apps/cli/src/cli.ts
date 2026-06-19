@@ -1,3 +1,4 @@
+import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
@@ -65,10 +66,12 @@ export class UsageError extends Error {
 export const VERSION = "0.0.0";
 
 export interface CommandHandlers {
+  doctor: typeof runDoctor;
   init: typeof runInit;
 }
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
+  doctor: runDoctor,
   init: runInit,
 };
 
@@ -204,6 +207,10 @@ export async function run(
     const renderOptions = renderOptionsFromGlobals(parsed.options);
     if (parsed.command === "init") {
       write(await handlers.init(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "doctor") {
+      write(await handlers.doctor(parsed.args, renderOptions));
       return 0;
     }
 

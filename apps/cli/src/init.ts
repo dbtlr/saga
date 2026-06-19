@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -148,4 +148,14 @@ export function writeBindingFile(projectRoot: string, binding: WorkspaceBindingF
   const bindingPath = join(projectRoot, BINDING_FILE_NAME);
   writeFileSync(bindingPath, `${JSON.stringify(binding, null, 2)}\n`);
   return bindingPath;
+}
+
+export function bindingPathFor(projectRoot: string): string {
+  return join(projectRoot, BINDING_FILE_NAME);
+}
+
+export function readBindingFile(projectRoot: string): WorkspaceBindingFile | undefined {
+  const bindingPath = bindingPathFor(projectRoot);
+  if (!existsSync(bindingPath)) return undefined;
+  return JSON.parse(readFileSync(bindingPath, "utf8")) as WorkspaceBindingFile;
 }
