@@ -94,11 +94,8 @@ export async function installHarness(input: {
     binding.workspace.id,
   );
   const hooksPath = codexHooksPath(projectRoot);
-  const hookCommand = installCodexHookShim(projectRoot);
+  const hookCommand = codexHookShimCommand(projectRoot);
   const hooksFile = readCodexHooksFile(hooksPath);
-  const nextHooksFile = installSagaCodexHooks(hooksFile, hookCommand);
-  writeJsonFile(hooksPath, nextHooksFile);
-  ensureGitignoreEntry(projectRoot, ".codex/");
 
   const installedAt = new Date().toISOString();
   writeBindingFile(projectRoot, {
@@ -116,6 +113,10 @@ export async function installHarness(input: {
       },
     },
   });
+
+  ensureGitignoreEntry(projectRoot, ".codex/");
+  installCodexHookShim(projectRoot);
+  writeJsonFile(hooksPath, installSagaCodexHooks(hooksFile, hookCommand));
 
   return inspectCodexHarness(projectRoot);
 }
@@ -280,7 +281,7 @@ function readCodexHooksFile(path: string): CodexHooksFile {
 function tryReadCodexHooksFile(path: string): CodexHooksReadResult {
   if (!existsSync(path)) return { file: {}, ok: true };
   try {
-    return { file: JSON.parse(readFileSync(path, "utf8")) as CodexHooksFile, ok: true };
+    return { file: parseCodexHooksFile(JSON.parse(readFileSync(path, "utf8"))), ok: true };
   } catch (error) {
     return {
       error: {
@@ -294,6 +295,53 @@ function tryReadCodexHooksFile(path: string): CodexHooksReadResult {
 
 function formatCodexHooksParseError(error: CodexHooksParseError): string {
   return `invalid Codex hooks file ${error.path}: ${error.message}`;
+}
+
+function parseCodexHooksFile(value: unknown): CodexHooksFile {
+  if (!isRecord(value)) {
+    throw new Error("expected a JSON object");
+  }
+
+  if (value.hooks === undefined) return value as CodexHooksFile;
+  if (!isRecord(value.hooks)) {
+    throw new Error("expected hooks to be an object");
+  }
+
+  for (const [event, matchers] of Object.entries(value.hooks)) {
+    if (!Array.isArray(matchers)) {
+      throw new Error(`expected hooks.${event} to be an array`);
+    }
+
+    for (const [matcherIndex, matcher] of matchers.entries()) {
+      if (!isRecord(matcher)) {
+        throw new Error(`expected hooks.${event}[${matcherIndex}] to be an object`);
+      }
+
+      if (matcher.hooks === undefined) continue;
+      if (!Array.isArray(matcher.hooks)) {
+        throw new Error(`expected hooks.${event}[${matcherIndex}].hooks to be an array`);
+      }
+
+      for (const [hookIndex, hook] of matcher.hooks.entries()) {
+        if (!isRecord(hook)) {
+          throw new Error(
+            `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}] to be an object`,
+          );
+        }
+        if (typeof hook.command !== "string") {
+          throw new Error(
+            `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}].command to be a string`,
+          );
+        }
+      }
+    }
+  }
+
+  return value as CodexHooksFile;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function writeJsonFile(path: string, value: unknown): void {
