@@ -1,4 +1,7 @@
 .saga.toml
+.env
+.env.*
+!.env.example
 node_modules/
 .turbo/
 dist/
