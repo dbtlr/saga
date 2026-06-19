@@ -66,18 +66,30 @@ describe("run", () => {
 
   test("reserves known commands with placeholder behavior", async () => {
     const output: string[] = [];
-    await expect(run(["doctor"], (text) => output.push(text))).resolves.toBe(1);
-    expect(output).toEqual(["doctor is not implemented yet"]);
+    await expect(run(["context"], (text) => output.push(text))).resolves.toBe(1);
+    expect(output).toEqual(["context is not implemented yet"]);
   });
 
   test("dispatches init through the init handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      doctor: async () => "doctor",
       init: async (args) => `init ${args.join(",")}`,
     };
 
     await expect(run(["init", "custom"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["init custom"]);
+  });
+
+  test("dispatches doctor through the doctor handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      doctor: async () => "doctor ok",
+      init: async () => "init",
+    };
+
+    await expect(run(["doctor"], (text) => output.push(text), handlers)).resolves.toBe(0);
+    expect(output).toEqual(["doctor ok"]);
   });
 });
 
