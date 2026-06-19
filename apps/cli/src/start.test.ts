@@ -90,6 +90,27 @@ describe("runStartCommand", () => {
 
     expect(serviceChild.signals).toContain("SIGTERM");
   });
+
+  test("returns a signal exit code when interrupted during service startup", async () => {
+    const serviceChild = new FakeChildProcess();
+    let healthChecks = 0;
+
+    const exitCode = await runStartCommand([], renderOptions, () => undefined, {
+      checkHealth: async () => {
+        healthChecks += 1;
+        if (healthChecks === 1) return "unreachable";
+        process.emit("SIGTERM", "SIGTERM");
+        return "unreachable";
+      },
+      cwd: process.cwd(),
+      env: {},
+      spawnControlPlane: async () => 0,
+      spawnService: () => serviceChild as unknown as ChildProcess,
+    });
+
+    expect(exitCode).toBe(143);
+    expect(serviceChild.signals).toContain("SIGTERM");
+  });
 });
 
 describe("process command builders", () => {
@@ -133,6 +154,15 @@ describe("waitForForegroundChild", () => {
 
     await expect(result).resolves.toBe(130);
     expect(resolved).toBe(true);
+  });
+
+  test("maps foreground SIGTERM exits to 143", async () => {
+    const foreground = new FakeChildProcess();
+
+    const result = waitForForegroundChild(foreground as unknown as ChildProcess, []);
+    foreground.exit(null, "SIGTERM");
+
+    await expect(result).resolves.toBe(143);
   });
 });
 

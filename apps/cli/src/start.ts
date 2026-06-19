@@ -37,6 +37,13 @@ const CONTROL_PLANE_PORT = 4767;
 const SERVICE_HEALTH_ATTEMPTS = 25;
 const SERVICE_HEALTH_INTERVAL_MS = 200;
 
+export class StartInterrupted extends Error {
+  constructor(readonly exitCode: number) {
+    super(`start interrupted with exit code ${exitCode.toString()}`);
+    this.name = "StartInterrupted";
+  }
+}
+
 export async function runStartCommand(
   args: readonly string[],
   options: RenderOptions,
@@ -63,12 +70,13 @@ export async function runStartCommand(
 
   try {
     if (serviceChild !== undefined) {
-      await waitForServiceHealth({
+      const startupExitCode = await waitForServiceHealth({
         checkHealth: check,
         child: serviceChild,
         config,
         healthUrl,
       });
+      if (startupExitCode !== undefined) return startupExitCode;
     }
 
     const report: SagaStartReport = {
@@ -160,17 +168,25 @@ function pnpmCommand(env: NodeJS.ProcessEnv): { args: string[]; command: string 
   return { args: [], command: npmExecPath };
 }
 
-export function installSignalCleanup(children: readonly ChildProcess[]): () => void {
+export function installSignalCleanup(children: readonly ChildProcess[]): {
+  getInterruptedSignal: () => NodeJS.Signals | undefined;
+  remove: () => void;
+} {
+  let interruptedSignal: NodeJS.Signals | undefined;
   const onSignal = (signal: NodeJS.Signals) => {
+    interruptedSignal = signal;
     for (const child of children) {
       signalChild(child, signal);
     }
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
-  return () => {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+  return {
+    getInterruptedSignal: () => interruptedSignal,
+    remove: () => {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    },
   };
 }
 
@@ -179,12 +195,19 @@ async function waitForServiceHealth(input: {
   child: ChildProcess;
   config: RuntimeConfig;
   healthUrl: string;
-}): Promise<void> {
-  const removeSignalCleanup = installSignalCleanup([input.child]);
+}): Promise<number | undefined> {
+  const signalCleanup = installSignalCleanup([input.child]);
   try {
-    await pollServiceHealth(input);
+    await pollServiceHealth({
+      ...input,
+      interruptedSignal: signalCleanup.getInterruptedSignal,
+    });
+    return undefined;
+  } catch (error) {
+    if (error instanceof StartInterrupted) return error.exitCode;
+    throw error;
   } finally {
-    removeSignalCleanup();
+    signalCleanup.remove();
   }
 }
 
@@ -193,9 +216,18 @@ async function pollServiceHealth(input: {
   child: ChildProcess;
   config: RuntimeConfig;
   healthUrl: string;
+  interruptedSignal: () => NodeJS.Signals | undefined;
 }): Promise<void> {
   for (let attempt = 0; attempt < SERVICE_HEALTH_ATTEMPTS; attempt += 1) {
+    const interruptedSignal = input.interruptedSignal();
+    if (interruptedSignal !== undefined) {
+      throw new StartInterrupted(exitCodeForSignal(interruptedSignal));
+    }
+
     if (input.child.exitCode !== null || input.child.signalCode !== null) {
+      if (input.child.signalCode === "SIGINT" || input.child.signalCode === "SIGTERM") {
+        throw new StartInterrupted(exitCodeForSignal(input.child.signalCode));
+      }
       throw new Error(
         `service process exited before becoming healthy on ${input.config.service.host}:${input.config.service.port.toString()}`,
       );
@@ -245,7 +277,7 @@ export function waitForForegroundChild(
     foreground.once("error", fail);
     foreground.once("exit", (code, signal) => {
       if (signal !== null) {
-        settle(130);
+        settle(exitCodeForSignal(signal));
         return;
       }
       settle(code ?? 0);
@@ -291,6 +323,12 @@ function terminateChild(child: ChildProcess): Promise<void> {
 function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill(signal);
+}
+
+function exitCodeForSignal(signal: NodeJS.Signals): number {
+  if (signal === "SIGINT") return 130;
+  if (signal === "SIGTERM") return 143;
+  return 128;
 }
 
 function delay(ms: number): Promise<void> {
