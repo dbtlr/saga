@@ -22,6 +22,13 @@
       "when": 1781902335141,
       "tag": "0002_thick_vision",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781904531643,
+      "tag": "0003_stale_peter_parker",
+      "breakpoints": true
     }
   ]
 }

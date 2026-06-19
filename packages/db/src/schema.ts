@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  doublePrecision,
   index,
   jsonb,
   pgTable,
@@ -97,8 +98,69 @@ export const rawEvents = pgTable(
   ],
 );
 
+export const claimEvents = pgTable(
+  "claim_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    rawEventId: uuid("raw_event_id")
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: "cascade" }),
+    claimKey: text("claim_key").notNull(),
+    eventType: text("event_type").notNull(),
+    claimKind: text("claim_kind").notNull(),
+    claimText: text("claim_text").notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("claim_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
+    index("claim_events_claim_key_idx").on(table.workspaceId, table.claimKey),
+    uniqueIndex("claim_events_raw_event_unique").on(
+      table.workspaceId,
+      table.eventType,
+      table.claimKey,
+      table.rawEventId,
+    ),
+  ],
+);
+
+export const currentClaims = pgTable(
+  "current_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    latestEventId: uuid("latest_event_id")
+      .notNull()
+      .references(() => claimEvents.id, { onDelete: "cascade" }),
+    claimKey: text("claim_key").notNull(),
+    claimKind: text("claim_kind").notNull(),
+    claimText: text("claim_text").notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    state: text("state").notNull(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("current_claims_workspace_state_idx").on(table.workspaceId, table.state),
+    uniqueIndex("current_claims_workspace_key_unique").on(table.workspaceId, table.claimKey),
+  ],
+);
+
 export const workspaceRelations = relations(workspaces, ({ many, one }) => ({
+  claimEvents: many(claimEvents),
+  currentClaims: many(currentClaims),
   profile: one(workspaceProfiles),
+  rawEvents: many(rawEvents),
   sourceBindings: many(sourceBindings),
 }));
 
@@ -127,7 +189,33 @@ export const rawEventRelations = relations(rawEvents, ({ one }) => ({
   }),
 }));
 
+export const claimEventRelations = relations(claimEvents, ({ one }) => ({
+  rawEvent: one(rawEvents, {
+    fields: [claimEvents.rawEventId],
+    references: [rawEvents.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [claimEvents.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
+export const currentClaimRelations = relations(currentClaims, ({ one }) => ({
+  latestEvent: one(claimEvents, {
+    fields: [currentClaims.latestEventId],
+    references: [claimEvents.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [currentClaims.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
 export const schema = {
+  claimEventRelations,
+  claimEvents,
+  currentClaimRelations,
+  currentClaims,
   rawEventRelations,
   rawEvents,
   sourceBindingRelations,
@@ -148,3 +236,7 @@ export type SourceBinding = typeof sourceBindings.$inferSelect;
 export type NewSourceBinding = typeof sourceBindings.$inferInsert;
 export type RawEvent = typeof rawEvents.$inferSelect;
 export type NewRawEvent = typeof rawEvents.$inferInsert;
+export type ClaimEvent = typeof claimEvents.$inferSelect;
+export type NewClaimEvent = typeof claimEvents.$inferInsert;
+export type CurrentClaim = typeof currentClaims.$inferSelect;
+export type NewCurrentClaim = typeof currentClaims.$inferInsert;

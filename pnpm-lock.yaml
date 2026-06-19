@@ -80,6 +80,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@saga/claims':
+        specifier: workspace:*
+        version: link:../claims
       '@saga/contracts':
         specifier: workspace:*
         version: link:../contracts

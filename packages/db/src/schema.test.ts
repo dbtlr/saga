@@ -1,7 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { getTableName } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
-import { rawEvents, sourceBindings, workspaceProfiles, workspaces } from "./schema.js";
+import {
+  claimEvents,
+  currentClaims,
+  rawEvents,
+  sourceBindings,
+  workspaceProfiles,
+  workspaces,
+} from "./schema.js";
 
 describe("schema", () => {
   test("defines workspace registration tables", () => {
@@ -9,6 +16,8 @@ describe("schema", () => {
     expect(getTableName(workspaceProfiles)).toBe("workspace_profiles");
     expect(getTableName(sourceBindings)).toBe("source_bindings");
     expect(getTableName(rawEvents)).toBe("raw_events");
+    expect(getTableName(claimEvents)).toBe("claim_events");
+    expect(getTableName(currentClaims)).toBe("current_claims");
   });
 
   test("keeps workspace profile one-to-one with workspace", () => {
@@ -37,5 +46,17 @@ describe("schema", () => {
     expect(columns.externalEventId.notNull).toBe(true);
     expect(columns.payload.notNull).toBe(true);
     expect(columns.provenance.notNull).toBe(true);
+  });
+
+  test("keeps claim lifecycle and projection state explicit", () => {
+    const eventColumns = getTableColumns(claimEvents);
+    const currentColumns = getTableColumns(currentClaims);
+
+    expect(eventColumns.workspaceId.notNull).toBe(true);
+    expect(eventColumns.rawEventId.notNull).toBe(true);
+    expect(eventColumns.claimKey.notNull).toBe(true);
+    expect(eventColumns.eventType.notNull).toBe(true);
+    expect(currentColumns.latestEventId.notNull).toBe(true);
+    expect(currentColumns.state.notNull).toBe(true);
   });
 });

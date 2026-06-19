@@ -19,6 +19,7 @@
     "test:postgres:local": "SAGA_TEST_DATABASE_URL=postgres://saga:saga@localhost:55432/saga_test vp test run src/database.postgres.test.ts"
   },
   "dependencies": {
+    "@saga/claims": "workspace:*",
     "@saga/contracts": "workspace:*",
     "@saga/runtime": "workspace:*",
     "drizzle-orm": "^0.45.2",

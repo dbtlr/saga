@@ -1,9 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Effect } from "effect";
 import postgres from "postgres";
+import { insertExtractedCandidateClaim, listCurrentClaims } from "./claim.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { insertRawEvent, listRecentRawEvents } from "./raw-event.js";
-import { rawEvents, sourceBindings, workspaceProfiles, workspaces } from "./schema.js";
+import {
+  claimEvents,
+  currentClaims,
+  rawEvents,
+  sourceBindings,
+  workspaceProfiles,
+  workspaces,
+} from "./schema.js";
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -237,5 +245,89 @@ describePostgres("postgres integration", () => {
 
     expect(secondEvent.id).not.toBe(firstEvent.id);
     expect(firstDuplicate.id).toBe(firstEvent.id);
+  });
+
+  test("stores extracted claim events and projects current claims", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `claims-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const rawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: "codex:UserPromptSubmit:session:turn:/tmp/transcript.jsonl:test",
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Agreed. We should compile Active Context from claims.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const candidate = {
+      attributes: { extractor: "deterministic-v1" },
+      confidence: 0.72,
+      evidence: {
+        eventType: rawEvent.eventType,
+        externalEventId: rawEvent.externalEventId,
+        occurredAt: rawEvent.occurredAt.toISOString(),
+        quote: "Agreed. We should compile Active Context from claims.",
+        rawEventId: rawEvent.id,
+        sessionId: rawEvent.sessionId ?? undefined,
+        sourceId: rawEvent.sourceId,
+        sourceType: rawEvent.sourceType,
+        traceId: rawEvent.traceId ?? undefined,
+      },
+      kind: "decision" as const,
+      text: "We should compile Active Context from claims.",
+      workspaceId: workspace.id,
+    };
+
+    const firstProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, candidate),
+    );
+    const duplicateProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, candidate),
+    );
+    const current = await Effect.runPromise(
+      listCurrentClaims(service, {
+        workspaceId: workspace.id,
+      }),
+    );
+
+    expect(duplicateProjection.event.id).toBe(firstProjection.event.id);
+    expect(current[0]?.claimText).toBe("We should compile Active Context from claims.");
+    expect(current[0]?.state).toBe("candidate");
+    expect(await service.db.select().from(claimEvents)).toContainEqual(
+      expect.objectContaining({ id: firstProjection.event.id }),
+    );
+    expect(await service.db.select().from(currentClaims)).toContainEqual(
+      expect.objectContaining({ id: firstProjection.currentClaim.id }),
+    );
   });
 });
