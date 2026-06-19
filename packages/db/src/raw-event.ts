@@ -1,4 +1,5 @@
 import type { RawEventEnvelope } from "@saga/contracts";
+import { and, desc, eq } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { rawEvents, type RawEvent } from "./schema.js";
@@ -43,6 +44,25 @@ export function insertRawEvent(
       cause instanceof RawEventInsertError
         ? cause
         : new RawEventInsertError({ message: errorMessage(cause) }),
+  });
+}
+
+export function listRecentRawEvents(
+  service: DatabaseService,
+  input: {
+    limit?: number | undefined;
+    workspaceId: string;
+  },
+): Effect.Effect<RawEvent[], RawEventInsertError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db
+        .select()
+        .from(rawEvents)
+        .where(and(eq(rawEvents.workspaceId, input.workspaceId)))
+        .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
+        .limit(input.limit ?? 10),
+    catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
   });
 }
 

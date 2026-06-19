@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { insertRawEvent } from "./raw-event.js";
+import { insertRawEvent, listRecentRawEvents } from "./raw-event.js";
 import { rawEvents, sourceBindings, workspaceProfiles, workspaces } from "./schema.js";
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -130,5 +130,12 @@ describePostgres("postgres integration", () => {
     const rows = await service.db.select().from(rawEvents);
     expect(event.eventType).toBe("codex.Stop");
     expect(rows.some((row) => row.id === event.id)).toBe(true);
+
+    const recent = await Effect.runPromise(
+      listRecentRawEvents(service, {
+        workspaceId: workspace.id,
+      }),
+    );
+    expect(recent[0]?.id).toBe(event.id);
   });
 });

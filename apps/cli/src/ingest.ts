@@ -1,5 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
 import { rawEventFromCodexHook, type CodexHookInput } from "@saga/collectors";
-import { insertRawEvent, makeDatabase } from "@saga/db";
+import { insertRawEvent, listRecentRawEvents, makeDatabase, type RawEvent } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { findProjectRoot, readBindingFile } from "./init.js";
@@ -16,6 +17,7 @@ export interface CodexHookIngestResult {
 
 export interface IngestCodexHookOptions {
   capture?: ((input: CodexHookInput) => Promise<CodexHookIngestResult>) | undefined;
+  inputPath?: string | undefined;
   stdin?: string | undefined;
 }
 
@@ -25,7 +27,11 @@ export async function runIngestCommand(
 ): Promise<string> {
   const subcommand = args[0];
   if (subcommand === "codex-hook") {
-    return ingestCodexHook(options);
+    return ingestCodexHook(options, { inputPath: args[1] });
+  }
+
+  if (subcommand === "recent") {
+    return inspectRecentRawEvents({ limit: parseLimit(args[1]) }, options);
   }
 
   throw new Error(`ingest ${subcommand ?? ""} is not implemented yet`.trim());
@@ -35,7 +41,7 @@ export async function ingestCodexHook(
   options: RenderOptions,
   input: IngestCodexHookOptions = {},
 ): Promise<string> {
-  const hookInput = parseCodexHookInput(input.stdin ?? (await readStdin()));
+  const hookInput = parseCodexHookInput(await readCodexHookInput(input));
   const capture = input.capture ?? captureCodexHook;
   const result = await capture(hookInput);
 
@@ -65,6 +71,39 @@ export async function ingestCodexHook(
     },
     options.format,
   );
+}
+
+export async function inspectRecentRawEvents(
+  input: { cwd?: string; limit?: number | undefined },
+  options: RenderOptions,
+): Promise<string> {
+  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
+    throw new Error("workspace binding is missing; run saga init");
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    const rows = await Effect.runPromise(
+      listRecentRawEvents(service, {
+        limit: input.limit,
+        workspaceId: binding.workspace.id,
+      }),
+    );
+
+    return formatCommandOutput(
+      {
+        id: "raw-events",
+        records: renderRawEvents(rows, options),
+        value: rows.map(rawEventValue),
+      },
+      options.format,
+    );
+  } finally {
+    await Effect.runPromise(service.close());
+  }
 }
 
 export async function captureCodexHook(input: CodexHookInput): Promise<CodexHookIngestResult> {
@@ -104,6 +143,57 @@ function parseCodexHookInput(stdin: string): CodexHookInput {
   if (trimmed === "") return {};
   const parsed = JSON.parse(trimmed) as unknown;
   return isRecord(parsed) ? parsed : { payload: parsed };
+}
+
+async function readCodexHookInput(input: IngestCodexHookOptions): Promise<string> {
+  if (input.stdin !== undefined) return input.stdin;
+  if (input.inputPath !== undefined && input.inputPath !== "-") {
+    if (!existsSync(input.inputPath)) {
+      throw new Error(`input file not found: ${input.inputPath}`);
+    }
+    return readFileSync(input.inputPath, "utf8");
+  }
+  return readStdin();
+}
+
+function parseLimit(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const limit = Number.parseInt(value, 10);
+  if (!Number.isInteger(limit) || limit < 1 || String(limit) !== value) {
+    throw new Error(`invalid raw event limit: ${value}`);
+  }
+  return limit;
+}
+
+function renderRawEvents(rows: readonly RawEvent[], options: RenderOptions): string {
+  if (rows.length === 0) {
+    return recordBlock("Raw events", [{ label: "events", value: "none" }], options);
+  }
+
+  const fields = rows.flatMap((row, index) => [
+    { label: `event ${String(index + 1)}`, value: row.eventType },
+    { label: "id", value: row.id },
+    { label: "session", value: row.sessionId ?? "none" },
+    { label: "occurred", value: row.occurredAt.toISOString() },
+  ]);
+  return recordBlock("Raw events", fields, options);
+}
+
+function rawEventValue(row: RawEvent): Record<string, unknown> {
+  return {
+    eventType: row.eventType,
+    id: row.id,
+    ingestedAt: row.ingestedAt.toISOString(),
+    occurredAt: row.occurredAt.toISOString(),
+    payload: row.payload,
+    provenance: row.provenance,
+    sessionId: row.sessionId,
+    sourceId: row.sourceId,
+    sourceType: row.sourceType,
+    traceId: row.traceId,
+    trustLevel: row.trustLevel,
+    workspaceId: row.workspaceId,
+  };
 }
 
 async function readStdin(): Promise<string> {
