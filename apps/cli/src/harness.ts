@@ -60,10 +60,7 @@ export async function runHarnessCommand(
   throw new Error(`harness ${subcommand ?? ""} is not implemented yet`.trim());
 }
 
-export function installHarness(input: {
-  cwd?: string;
-  target: HarnessTarget;
-}): CodexHarnessStatus {
+export function installHarness(input: { cwd?: string; target: HarnessTarget }): CodexHarnessStatus {
   assertCodexTarget(input.target);
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
@@ -120,10 +117,7 @@ export function uninstallHarness(input: {
   return inspectCodexHarness(projectRoot);
 }
 
-export function inspectHarness(input: {
-  cwd?: string;
-  target: HarnessTarget;
-}): CodexHarnessStatus {
+export function inspectHarness(input: { cwd?: string; target: HarnessTarget }): CodexHarnessStatus {
   assertCodexTarget(input.target);
   return inspectCodexHarness(findProjectRoot(input.cwd ?? process.cwd()));
 }
@@ -204,7 +198,7 @@ function ensureGitignoreEntry(projectRoot: string, entry: string): void {
 }
 
 function installSagaCodexHooks(file: CodexHooksFile): CodexHooksFile {
-  const hooks = { ...(file.hooks ?? {}) };
+  const hooks = { ...file.hooks };
   for (const event of CODEX_HOOK_EVENTS) {
     const matchers = withoutSagaCodexHooks(hooks[event] ?? []);
     matchers.push({
@@ -224,7 +218,7 @@ function installSagaCodexHooks(file: CodexHooksFile): CodexHooksFile {
 }
 
 function uninstallSagaCodexHooks(file: CodexHooksFile): CodexHooksFile {
-  const hooks = { ...(file.hooks ?? {}) };
+  const hooks = { ...file.hooks };
   for (const event of CODEX_HOOK_EVENTS) {
     const matchers = withoutSagaCodexHooks(hooks[event] ?? []);
     if (matchers.length === 0) {

@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { sourceBindings, workspaceProfiles, workspaces } from "./schema.js";
+import { insertRawEvent } from "./raw-event.js";
+import { rawEvents, sourceBindings, workspaceProfiles, workspaces } from "./schema.js";
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -86,5 +87,48 @@ describePostgres("postgres integration", () => {
     expect(profile?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.enabled).toBe(true);
+  });
+
+  test("persists raw events", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        displayName: "Raw Event Workspace",
+        handle: `raw-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const event = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.Stop",
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: { hook_event_name: "Stop" },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session-id",
+        sourceId: sourceBinding.id,
+        sourceType: "codex",
+        traceId: "turn-id",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const rows = await service.db.select().from(rawEvents);
+    expect(event.eventType).toBe("codex.Stop");
+    expect(rows.some((row) => row.id === event.id)).toBe(true);
   });
 });

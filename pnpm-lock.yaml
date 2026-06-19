@@ -29,6 +29,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@saga/collectors':
+        specifier: workspace:*
+        version: link:../../packages/collectors
       '@saga/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -63,7 +66,11 @@ importers:
 
   packages/claims: {}
 
-  packages/collectors: {}
+  packages/collectors:
+    dependencies:
+      '@saga/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/connectors: {}
 
@@ -73,6 +80,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@saga/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@saga/runtime':
         specifier: workspace:*
         version: link:../runtime

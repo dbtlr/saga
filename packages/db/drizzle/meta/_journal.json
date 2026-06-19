@@ -15,6 +15,13 @@
       "when": 1781898220168,
       "tag": "0001_graceful_sebastian_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781901457084,
+      "tag": "0002_nervous_maestro",
+      "breakpoints": true
     }
   ]
 }
