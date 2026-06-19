@@ -29,6 +29,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@saga/active-context':
+        specifier: workspace:*
+        version: link:../../packages/active-context
       '@saga/collectors':
         specifier: workspace:*
         version: link:../../packages/collectors

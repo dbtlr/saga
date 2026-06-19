@@ -1,3 +1,4 @@
+import { runContextCommand } from "./context.js";
 import { runDoctor } from "./doctor.js";
 import { runHarnessCommand } from "./harness.js";
 import { runIngestCommand } from "./ingest.js";
@@ -73,6 +74,7 @@ export const VERSION = "0.0.0";
 
 export interface CommandHandlers {
   doctor: typeof runDoctor;
+  context: typeof runContextCommand;
   harness: typeof runHarnessCommand;
   ingest: typeof runIngestCommand;
   init: typeof runInit;
@@ -80,6 +82,7 @@ export interface CommandHandlers {
 }
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
+  context: runContextCommand,
   doctor: runDoctor,
   harness: runHarnessCommand,
   ingest: runIngestCommand,
@@ -223,6 +226,10 @@ export async function run(
     }
     if (parsed.command === "doctor") {
       write(await handlers.doctor(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "context") {
+      write(await handlers.context(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === "harness") {

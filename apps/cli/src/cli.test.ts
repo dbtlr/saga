@@ -64,15 +64,16 @@ describe("run", () => {
     expect(output).toEqual(["[err] unknown command: nope"]);
   });
 
-  test("reserves known commands with placeholder behavior", async () => {
+  test("keeps not-yet-implemented commands as placeholder failures", async () => {
     const output: string[] = [];
-    await expect(run(["context"], (text) => output.push(text))).resolves.toBe(1);
-    expect(output).toEqual(["context is not implemented yet"]);
+    await expect(run(["mcp"], (text) => output.push(text))).resolves.toBe(1);
+    expect(output).toEqual(["mcp is not implemented yet"]);
   });
 
   test("dispatches init through the init handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      context: async () => "context",
       doctor: async () => "doctor",
       harness: async () => "harness",
       ingest: async () => "ingest",
@@ -87,6 +88,7 @@ describe("run", () => {
   test("dispatches doctor through the doctor handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      context: async () => "context",
       doctor: async () => "doctor ok",
       harness: async () => "harness",
       ingest: async () => "ingest",
@@ -101,6 +103,7 @@ describe("run", () => {
   test("dispatches service through the service handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      context: async () => "context",
       doctor: async () => "doctor",
       harness: async () => "harness",
       ingest: async () => "ingest",
@@ -124,6 +127,7 @@ describe("run", () => {
   test("dispatches harness through the harness handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      context: async () => "context",
       doctor: async () => "doctor",
       harness: async (args) => `harness ${args.join(",")}`,
       ingest: async () => "ingest",
@@ -140,6 +144,7 @@ describe("run", () => {
   test("dispatches ingest through the ingest handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
+      context: async () => "context",
       doctor: async () => "doctor",
       harness: async () => "harness",
       ingest: async (args) => `ingest ${args.join(",")}`,
@@ -151,6 +156,21 @@ describe("run", () => {
       run(["ingest", "codex-hook"], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
     expect(output).toEqual(["ingest codex-hook"]);
+  });
+
+  test("dispatches context through the context handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      context: async () => "compiled context",
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
+      init: async () => "init",
+      service: async () => "service",
+    };
+
+    await expect(run(["context"], (text) => output.push(text), handlers)).resolves.toBe(0);
+    expect(output).toEqual(["compiled context"]);
   });
 
   test("implemented commands can render structured output", async () => {

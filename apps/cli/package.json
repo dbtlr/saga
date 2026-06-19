@@ -12,6 +12,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@saga/active-context": "workspace:*",
     "@saga/collectors": "workspace:*",
     "@saga/db": "workspace:*",
     "@saga/runtime": "workspace:*",
