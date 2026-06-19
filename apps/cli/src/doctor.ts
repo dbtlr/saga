@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { EXPECTED_MIGRATION_COUNT, makeDatabase, type SagaSql } from "@saga/db";
+import { getMigrationStatus, makeDatabase, type DatabaseService } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { bindingPathFor, findProjectRoot, readBindingFile } from "./init.js";
@@ -133,7 +133,7 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
     const service = await Effect.runPromise(makeDatabase(config));
     try {
       await service.sql`select 1`;
-      const migrationCheck = await checkMigrations(service.sql);
+      const migrationCheck = await checkMigrations(service);
       return [
         {
           detail: "connected",
@@ -161,22 +161,19 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
   }
 }
 
-async function checkMigrations(sql: SagaSql): Promise<DoctorCheck> {
+async function checkMigrations(service: DatabaseService): Promise<DoctorCheck> {
   try {
-    const migrations = await sql.unsafe(
-      "select count(*)::text as count from drizzle.__drizzle_migrations",
-    );
-    const migrationCount = Number.parseInt(String(migrations[0]?.count ?? "0"), 10);
-    if (migrationCount < EXPECTED_MIGRATION_COUNT) {
+    const migrationStatus = await Effect.runPromise(getMigrationStatus(service));
+    if (migrationStatus.applied < migrationStatus.expected) {
       return {
-        detail: `${String(migrationCount)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}`,
+        detail: `${String(migrationStatus.applied)} applied; expected ${String(migrationStatus.expected)}`,
         label: "migrations",
         status: "fail",
       };
     }
 
     return {
-      detail: `${String(migrationCount)} applied`,
+      detail: `${String(migrationStatus.applied)} applied`,
       label: "migrations",
       status: "ok",
     };

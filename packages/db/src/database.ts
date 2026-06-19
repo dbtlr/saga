@@ -15,6 +15,11 @@ export interface DatabaseService {
   close: () => Effect.Effect<void, DatabaseError>;
 }
 
+export interface MigrationStatus {
+  applied: number;
+  expected: number;
+}
+
 export class DatabaseError extends Data.TaggedError("DatabaseError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -75,6 +80,43 @@ export function runMigrations(
         cause,
       }),
   });
+}
+
+export function getMigrationStatus(
+  service: DatabaseService,
+): Effect.Effect<MigrationStatus, DatabaseError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const migrations = await service.sql.unsafe(
+        "select count(*)::text as count from drizzle.__drizzle_migrations",
+      );
+      return {
+        applied: Number.parseInt(String(migrations[0]?.count ?? "0"), 10),
+        expected: EXPECTED_MIGRATION_COUNT,
+      };
+    },
+    catch: (cause) =>
+      new DatabaseError({
+        message: `failed to inspect database migrations: ${errorMessage(cause)}`,
+        cause,
+      }),
+  });
+}
+
+export function assertMigrationsCurrent(
+  service: DatabaseService,
+): Effect.Effect<MigrationStatus, DatabaseError> {
+  return getMigrationStatus(service).pipe(
+    Effect.flatMap((status) =>
+      status.applied < status.expected
+        ? Effect.fail(
+            new DatabaseError({
+              message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Run saga init to apply migrations.`,
+            }),
+          )
+        : Effect.succeed(status),
+    ),
+  );
 }
 
 function makeDatabaseService(sql: SagaSql): DatabaseService {

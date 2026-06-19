@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { makeDatabase, registerSourceBinding } from "@saga/db";
+import { assertMigrationsCurrent, makeDatabase, registerSourceBinding } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { formatCommandOutput } from "./output.js";
@@ -256,6 +256,7 @@ async function registerCodexSourceBinding(projectRoot: string, workspaceId: stri
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
+    await Effect.runPromise(assertMigrationsCurrent(service));
     return await Effect.runPromise(
       registerSourceBinding(service, {
         config: {
