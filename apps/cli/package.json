@@ -3,12 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "bin": {
-    "saga": "./src/main.ts"
+    "saga": "./bin/saga.js"
   },
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@saga/db": "workspace:*",
+    "@saga/runtime": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.21.4",
+    "tsx": "^4.22.4"
   }
 }

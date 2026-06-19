@@ -27,7 +27,23 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@24.13.2)(@vitest/browser-preview@4.1.9)(vite@8.0.16(@types/node@24.13.2)(esbuild@0.28.1)(tsx@4.22.4))
 
-  apps/cli: {}
+  apps/cli:
+    dependencies:
+      '@saga/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@saga/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(postgres@3.4.9)
+      effect:
+        specifier: ^3.21.4
+        version: 3.21.4
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
 
   apps/control-plane: {}
 

@@ -1,6 +1,6 @@
 import { run } from "./cli.js";
 
-const exitCode = run(process.argv.slice(2), (text) => {
+const exitCode = await run(process.argv.slice(2), (text) => {
   process.stdout.write(`${text}\n`);
 });
 
