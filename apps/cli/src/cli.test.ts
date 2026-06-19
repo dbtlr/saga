@@ -107,6 +107,22 @@ describe("run", () => {
     );
     expect(output).toEqual(["service status"]);
   });
+
+  test("unimplemented service subcommands fail", async () => {
+    const output: string[] = [];
+
+    await expect(run(["service", "start"], (text) => output.push(text))).resolves.toBe(1);
+    expect(output).toEqual(["✗ service start is not implemented yet"]);
+  });
+
+  test("implemented commands can render structured output", async () => {
+    const output: string[] = [];
+
+    await expect(
+      run(["--format", "json", "service", "status"], (text) => output.push(text)),
+    ).resolves.toBe(0);
+    expect(() => JSON.parse(output[0] ?? "")).not.toThrow();
+  });
 });
 
 describe("validateCommand", () => {

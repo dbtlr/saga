@@ -10,8 +10,8 @@ import {
   shouldColor,
 } from "./render.js";
 
-const plain = { ascii: false, color: "never" as const, isTty: true };
-const ascii = { ascii: true, color: "always" as const, isTty: true };
+const plain = { ascii: false, color: "never" as const, format: "records" as const, isTty: true };
+const ascii = { ascii: true, color: "always" as const, format: "records" as const, isTty: true };
 
 describe("render primitives", () => {
   test("keeps color disabled when requested", () => {

@@ -1,8 +1,9 @@
-import type { ColorMode, GlobalOptions } from "./cli.js";
+import type { ColorMode, GlobalOptions, OutputFormat } from "./cli.js";
 
 export interface RenderOptions {
   ascii: boolean;
   color: ColorMode;
+  format: OutputFormat;
   isTty: boolean;
 }
 
@@ -42,6 +43,7 @@ export function renderOptionsFromGlobals(
   return {
     ascii: options.ascii,
     color: options.color,
+    format: options.format,
     isTty,
   };
 }

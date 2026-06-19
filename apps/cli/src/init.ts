@@ -10,6 +10,7 @@ import {
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
+import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
 
 export const BINDING_FILE_NAME = ".saga.local.json";
@@ -40,7 +41,7 @@ export interface WorkspaceBindingFile {
 
 export async function runInit(args: readonly string[], options: RenderOptions): Promise<string> {
   const result = await initProject({ handle: args[0] });
-  return recordBlock(
+  const records = recordBlock(
     "Workspace bound",
     [
       { label: "workspace", value: result.registration.workspace.handle },
@@ -49,6 +50,19 @@ export async function runInit(args: readonly string[], options: RenderOptions): 
       { label: "binding", value: result.bindingPath },
     ],
     options,
+  );
+  return formatCommandOutput(
+    {
+      id: result.registration.workspace.id,
+      records,
+      value: {
+        bindingPath: result.bindingPath,
+        projectRoot: result.projectRoot,
+        sourceBinding: result.registration.sourceBinding,
+        workspace: result.registration.workspace,
+      },
+    },
+    options.format,
   );
 }
 
