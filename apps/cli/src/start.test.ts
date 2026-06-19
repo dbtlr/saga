@@ -68,6 +68,27 @@ describe("runStartCommand", () => {
     expect(output[0]).toContain("service  started");
     expect(serviceChild.signals).toContain("SIGTERM");
   });
+
+  test("cleans up the service child when startup health checks fail", async () => {
+    const serviceChild = new FakeChildProcess();
+    let healthChecks = 0;
+
+    await expect(
+      runStartCommand([], renderOptions, () => undefined, {
+        checkHealth: async () => {
+          healthChecks += 1;
+          if (healthChecks === 1) return "unreachable";
+          throw new Error("health check failed");
+        },
+        cwd: process.cwd(),
+        env: {},
+        spawnControlPlane: async () => 0,
+        spawnService: () => serviceChild as unknown as ChildProcess,
+      }),
+    ).rejects.toThrow("health check failed");
+
+    expect(serviceChild.signals).toContain("SIGTERM");
+  });
 });
 
 describe("process command builders", () => {

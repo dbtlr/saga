@@ -61,24 +61,24 @@ export async function runStartCommand(
         env,
       });
 
-  if (serviceChild !== undefined) {
-    await waitForServiceHealth({
-      checkHealth: check,
-      child: serviceChild,
-      config,
-      healthUrl,
-    });
-  }
-
-  const report: SagaStartReport = {
-    controlPlaneUrl: `http://${CONTROL_PLANE_HOST}:${CONTROL_PLANE_PORT.toString()}`,
-    healthUrl,
-    service: serviceChild === undefined ? "already running" : "started",
-  };
-
-  write(renderStartReport(report, options));
-
   try {
+    if (serviceChild !== undefined) {
+      await waitForServiceHealth({
+        checkHealth: check,
+        child: serviceChild,
+        config,
+        healthUrl,
+      });
+    }
+
+    const report: SagaStartReport = {
+      controlPlaneUrl: `http://${CONTROL_PLANE_HOST}:${CONTROL_PLANE_PORT.toString()}`,
+      healthUrl,
+      service: serviceChild === undefined ? "already running" : "started",
+    };
+
+    write(renderStartReport(report, options));
+
     return await (dependencies.spawnControlPlane ?? spawnControlPlaneDev)({
       cleanupChildren: serviceChild === undefined ? [] : [serviceChild],
       cwd: projectRoot,
@@ -160,14 +160,42 @@ function pnpmCommand(env: NodeJS.ProcessEnv): { args: string[]; command: string 
   return { args: [], command: npmExecPath };
 }
 
+export function installSignalCleanup(children: readonly ChildProcess[]): () => void {
+  const onSignal = (signal: NodeJS.Signals) => {
+    for (const child of children) {
+      signalChild(child, signal);
+    }
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  return () => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  };
+}
+
 async function waitForServiceHealth(input: {
   checkHealth: (url: string) => Promise<string>;
   child: ChildProcess;
   config: RuntimeConfig;
   healthUrl: string;
 }): Promise<void> {
+  const removeSignalCleanup = installSignalCleanup([input.child]);
+  try {
+    await pollServiceHealth(input);
+  } finally {
+    removeSignalCleanup();
+  }
+}
+
+async function pollServiceHealth(input: {
+  checkHealth: (url: string) => Promise<string>;
+  child: ChildProcess;
+  config: RuntimeConfig;
+  healthUrl: string;
+}): Promise<void> {
   for (let attempt = 0; attempt < SERVICE_HEALTH_ATTEMPTS; attempt += 1) {
-    if (input.child.exitCode !== null) {
+    if (input.child.exitCode !== null || input.child.signalCode !== null) {
       throw new Error(
         `service process exited before becoming healthy on ${input.config.service.host}:${input.config.service.port.toString()}`,
       );
