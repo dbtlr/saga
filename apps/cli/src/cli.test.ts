@@ -74,6 +74,8 @@ describe("run", () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
       doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
       init: async (args) => `init ${args.join(",")}`,
       service: async () => "service",
     };
@@ -86,6 +88,8 @@ describe("run", () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
       doctor: async () => "doctor ok",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
       init: async () => "init",
       service: async () => "service",
     };
@@ -98,6 +102,8 @@ describe("run", () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
       doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
       init: async () => "init",
       service: async (args) => `service ${args.join(",")}`,
     };
@@ -113,6 +119,38 @@ describe("run", () => {
 
     await expect(run(["service", "start"], (text) => output.push(text))).resolves.toBe(1);
     expect(output).toEqual(["✗ service start is not implemented yet"]);
+  });
+
+  test("dispatches harness through the harness handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      doctor: async () => "doctor",
+      harness: async (args) => `harness ${args.join(",")}`,
+      ingest: async () => "ingest",
+      init: async () => "init",
+      service: async () => "service",
+    };
+
+    await expect(
+      run(["harness", "install", "codex"], (text) => output.push(text), handlers),
+    ).resolves.toBe(0);
+    expect(output).toEqual(["harness install,codex"]);
+  });
+
+  test("dispatches ingest through the ingest handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async (args) => `ingest ${args.join(",")}`,
+      init: async () => "init",
+      service: async () => "service",
+    };
+
+    await expect(
+      run(["ingest", "codex-hook"], (text) => output.push(text), handlers),
+    ).resolves.toBe(0);
+    expect(output).toEqual(["ingest codex-hook"]);
   });
 
   test("implemented commands can render structured output", async () => {
