@@ -209,38 +209,63 @@ async function pollServiceHealth(input: {
   throw new Error(`service did not become healthy at ${input.healthUrl}`);
 }
 
-function waitForForegroundChild(
+export function waitForForegroundChild(
   foreground: ChildProcess,
   cleanupChildren: readonly ChildProcess[],
 ): Promise<number> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const children = [foreground, ...cleanupChildren];
     const removeSignalHandlers = () => {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
     };
+    const settle = (code: number) => {
+      if (settled) return;
+      settled = true;
+      removeSignalHandlers();
+      resolve(code);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      removeSignalHandlers();
+      reject(error);
+    };
     const onSignal = (signal: NodeJS.Signals) => {
       for (const child of children) {
         signalChild(child, signal);
       }
-      removeSignalHandlers();
-      resolve(signal === "SIGINT" ? 130 : 143);
+      void waitForChildExit(foreground).then(() => settle(signal === "SIGINT" ? 130 : 143));
     };
 
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
 
-    foreground.once("error", (error) => {
-      removeSignalHandlers();
-      reject(error);
-    });
+    foreground.once("error", fail);
     foreground.once("exit", (code, signal) => {
-      removeSignalHandlers();
       if (signal !== null) {
-        resolve(130);
+        settle(130);
         return;
       }
-      resolve(code ?? 0);
+      settle(code ?? 0);
+    });
+  });
+}
+
+function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      signalChild(child, "SIGKILL");
+      resolve();
+    }, 1_000);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
     });
   });
 }

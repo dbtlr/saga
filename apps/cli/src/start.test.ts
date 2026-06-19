@@ -6,6 +6,7 @@ import {
   controlPlaneCommand,
   renderStartReport,
   runStartCommand,
+  waitForForegroundChild,
 } from "./start.js";
 
 const renderOptions = {
@@ -108,18 +109,56 @@ describe("process command builders", () => {
   });
 });
 
+describe("waitForForegroundChild", () => {
+  test("waits for foreground exit after forwarding a signal", async () => {
+    const foreground = new FakeChildProcess({ autoExitOnKill: false });
+    const service = new FakeChildProcess({ autoExitOnKill: false });
+    let resolved = false;
+
+    const result = waitForForegroundChild(foreground as unknown as ChildProcess, [
+      service as unknown as ChildProcess,
+    ]).then((code) => {
+      resolved = true;
+      return code;
+    });
+
+    process.emit("SIGINT", "SIGINT");
+    await Promise.resolve();
+
+    expect(foreground.signals).toContain("SIGINT");
+    expect(service.signals).toContain("SIGINT");
+    expect(resolved).toBe(false);
+
+    foreground.exit(null, "SIGINT");
+
+    await expect(result).resolves.toBe(130);
+    expect(resolved).toBe(true);
+  });
+});
+
 class FakeChildProcess extends EventEmitter {
   exitCode: number | null = null;
   killed = false;
   signalCode: NodeJS.Signals | null = null;
   readonly signals: NodeJS.Signals[] = [];
 
+  constructor(private readonly options: { autoExitOnKill: boolean } = { autoExitOnKill: true }) {
+    super();
+  }
+
+  exit(code: number | null, signal: NodeJS.Signals | null): void {
+    this.exitCode = code;
+    this.signalCode = signal;
+    this.emit("exit", code, signal);
+  }
+
   kill(signal?: NodeJS.Signals | number): boolean {
     const normalizedSignal = typeof signal === "string" ? signal : "SIGTERM";
     this.killed = true;
-    this.signalCode = normalizedSignal;
     this.signals.push(normalizedSignal);
-    this.emit("exit", null, normalizedSignal);
+    if (this.options.autoExitOnKill) {
+      this.exit(null, normalizedSignal);
+    }
     return true;
   }
 }
