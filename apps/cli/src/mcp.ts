@@ -14,7 +14,7 @@ export async function runMcpCommand(
   stdin: AsyncIterable<Buffer | string> = process.stdin,
 ): Promise<string | undefined> {
   const server = createProjectMcpServer();
-  for (const line of await readJsonLines(stdin)) {
+  for await (const line of readJsonLines(stdin)) {
     const response = await server.handle(parseJsonRpcRequest(line));
     if (response !== undefined) write(JSON.stringify(response));
   }
@@ -85,16 +85,19 @@ export async function searchProjectMemory(
   }
 }
 
-async function readJsonLines(stdin: AsyncIterable<Buffer | string>): Promise<string[]> {
-  const chunks: string[] = [];
+async function* readJsonLines(stdin: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
+  let buffer = "";
   for await (const chunk of stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+    buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed !== "") yield trimmed;
+    }
   }
-  return chunks
-    .join("")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
+  const trimmed = buffer.trim();
+  if (trimmed !== "") yield trimmed;
 }
 
 function parseJsonRpcRequest(line: string): JsonRpcRequest {

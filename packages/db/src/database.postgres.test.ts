@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Effect } from "effect";
 import postgres from "postgres";
-import { insertExtractedCandidateClaim, listCurrentClaims } from "./claim.js";
+import {
+  insertClaimEventAndProject,
+  insertExtractedCandidateClaim,
+  listCurrentClaims,
+} from "./claim.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { insertRawEvent, listRecentRawEvents } from "./raw-event.js";
 import {
@@ -314,6 +318,51 @@ describePostgres("postgres integration", () => {
     const duplicateProjection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, candidate),
     );
+    const secondRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: "codex:UserPromptSubmit:session:turn-2:/tmp/transcript.jsonl:test",
+        occurredAt: "2026-06-19T20:05:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Agreed. We should compile Active Context from claims.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-2",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    const secondCandidate = {
+      ...candidate,
+      evidence: {
+        ...candidate.evidence,
+        externalEventId: secondRawEvent.externalEventId,
+        occurredAt: secondRawEvent.occurredAt.toISOString(),
+        rawEventId: secondRawEvent.id,
+        traceId: secondRawEvent.traceId ?? undefined,
+      },
+    };
+    const supportedProjection = await Effect.runPromise(
+      insertClaimEventAndProject(service, {
+        attributes: secondCandidate.attributes,
+        claimKey: firstProjection.currentClaim.claimKey,
+        confidence: 0.9,
+        evidence: secondCandidate.evidence,
+        eventType: "supported",
+        kind: secondCandidate.kind,
+        text: secondCandidate.text,
+        workspaceId: secondCandidate.workspaceId,
+      }),
+    );
+    const staleProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, candidate),
+    );
     const current = await Effect.runPromise(
       listCurrentClaims(service, {
         workspaceId: workspace.id,
@@ -321,8 +370,11 @@ describePostgres("postgres integration", () => {
     );
 
     expect(duplicateProjection.event.id).toBe(firstProjection.event.id);
+    expect(supportedProjection.event.id).not.toBe(firstProjection.event.id);
+    expect(staleProjection.currentClaim.id).toBe(supportedProjection.currentClaim.id);
+    expect(staleProjection.currentClaim.state).toBe("supported");
     expect(current[0]?.claimText).toBe("We should compile Active Context from claims.");
-    expect(current[0]?.state).toBe("candidate");
+    expect(current[0]?.state).toBe("supported");
     expect(await service.db.select().from(claimEvents)).toContainEqual(
       expect.objectContaining({ id: firstProjection.event.id }),
     );

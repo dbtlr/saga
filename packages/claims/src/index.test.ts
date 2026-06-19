@@ -72,5 +72,15 @@ describe("extractCandidateClaimsFromRawEvents", () => {
     if (claim === undefined) throw new Error("expected claim");
 
     expect(candidateClaimKey(claim)).toBe(candidateClaimKey({ ...claim }));
+    expect(
+      candidateClaimKey({
+        ...claim,
+        evidence: {
+          ...claim.evidence,
+          externalEventId: "different-event",
+          rawEventId: "different-raw-event",
+        },
+      }),
+    ).toBe(candidateClaimKey(claim));
   });
 });

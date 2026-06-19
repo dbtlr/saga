@@ -108,13 +108,8 @@ export function candidateClaimKey(claim: CandidateClaim): string {
   return createHash("sha256")
     .update(
       stableJson({
-        evidence: {
-          externalEventId: claim.evidence.externalEventId,
-          quote: claim.evidence.quote,
-          rawEventId: claim.evidence.rawEventId,
-        },
         kind: claim.kind,
-        text: claim.text,
+        text: claim.text.toLowerCase(),
         workspaceId: claim.workspaceId,
       }),
     )

@@ -95,6 +95,25 @@ export function insertClaimEventAndProject(
         .returning();
 
       const event = insertedEvent ?? (await findExistingClaimEvent(service, input));
+      const state = stateForEventType(input.eventType);
+      const [existingCurrentClaim] = await service.db
+        .select()
+        .from(currentClaims)
+        .where(
+          and(
+            eq(currentClaims.workspaceId, input.workspaceId),
+            eq(currentClaims.claimKey, input.claimKey),
+          ),
+        )
+        .limit(1);
+
+      if (
+        existingCurrentClaim !== undefined &&
+        !shouldProjectClaimEvent(existingCurrentClaim, state, observedAt)
+      ) {
+        return { currentClaim: existingCurrentClaim, event };
+      }
+
       const [currentClaim] = await service.db
         .insert(currentClaims)
         .values({
@@ -106,7 +125,7 @@ export function insertClaimEventAndProject(
           evidence: input.evidence as unknown as Record<string, unknown>,
           latestEventId: event.id,
           observedAt,
-          state: stateForEventType(input.eventType),
+          state,
           workspaceId: input.workspaceId,
         })
         .onConflictDoUpdate({
@@ -118,7 +137,7 @@ export function insertClaimEventAndProject(
             evidence: input.evidence as unknown as Record<string, unknown>,
             latestEventId: event.id,
             observedAt,
-            state: stateForEventType(input.eventType),
+            state,
             updatedAt: new Date(),
           },
           target: [currentClaims.workspaceId, currentClaims.claimKey],
@@ -186,6 +205,28 @@ function stateForEventType(eventType: ClaimEventType): ClaimState {
   if (eventType === "contradicted") return "contradicted";
   if (eventType === "rejected") return "rejected";
   return "candidate";
+}
+
+function shouldProjectClaimEvent(
+  existing: CurrentClaim,
+  nextState: ClaimState,
+  nextObservedAt: Date,
+): boolean {
+  const existingTime = existing.observedAt.getTime();
+  const nextTime = nextObservedAt.getTime();
+  if (nextTime < existingTime) return false;
+
+  const existingPrecedence = statePrecedence(existing.state);
+  const nextPrecedence = statePrecedence(nextState);
+  if (nextTime === existingTime) return nextPrecedence >= existingPrecedence;
+  return nextPrecedence >= existingPrecedence || existing.state === "candidate";
+}
+
+function statePrecedence(state: string): number {
+  if (state === "rejected") return 3;
+  if (state === "contradicted") return 2;
+  if (state === "supported") return 1;
+  return 0;
 }
 
 function errorMessage(cause: unknown): string {

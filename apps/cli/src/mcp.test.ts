@@ -20,4 +20,26 @@ describe("runMcpCommand", () => {
     expect(output[0]).toContain("get_active_context");
     expect(output[0]).toContain("search_memory");
   });
+
+  test("streams a response before stdin closes", async () => {
+    const output: string[] = [];
+    let release: (() => void) | undefined;
+    async function* openStream() {
+      yield `${JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" })}\n`;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+
+    const running = runMcpCommand(
+      [],
+      { ascii: true, color: "never", format: "records", isTty: false },
+      (text) => output.push(text),
+      openStream(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(output[0]).toContain("get_active_context");
+    release?.();
+    await running;
+  });
 });
