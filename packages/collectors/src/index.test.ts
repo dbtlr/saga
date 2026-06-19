@@ -14,7 +14,7 @@ describe("rawEventFromCodexHook", () => {
         turn_id: "turn-id",
       },
       {
-        sourceBinding: { id: "source-id" },
+        codexSourceBinding: { id: "codex-source-binding-id" },
         workspace: { id: "workspace-id" },
       },
       new Date("2026-06-19T20:00:00.000Z"),
@@ -23,6 +23,8 @@ describe("rawEventFromCodexHook", () => {
     expect(event).toEqual({
       actorId: "codex",
       eventType: "codex.UserPromptSubmit",
+      externalEventId:
+        "codex:UserPromptSubmit:session-id:turn-id:/tmp/transcript.jsonl:f3114fba88c28a5fe9930f1ae6ca09bd3c925e42c35317342abad7d002107f14",
       occurredAt: "2026-06-19T20:00:00.000Z",
       payload: {
         cwd: "/repo",
@@ -41,7 +43,8 @@ describe("rawEventFromCodexHook", () => {
         transcriptPath: "/tmp/transcript.jsonl",
       },
       sessionId: "session-id",
-      sourceId: "source-id",
+      sourceBindingId: "codex-source-binding-id",
+      sourceId: "codex:local",
       sourceType: "codex",
       traceId: "turn-id",
       trustLevel: "raw",

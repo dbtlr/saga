@@ -25,8 +25,11 @@ export interface WorkspaceBindingFile {
   harnesses?: {
     codex?: {
       hookCommand: string;
+      hookTrust: "requires-review";
       hooksPath: string;
       installedAt: string;
+      sourceBindingId: string;
+      sourceUri: "codex://local";
       target: "codex";
     };
   };

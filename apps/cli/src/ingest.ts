@@ -113,11 +113,20 @@ export async function captureCodexHook(input: CodexHookInput): Promise<CodexHook
     if (binding === undefined) {
       throw new Error("workspace binding is missing; run saga init");
     }
+    const codexSourceBinding = binding.harnesses?.codex;
+    if (codexSourceBinding === undefined) {
+      throw new Error("Codex harness is not installed; run saga harness install codex");
+    }
 
     const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
     const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
     try {
-      const event = rawEventFromCodexHook(input, binding);
+      const event = rawEventFromCodexHook(input, {
+        codexSourceBinding: {
+          id: codexSourceBinding.sourceBindingId,
+        },
+        workspace: binding.workspace,
+      });
       const row = await Effect.runPromise(insertRawEvent(service, event));
       return {
         accepted: true,
@@ -182,6 +191,7 @@ function renderRawEvents(rows: readonly RawEvent[], options: RenderOptions): str
 function rawEventValue(row: RawEvent): Record<string, unknown> {
   return {
     eventType: row.eventType,
+    externalEventId: row.externalEventId,
     id: row.id,
     ingestedAt: row.ingestedAt.toISOString(),
     occurredAt: row.occurredAt.toISOString(),

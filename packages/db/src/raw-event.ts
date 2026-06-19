@@ -19,26 +19,44 @@ export function insertRawEvent(
         .values({
           actorId: event.actorId,
           eventType: event.eventType,
+          externalEventId: event.externalEventId,
           ingestedAt:
             event.ingestedAt === undefined ? undefined : parseDate(event.ingestedAt, "ingestedAt"),
           occurredAt: parseDate(event.occurredAt, "occurredAt"),
           payload: event.payload,
           provenance: event.provenance,
           sessionId: event.sessionId,
-          sourceBindingId: event.sourceId,
+          sourceBindingId: event.sourceBindingId,
           sourceId: event.sourceId,
           sourceType: event.sourceType,
           traceId: event.traceId,
           trustLevel: event.trustLevel,
           workspaceId: event.workspaceId,
         })
+        .onConflictDoNothing({
+          target: [rawEvents.sourceType, rawEvents.sourceId, rawEvents.externalEventId],
+        })
         .returning();
 
-      if (row === undefined) {
+      if (row !== undefined) return row;
+
+      const [existing] = await service.db
+        .select()
+        .from(rawEvents)
+        .where(
+          and(
+            eq(rawEvents.sourceType, event.sourceType),
+            eq(rawEvents.sourceId, event.sourceId),
+            eq(rawEvents.externalEventId, event.externalEventId),
+          ),
+        )
+        .limit(1);
+
+      if (existing === undefined) {
         throw new RawEventInsertError({ message: "raw event insert returned no row" });
       }
 
-      return row;
+      return existing;
     },
     catch: (cause) =>
       cause instanceof RawEventInsertError

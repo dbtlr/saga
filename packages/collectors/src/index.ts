@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RawEventEnvelope } from "@saga/contracts";
 
 export const packageName = "@saga/collectors";
@@ -14,7 +15,7 @@ export interface CodexHookInput {
 }
 
 export interface CodexWorkspaceBinding {
-  sourceBinding: {
+  codexSourceBinding: {
     id: string;
   };
   workspace: {
@@ -31,6 +32,7 @@ export function rawEventFromCodexHook(
   return {
     actorId: "codex",
     eventType: `codex.${hookEventName}`,
+    externalEventId: codexExternalEventId(input, hookEventName),
     occurredAt: now.toISOString(),
     payload: { ...input },
     provenance: {
@@ -41,7 +43,8 @@ export function rawEventFromCodexHook(
       transcriptPath: input.transcript_path,
     },
     sessionId: input.session_id,
-    sourceId: binding.sourceBinding.id,
+    sourceBindingId: binding.codexSourceBinding.id,
+    sourceId: "codex:local",
     sourceType: "codex",
     traceId: input.turn_id,
     trustLevel: "raw",
@@ -52,4 +55,31 @@ export function rawEventFromCodexHook(
 function normalizeHookEventName(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized === undefined || normalized === "" ? "unknown" : normalized;
+}
+
+function codexExternalEventId(input: CodexHookInput, hookEventName: string): string {
+  const stableParts = [
+    "codex",
+    hookEventName,
+    input.session_id ?? "",
+    input.turn_id ?? "",
+    input.transcript_path ?? "",
+    stablePayloadHash(input),
+  ];
+  return stableParts.join(":");
+}
+
+function stablePayloadHash(input: CodexHookInput): string {
+  return createHash("sha256").update(stableJson(input)).digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

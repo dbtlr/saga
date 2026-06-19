@@ -115,11 +115,13 @@ describePostgres("postgres integration", () => {
       insertRawEvent(service, {
         actorId: "codex",
         eventType: "codex.Stop",
+        externalEventId: "codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test",
         occurredAt: "2026-06-19T20:00:00.000Z",
         payload: { hook_event_name: "Stop" },
         provenance: { transcriptPath: "/tmp/transcript.jsonl" },
         sessionId: "session-id",
-        sourceId: sourceBinding.id,
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
         sourceType: "codex",
         traceId: "turn-id",
         trustLevel: "raw",
@@ -130,6 +132,25 @@ describePostgres("postgres integration", () => {
     const rows = await service.db.select().from(rawEvents);
     expect(event.eventType).toBe("codex.Stop");
     expect(rows.some((row) => row.id === event.id)).toBe(true);
+
+    const duplicate = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.Stop",
+        externalEventId: "codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test",
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: { hook_event_name: "Stop" },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session-id",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-id",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    expect(duplicate.id).toBe(event.id);
 
     const recent = await Effect.runPromise(
       listRecentRawEvents(service, {
