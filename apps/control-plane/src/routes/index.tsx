@@ -58,20 +58,12 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
             <span>{formatTimestamp(snapshot.generatedAt)}</span>
           </div>
           {snapshot.activeContext === undefined ? (
-            <EmptyState message="Bind this repo with saga init and configure DATABASE_URL to preview Active Context." />
-          ) : (
-            <div className="context-sections">
-              {snapshot.activeContext.sections.map((section) => (
-                <article className="context-section" key={section.title}>
-                  <h3>{section.title}</h3>
-                  <ul>
-                    {section.lines.map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                </article>
-              ))}
+            <div className="context-preview">
+              <EmptyState message="Bind this repo with saga init and configure DATABASE_URL to preview Active Context." />
+              <ContextChangeStream snapshot={snapshot} />
             </div>
+          ) : (
+            <ActiveContextPreview snapshot={snapshot} />
           )}
         </section>
 
@@ -98,6 +90,77 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
         </aside>
       </div>
     </main>
+  );
+}
+
+function ActiveContextPreview({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
+  const context = snapshot.activeContext;
+  if (context === undefined) return null;
+
+  return (
+    <div className="context-preview">
+      <div className="context-sections">
+        {context.sections.map((section) => (
+          <article className="context-section" key={section.title}>
+            <div className="context-section-heading">
+              <h3>{section.title}</h3>
+              <span>{section.provenance.length.toString()} signals</span>
+            </div>
+            <ul>
+              {section.lines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <ProvenanceList provenance={section.provenance} />
+          </article>
+        ))}
+      </div>
+      <ContextChangeStream snapshot={snapshot} />
+    </div>
+  );
+}
+
+function ContextChangeStream({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
+  return (
+    <section className="context-change-stream" aria-labelledby="context-change-title">
+      <h3 id="context-change-title">Changed</h3>
+      {snapshot.recentActivity.length === 0 ? (
+        <EmptyState message="No recent activity captured yet." />
+      ) : (
+        <ol>
+          {snapshot.recentActivity.map((activity) => (
+            <li key={activity.id}>
+              <span>{formatTimestamp(activity.occurredAt)}</span>
+              <strong>{activity.eventType}</strong>
+              <small>
+                {activity.sourceType}
+                {activity.sessionId === undefined ? "" : ` · ${activity.sessionId}`}
+              </small>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function ProvenanceList({ provenance }: { provenance: readonly string[] }) {
+  if (provenance.length === 0) {
+    return <p className="provenance-empty">No provenance recorded.</p>;
+  }
+
+  return (
+    <dl className="provenance-list">
+      {provenance.map((item) => {
+        const [kind, ...rest] = item.split(":");
+        return (
+          <div key={item}>
+            <dt>{kind}</dt>
+            <dd title={item}>{rest.join(":") || item}</dd>
+          </div>
+        );
+      })}
+    </dl>
   );
 }
 

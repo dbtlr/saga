@@ -11,6 +11,7 @@ import {
   workspaces,
   type CurrentClaim,
   type DatabaseService,
+  type RawEvent,
   type SourceBinding,
 } from "@saga/db";
 import { loadRuntimeConfig, type SagaEnvironment } from "@saga/runtime";
@@ -47,6 +48,7 @@ export interface ControlPlaneSnapshot {
       }
     | undefined;
   projectRoot: string;
+  recentActivity: readonly ControlPlaneRecentActivity[];
   runtime: {
     database: "configured" | "missing";
     environment: SagaEnvironment;
@@ -70,6 +72,14 @@ export interface ControlPlaneSourceBinding {
   sourceType: string;
   sourceUri: string;
   updatedAt: string;
+}
+
+export interface ControlPlaneRecentActivity {
+  eventType: string;
+  id: string;
+  occurredAt: string;
+  sessionId: string | undefined;
+  sourceType: string;
 }
 
 export interface UpdateWorkspaceProfileInput {
@@ -129,6 +139,7 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       issues: [...configIssues, bindingResult.issue],
       profile: undefined,
       projectRoot,
+      recentActivity: [],
       runtime,
       sourceBindings: [],
       status: "unbound" as const,
@@ -148,6 +159,7 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       ],
       profile: undefined,
       projectRoot,
+      recentActivity: [],
       runtime,
       sourceBindings: [],
       status: "offline" as const,
@@ -164,6 +176,7 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       issues: [{ key: "database", message: serviceExit.cause.toString() }],
       profile: undefined,
       projectRoot,
+      recentActivity: [],
       runtime,
       sourceBindings: [],
       status: "offline" as const,
@@ -213,6 +226,7 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
         summary: profile?.summary ?? "",
       },
       projectRoot,
+      recentActivity: recentEvents.map(toControlPlaneRecentActivity),
       runtime,
       sourceBindings: bindings.map(toControlPlaneSourceBinding),
       status: "ready" as const,
@@ -226,6 +240,7 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       issues: [{ key: "database", message: errorMessage(cause) }],
       profile: undefined,
       projectRoot,
+      recentActivity: [],
       runtime,
       sourceBindings: [],
       status: "offline" as const,
@@ -382,6 +397,16 @@ function toControlPlaneSourceBinding(binding: SourceBinding): ControlPlaneSource
     sourceType: binding.sourceType,
     sourceUri: binding.sourceUri,
     updatedAt: binding.updatedAt.toISOString(),
+  };
+}
+
+function toControlPlaneRecentActivity(event: RawEvent): ControlPlaneRecentActivity {
+  return {
+    eventType: event.eventType,
+    id: event.id,
+    occurredAt: event.occurredAt.toISOString(),
+    sessionId: event.sessionId ?? undefined,
+    sourceType: event.sourceType,
   };
 }
 
