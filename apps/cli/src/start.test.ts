@@ -1,5 +1,12 @@
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { describe, expect, test } from "vitest";
-import { renderStartReport, runStartCommand } from "./start.js";
+import {
+  cliServiceCommand,
+  controlPlaneCommand,
+  renderStartReport,
+  runStartCommand,
+} from "./start.js";
 
 const renderOptions = {
   ascii: true,
@@ -42,26 +49,56 @@ describe("runStartCommand", () => {
 
   test("starts an embedded service when health is unreachable", async () => {
     const output: string[] = [];
-    let closed = false;
+    const serviceChild = new FakeChildProcess();
+    let healthChecks = 0;
 
     await expect(
       runStartCommand([], renderOptions, (text) => output.push(text), {
-        checkHealth: async () => "unreachable",
+        checkHealth: async () => {
+          healthChecks += 1;
+          return healthChecks === 1 ? "unreachable" : "ok (http://127.0.0.1:4766/health)";
+        },
         cwd: process.cwd(),
         env: {},
         spawnControlPlane: async () => 0,
-        startService: async () => ({
-          close: async () => {
-            closed = true;
-          },
-          host: "127.0.0.1",
-          port: 4766,
-          url: "http://127.0.0.1:4766",
-        }),
+        spawnService: () => serviceChild as unknown as ChildProcess,
       }),
     ).resolves.toBe(0);
 
     expect(output[0]).toContain("service  started");
-    expect(closed).toBe(true);
+    expect(serviceChild.signals).toContain("SIGTERM");
   });
 });
+
+describe("process command builders", () => {
+  test("builds the control-plane dev command through pnpm", () => {
+    expect(controlPlaneCommand({})).toEqual({
+      args: ["--filter", "@saga/control-plane", "dev"],
+      command: "pnpm",
+    });
+  });
+
+  test("builds the service command as a CLI process", () => {
+    const command = cliServiceCommand();
+
+    expect(command.command).toBe(process.execPath);
+    expect(command.args.at(-2)).toBe("service");
+    expect(command.args.at(-1)).toBe("run");
+  });
+});
+
+class FakeChildProcess extends EventEmitter {
+  exitCode: number | null = null;
+  killed = false;
+  signalCode: NodeJS.Signals | null = null;
+  readonly signals: NodeJS.Signals[] = [];
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    const normalizedSignal = typeof signal === "string" ? signal : "SIGTERM";
+    this.killed = true;
+    this.signalCode = normalizedSignal;
+    this.signals.push(normalizedSignal);
+    this.emit("exit", null, normalizedSignal);
+    return true;
+  }
+}
