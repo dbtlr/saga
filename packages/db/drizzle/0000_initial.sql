@@ -1,0 +1,2 @@
+-- Initial Drizzle migration placeholder.
+-- Domain tables are introduced in later migrations as bounded persistence lands.
