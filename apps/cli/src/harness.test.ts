@@ -126,6 +126,40 @@ describe("installHarness", () => {
     expect(existsSync(join(projectRoot, ".codex", "saga-codex-hook.sh"))).toBe(false);
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
+
+  test("records local binding before hook activation dependencies", async () => {
+    const projectRoot = boundProject();
+    mkdirSync(join(projectRoot, ".gitignore"));
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerCodexSource: async () => ({ id: "codex-source-id" }),
+        target: "codex",
+      }),
+    ).rejects.toThrow();
+
+    expect(readBindingFile(projectRoot)?.harnesses?.codex?.sourceBindingId).toBe("codex-source-id");
+    expect(existsSync(join(projectRoot, ".codex", "hooks.json"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".codex", "saga-codex-hook.sh"))).toBe(false);
+  });
+
+  test("rejects shape-invalid Codex hooks config before recording local harness state", async () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(hooksPath, JSON.stringify({ hooks: { Stop: {} } }));
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerCodexSource: async () => ({ id: "codex-source-id" }),
+        target: "codex",
+      }),
+    ).rejects.toThrow(`invalid Codex hooks file ${hooksPath}: expected hooks.Stop to be an array`);
+
+    expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
+  });
 });
 
 describe("inspectHarness", () => {
@@ -141,6 +175,20 @@ describe("inspectHarness", () => {
     expect(status.hookTrust).toBe("not installed");
     expect(status.hooksError).toContain(`invalid Codex hooks file ${hooksPath}:`);
   });
+
+  test("reports shape-invalid Codex hooks config", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(hooksPath, JSON.stringify({ hooks: { Stop: {} } }));
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.hooks).toBe("invalid");
+    expect(status.hooksError).toBe(
+      `invalid Codex hooks file ${hooksPath}: expected hooks.Stop to be an array`,
+    );
+  });
 });
 
 describe("uninstallHarness", () => {
@@ -152,6 +200,17 @@ describe("uninstallHarness", () => {
 
     expect(() => uninstallHarness({ cwd: projectRoot, target: "codex" })).toThrow(
       `invalid Codex hooks file ${hooksPath}:`,
+    );
+  });
+
+  test("reports shape-invalid Codex hooks config with path", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(hooksPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{}] }] } }));
+
+    expect(() => uninstallHarness({ cwd: projectRoot, target: "codex" })).toThrow(
+      `invalid Codex hooks file ${hooksPath}: expected hooks.Stop[0].hooks[0].command to be a string`,
     );
   });
 });
