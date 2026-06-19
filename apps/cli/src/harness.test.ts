@@ -145,7 +145,7 @@ describe("installHarness", () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test("records local binding before hook activation dependencies", async () => {
+  test("rolls back local binding when hook activation dependencies fail", async () => {
     const projectRoot = boundProject();
     mkdirSync(join(projectRoot, ".gitignore"));
 
@@ -157,7 +157,7 @@ describe("installHarness", () => {
       }),
     ).rejects.toThrow();
 
-    expect(readBindingFile(projectRoot)?.harnesses?.codex?.sourceBindingId).toBe("codex-source-id");
+    expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
     expect(existsSync(join(projectRoot, ".codex", "hooks.json"))).toBe(false);
     expect(existsSync(join(projectRoot, ".codex", "saga-codex-hook.sh"))).toBe(false);
   });
