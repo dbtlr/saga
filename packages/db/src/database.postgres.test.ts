@@ -159,4 +159,83 @@ describePostgres("postgres integration", () => {
     );
     expect(recent[0]?.id).toBe(event.id);
   });
+
+  test("scopes raw event idempotency to workspace", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [firstWorkspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `raw-first-${Date.now().toString(36)}`,
+      })
+      .returning();
+    const [secondWorkspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `raw-second-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (firstWorkspace === undefined || secondWorkspace === undefined) {
+      throw new Error("workspace insert returned no row");
+    }
+
+    const [firstSource] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: firstWorkspace.id,
+      })
+      .returning();
+    const [secondSource] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: secondWorkspace.id,
+      })
+      .returning();
+    if (firstSource === undefined || secondSource === undefined) {
+      throw new Error("source binding insert returned no row");
+    }
+
+    const sharedEvent = {
+      actorId: "codex",
+      eventType: "codex.Stop",
+      externalEventId: "codex:Stop:shared-session:shared-turn:/tmp/transcript.jsonl:test",
+      occurredAt: "2026-06-19T20:00:00.000Z",
+      payload: { hook_event_name: "Stop" },
+      provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+      sessionId: "shared-session",
+      sourceId: "codex:local",
+      sourceType: "codex",
+      traceId: "shared-turn",
+      trustLevel: "raw" as const,
+    };
+
+    const firstEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        ...sharedEvent,
+        sourceBindingId: firstSource.id,
+        workspaceId: firstWorkspace.id,
+      }),
+    );
+    const secondEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        ...sharedEvent,
+        sourceBindingId: secondSource.id,
+        workspaceId: secondWorkspace.id,
+      }),
+    );
+    const firstDuplicate = await Effect.runPromise(
+      insertRawEvent(service, {
+        ...sharedEvent,
+        sourceBindingId: firstSource.id,
+        workspaceId: firstWorkspace.id,
+      }),
+    );
+
+    expect(secondEvent.id).not.toBe(firstEvent.id);
+    expect(firstDuplicate.id).toBe(firstEvent.id);
+  });
 });

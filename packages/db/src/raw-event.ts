@@ -34,7 +34,12 @@ export function insertRawEvent(
           workspaceId: event.workspaceId,
         })
         .onConflictDoNothing({
-          target: [rawEvents.sourceType, rawEvents.sourceId, rawEvents.externalEventId],
+          target: [
+            rawEvents.workspaceId,
+            rawEvents.sourceType,
+            rawEvents.sourceId,
+            rawEvents.externalEventId,
+          ],
         })
         .returning();
 
@@ -45,6 +50,7 @@ export function insertRawEvent(
         .from(rawEvents)
         .where(
           and(
+            eq(rawEvents.workspaceId, event.workspaceId),
             eq(rawEvents.sourceType, event.sourceType),
             eq(rawEvents.sourceId, event.sourceId),
             eq(rawEvents.externalEventId, event.externalEventId),

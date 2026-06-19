@@ -89,6 +89,7 @@ export const rawEvents = pgTable(
     index("raw_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
     index("raw_events_source_session_idx").on(table.sourceType, table.sourceId, table.sessionId),
     uniqueIndex("raw_events_source_external_unique").on(
+      table.workspaceId,
       table.sourceType,
       table.sourceId,
       table.externalEventId,

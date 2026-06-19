@@ -1,5 +1,5 @@
 {
-  "id": "d698ce1c-2fe1-4bf0-a757-802f33e1fdee",
+  "id": "d2fa6b3e-0304-4189-8ff5-33d3073211f5",
   "prevId": "322d7b8b-17a4-46fb-9ed0-2c19ebe374d8",
   "version": "7",
   "dialect": "postgresql",
@@ -169,6 +169,12 @@
         "raw_events_source_external_unique": {
           "name": "raw_events_source_external_unique",
           "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "source_type",
               "isExpression": false,

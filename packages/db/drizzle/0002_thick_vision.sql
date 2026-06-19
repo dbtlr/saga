@@ -22,4 +22,4 @@ ALTER TABLE "raw_events" ADD CONSTRAINT "raw_events_workspace_id_workspaces_id_f
 ALTER TABLE "raw_events" ADD CONSTRAINT "raw_events_source_binding_id_source_bindings_id_fk" FOREIGN KEY ("source_binding_id") REFERENCES "public"."source_bindings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "raw_events_workspace_occurred_idx" ON "raw_events" USING btree ("workspace_id","occurred_at");--> statement-breakpoint
 CREATE INDEX "raw_events_source_session_idx" ON "raw_events" USING btree ("source_type","source_id","session_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "raw_events_source_external_unique" ON "raw_events" USING btree ("source_type","source_id","external_event_id");
+CREATE UNIQUE INDEX "raw_events_source_external_unique" ON "raw_events" USING btree ("workspace_id","source_type","source_id","external_event_id");
