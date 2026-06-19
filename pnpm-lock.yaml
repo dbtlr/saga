@@ -30,6 +30,24 @@ importers:
 
   apps/service: {}
 
+  packages/active-context: {}
+
+  packages/claims: {}
+
+  packages/collectors: {}
+
+  packages/connectors: {}
+
+  packages/contracts: {}
+
+  packages/core: {}
+
+  packages/db: {}
+
+  packages/mcp: {}
+
+  packages/runtime: {}
+
 packages:
 
   '@babel/code-frame@7.29.7':
