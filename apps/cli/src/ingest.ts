@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
+import { extractCandidateClaimsFromRawEvents } from "@saga/claims";
 import { rawEventFromCodexHook, type CodexHookInput } from "@saga/collectors";
-import { insertRawEvent, listRecentRawEvents, makeDatabase, type RawEvent } from "@saga/db";
+import {
+  insertExtractedCandidateClaims,
+  insertRawEvent,
+  listRecentRawEvents,
+  makeDatabase,
+  type ClaimProjectionResult,
+  type RawEvent,
+} from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { findProjectRoot, readBindingFile } from "./init.js";
@@ -21,6 +29,12 @@ export interface IngestCodexHookOptions {
   stdin?: string | undefined;
 }
 
+export interface ClaimIngestResult {
+  candidates: number;
+  projected: number;
+  rawEvents: number;
+}
+
 export async function runIngestCommand(
   args: readonly string[],
   options: RenderOptions,
@@ -32,6 +46,10 @@ export async function runIngestCommand(
 
   if (subcommand === "recent") {
     return inspectRecentRawEvents({ limit: parseLimit(args[1]) }, options);
+  }
+
+  if (subcommand === "claims") {
+    return ingestClaims({ limit: parseLimit(args[1]) }, options);
   }
 
   throw new Error(`ingest ${subcommand ?? ""} is not implemented yet`.trim());
@@ -106,6 +124,48 @@ export async function inspectRecentRawEvents(
   }
 }
 
+export async function ingestClaims(
+  input: { cwd?: string; limit?: number | undefined },
+  options: RenderOptions,
+): Promise<string> {
+  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
+    throw new Error("workspace binding is missing; run saga init");
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    const rawEvents = await Effect.runPromise(
+      listRecentRawEvents(service, {
+        limit: input.limit ?? 50,
+        workspaceId: binding.workspace.id,
+      }),
+    );
+    const candidates = extractCandidateClaimsFromRawEvents(rawEvents);
+    const projections = await Effect.runPromise(
+      insertExtractedCandidateClaims(service, candidates),
+    );
+    const result: ClaimIngestResult = {
+      candidates: candidates.length,
+      projected: projections.length,
+      rawEvents: rawEvents.length,
+    };
+
+    return formatCommandOutput(
+      {
+        id: "claims",
+        records: renderClaimIngest(result, projections, options),
+        value: result,
+      },
+      options.format,
+    );
+  } finally {
+    await Effect.runPromise(service.close());
+  }
+}
+
 export async function captureCodexHook(input: CodexHookInput): Promise<CodexHookIngestResult> {
   try {
     const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
@@ -145,6 +205,26 @@ export async function captureCodexHook(input: CodexHookInput): Promise<CodexHook
       source: "codex",
     };
   }
+}
+
+function renderClaimIngest(
+  result: ClaimIngestResult,
+  projections: readonly ClaimProjectionResult[],
+  options: RenderOptions,
+): string {
+  return recordBlock(
+    "Claim ingest",
+    [
+      { label: "raw events", value: String(result.rawEvents) },
+      { label: "candidates", value: String(result.candidates) },
+      { label: "projected", value: String(result.projected) },
+      ...projections.slice(0, 5).map((projection, index) => ({
+        label: `claim ${String(index + 1)}`,
+        value: projection.currentClaim.claimText,
+      })),
+    ],
+    options,
+  );
 }
 
 function parseCodexHookInput(stdin: string): CodexHookInput {

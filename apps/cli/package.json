@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@saga/active-context": "workspace:*",
+    "@saga/claims": "workspace:*",
     "@saga/collectors": "workspace:*",
     "@saga/db": "workspace:*",
     "@saga/mcp": "workspace:*",

@@ -45,7 +45,7 @@ export const COMMANDS = {
   context: { description: "preview compiled Active Context" },
   ingest: {
     description: "manually ingest source data for debugging",
-    subcommands: ["codex-hook", "recent"],
+    subcommands: ["codex-hook", "recent", "claims"],
   },
 } as const satisfies Record<string, CommandDefinition>;
 

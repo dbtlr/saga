@@ -32,6 +32,9 @@ importers:
       '@saga/active-context':
         specifier: workspace:*
         version: link:../../packages/active-context
+      '@saga/claims':
+        specifier: workspace:*
+        version: link:../../packages/claims
       '@saga/collectors':
         specifier: workspace:*
         version: link:../../packages/collectors
