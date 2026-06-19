@@ -12,6 +12,8 @@ describe("readControlPlaneSnapshot", () => {
     expect(snapshot.status).toBe("unbound");
     expect(snapshot.binding).toBeUndefined();
     expect(snapshot.activeContext).toBeUndefined();
+    expect(snapshot.profile).toBeUndefined();
+    expect(snapshot.sourceBindings).toEqual([]);
     expect(snapshot.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -38,7 +40,9 @@ describe("readControlPlaneSnapshot", () => {
 
     expect(snapshot.status).toBe("offline");
     expect(snapshot.binding?.workspace.handle).toBe("demo");
+    expect(snapshot.profile).toBeUndefined();
     expect(snapshot.runtime.database).toBe("missing");
+    expect(snapshot.sourceBindings).toEqual([]);
     expect(snapshot.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

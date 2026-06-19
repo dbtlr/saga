@@ -4,7 +4,10 @@ import appCss from "../styles.css?url";
 export const Route = createRootRoute({
   component: RootDocument,
   head: () => ({
-    links: [{ href: appCss, rel: "stylesheet" }],
+    links: [
+      { href: appCss, rel: "stylesheet" },
+      { href: "data:,", rel: "icon" },
+    ],
     meta: [
       { charSet: "utf-8" },
       { content: "width=device-width, initial-scale=1", name: "viewport" },

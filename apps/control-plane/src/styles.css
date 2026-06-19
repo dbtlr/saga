@@ -29,6 +29,42 @@ select {
   font: inherit;
 }
 
+button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #2f5e4b;
+  background: #2f5e4b;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:disabled {
+  border-color: #c7cec4;
+  background: #dfe4dc;
+  color: #7b847e;
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #c8d0c4;
+  background: #ffffff;
+  color: #1b2420;
+}
+
+input {
+  height: 36px;
+  padding: 0 10px;
+}
+
+textarea {
+  min-height: 112px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
 .app-shell {
   width: min(1440px, 100%);
   margin: 0 auto;
@@ -211,6 +247,89 @@ select {
 .side-surface h2 {
   margin-bottom: 12px;
   font-size: 1rem;
+}
+
+.section-heading-row,
+.source-heading,
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-heading-row span,
+.form-actions small {
+  min-height: 1.2em;
+  color: #65716b;
+  font-size: 0.78rem;
+}
+
+.stack-form,
+.source-list,
+.source-binding-form {
+  display: grid;
+  gap: 12px;
+}
+
+.stack-form {
+  margin-bottom: 18px;
+}
+
+.stack-form label,
+.source-binding-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #65716b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.source-binding-form {
+  padding: 12px 0;
+  border-top: 1px solid #e7ebe3;
+}
+
+.source-binding-form:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.source-binding-form:last-child {
+  padding-bottom: 0;
+}
+
+.source-heading {
+  align-items: start;
+}
+
+.source-heading div {
+  min-width: 0;
+}
+
+.source-heading strong,
+.source-heading span {
+  display: block;
+}
+
+.source-heading span {
+  overflow: hidden;
+  color: #65716b;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle-label {
+  grid-template-columns: auto auto;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.toggle-label input {
+  width: 16px;
+  height: 16px;
 }
 
 .definition-list {

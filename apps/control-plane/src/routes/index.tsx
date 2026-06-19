@@ -1,5 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getControlPlaneSnapshot } from "../server/functions.js";
+import { useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { useState, useTransition, type FormEvent } from "react";
+import {
+  getControlPlaneSnapshot,
+  saveSourceBinding,
+  saveWorkspaceProfile,
+} from "../server/functions.js";
 import type { ControlPlaneSnapshot } from "../server/control-plane.js";
 
 export const Route = createFileRoute("/")({
@@ -69,16 +76,8 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
         </section>
 
         <aside className="surface side-surface" aria-label="Workspace details">
-          <section>
-            <h2>Binding</h2>
-            <DefinitionList
-              rows={[
-                ["Project", snapshot.projectRoot],
-                ["Workspace", snapshot.binding?.workspace.id ?? "Not registered"],
-                ["Source", snapshot.binding?.sourceBindingId ?? "Not registered"],
-              ]}
-            />
-          </section>
+          <WorkspaceProfilePanel snapshot={snapshot} />
+          <SourceBindingsPanel snapshot={snapshot} />
           <section>
             <h2>Claims</h2>
             {snapshot.claims.length === 0 ? (
@@ -99,6 +98,154 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
         </aside>
       </div>
     </main>
+  );
+}
+
+function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
+  const router = useRouter();
+  const saveProfile = useServerFn(saveWorkspaceProfile);
+  const [displayName, setDisplayName] = useState(snapshot.profile?.displayName ?? "");
+  const [summary, setSummary] = useState(snapshot.profile?.summary ?? "");
+  const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const canEdit = snapshot.status === "ready";
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit) return;
+    startTransition(async () => {
+      await saveProfile({ data: { displayName, summary } });
+      setMessage("Saved");
+      await router.invalidate();
+    });
+  }
+
+  return (
+    <section>
+      <div className="section-heading-row">
+        <h2>Workspace</h2>
+        <span>{message}</span>
+      </div>
+      <form className="stack-form" onSubmit={submit}>
+        <label>
+          <span>Display name</span>
+          <input
+            disabled={!canEdit || isPending}
+            onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+            value={displayName}
+          />
+        </label>
+        <label>
+          <span>Summary</span>
+          <textarea
+            disabled={!canEdit || isPending}
+            onChange={(event) => setSummary((event.target as HTMLTextAreaElement).value)}
+            rows={5}
+            value={summary}
+          />
+        </label>
+        <button disabled={!canEdit || isPending} type="submit">
+          Save
+        </button>
+      </form>
+      <DefinitionList
+        rows={[
+          ["Project", snapshot.projectRoot],
+          ["Workspace", snapshot.binding?.workspace.id ?? "Not registered"],
+        ]}
+      />
+    </section>
+  );
+}
+
+function SourceBindingsPanel({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
+  if (snapshot.sourceBindings.length === 0) {
+    return (
+      <section>
+        <h2>Sources</h2>
+        <EmptyState message="No source bindings registered yet." />
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <h2>Sources</h2>
+      <div className="source-list">
+        {snapshot.sourceBindings.map((source) => (
+          <SourceBindingForm
+            canEdit={snapshot.status === "ready"}
+            key={source.id}
+            source={source}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceBindingForm({
+  canEdit,
+  source,
+}: {
+  canEdit: boolean;
+  source: ControlPlaneSnapshot["sourceBindings"][number];
+}) {
+  const router = useRouter();
+  const saveBinding = useServerFn(saveSourceBinding);
+  const [displayName, setDisplayName] = useState(source.displayName);
+  const [enabled, setEnabled] = useState(source.enabled);
+  const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit) return;
+    startTransition(async () => {
+      await saveBinding({
+        data: {
+          displayName,
+          enabled,
+          id: source.id,
+        },
+      });
+      setMessage("Saved");
+      await router.invalidate();
+    });
+  }
+
+  return (
+    <form className="source-binding-form" onSubmit={submit}>
+      <div className="source-heading">
+        <div>
+          <strong>{source.sourceType}</strong>
+          <span title={source.sourceUri}>{source.sourceUri}</span>
+        </div>
+        <label className="toggle-label">
+          <input
+            checked={enabled}
+            disabled={!canEdit || isPending}
+            onChange={(event) => setEnabled((event.target as HTMLInputElement).checked)}
+            type="checkbox"
+          />
+          <span>Enabled</span>
+        </label>
+      </div>
+      <label>
+        <span>Display name</span>
+        <input
+          disabled={!canEdit || isPending}
+          onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+          value={displayName}
+        />
+      </label>
+      <div className="form-actions">
+        <small>{message}</small>
+        <button disabled={!canEdit || isPending} type="submit">
+          Save
+        </button>
+      </div>
+    </form>
   );
 }
 

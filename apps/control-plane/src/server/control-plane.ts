@@ -6,11 +6,15 @@ import {
   listCurrentClaims,
   listRecentRawEvents,
   makeDatabase,
+  sourceBindings,
   workspaceProfiles,
+  workspaces,
   type CurrentClaim,
+  type DatabaseService,
+  type SourceBinding,
 } from "@saga/db";
 import { loadRuntimeConfig, type SagaEnvironment } from "@saga/runtime";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Effect, Exit } from "effect";
 
 const BINDING_FILE_NAME = ".saga.local.json";
@@ -36,12 +40,19 @@ export interface ControlPlaneSnapshot {
   claims: readonly ControlPlaneClaim[];
   generatedAt: string;
   issues: readonly ControlPlaneIssue[];
+  profile:
+    | {
+        displayName: string;
+        summary: string;
+      }
+    | undefined;
   projectRoot: string;
   runtime: {
     database: "configured" | "missing";
     environment: SagaEnvironment;
     serviceUrl: string;
   };
+  sourceBindings: readonly ControlPlaneSourceBinding[];
   status: ControlPlaneStatus;
 }
 
@@ -50,6 +61,26 @@ export interface ControlPlaneClaim {
   key: string;
   state: string;
   text: string;
+}
+
+export interface ControlPlaneSourceBinding {
+  displayName: string;
+  enabled: boolean;
+  id: string;
+  sourceType: string;
+  sourceUri: string;
+  updatedAt: string;
+}
+
+export interface UpdateWorkspaceProfileInput {
+  displayName: string;
+  summary: string;
+}
+
+export interface UpdateSourceBindingInput {
+  displayName: string;
+  enabled: boolean;
+  id: string;
 }
 
 interface WorkspaceBindingFile {
@@ -96,8 +127,10 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       claims: [],
       generatedAt,
       issues: [...configIssues, bindingResult.issue],
+      profile: undefined,
       projectRoot,
       runtime,
+      sourceBindings: [],
       status: "unbound" as const,
     } satisfies ControlPlaneSnapshot;
   }
@@ -113,8 +146,10 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
         ...configIssues,
         { key: "DATABASE_URL", message: "Set DATABASE_URL before reading workspace memory." },
       ],
+      profile: undefined,
       projectRoot,
       runtime,
+      sourceBindings: [],
       status: "offline" as const,
     } satisfies ControlPlaneSnapshot;
   }
@@ -127,19 +162,27 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       claims: [],
       generatedAt,
       issues: [{ key: "database", message: serviceExit.cause.toString() }],
+      profile: undefined,
       projectRoot,
       runtime,
+      sourceBindings: [],
       status: "offline" as const,
     } satisfies ControlPlaneSnapshot;
   }
 
   const service = serviceExit.value;
   try {
+    const [workspace] = await service.db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, binding.workspace.id))
+      .limit(1);
     const [profile] = await service.db
       .select()
       .from(workspaceProfiles)
       .where(eq(workspaceProfiles.workspaceId, binding.workspace.id))
       .limit(1);
+    const bindings = await listWorkspaceSourceBindings(service, binding.workspace.id);
     const claims = await Effect.runPromise(
       listCurrentClaims(service, { limit: 8, workspaceId: binding.workspace.id }),
     );
@@ -165,8 +208,13 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       claims: claims.map(toControlPlaneClaim),
       generatedAt,
       issues: [],
+      profile: {
+        displayName: workspace?.displayName ?? binding.workspace.handle,
+        summary: profile?.summary ?? "",
+      },
       projectRoot,
       runtime,
+      sourceBindings: bindings.map(toControlPlaneSourceBinding),
       status: "ready" as const,
     } satisfies ControlPlaneSnapshot;
   } catch (cause) {
@@ -176,10 +224,72 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       claims: [],
       generatedAt,
       issues: [{ key: "database", message: errorMessage(cause) }],
+      profile: undefined,
       projectRoot,
       runtime,
+      sourceBindings: [],
       status: "offline" as const,
     } satisfies ControlPlaneSnapshot;
+  } finally {
+    await Effect.runPromise(service.close());
+  }
+}
+
+export async function updateWorkspaceProfile(input: UpdateWorkspaceProfileInput): Promise<void> {
+  await withBoundDatabase(async ({ binding, service }) => {
+    const now = new Date();
+    await service.db
+      .update(workspaces)
+      .set({
+        displayName: emptyToUndefined(input.displayName),
+        updatedAt: now,
+      })
+      .where(eq(workspaces.id, binding.workspace.id));
+    await service.db
+      .insert(workspaceProfiles)
+      .values({
+        profile: {},
+        summary: emptyToUndefined(input.summary),
+        workspaceId: binding.workspace.id,
+      })
+      .onConflictDoUpdate({
+        set: {
+          summary: emptyToUndefined(input.summary),
+          updatedAt: now,
+        },
+        target: workspaceProfiles.workspaceId,
+      });
+  });
+}
+
+export async function updateSourceBinding(input: UpdateSourceBindingInput): Promise<void> {
+  await withBoundDatabase(async ({ binding, service }) => {
+    await service.db
+      .update(sourceBindings)
+      .set({
+        displayName: emptyToUndefined(input.displayName),
+        enabled: input.enabled,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(sourceBindings.workspaceId, binding.workspace.id), eq(sourceBindings.id, input.id)),
+      );
+  });
+}
+
+async function withBoundDatabase<T>(
+  callback: (input: { binding: WorkspaceBindingFile; service: DatabaseService }) => Promise<T>,
+): Promise<T> {
+  const projectRoot = findProjectRoot(process.cwd());
+  const bindingResult = readBindingFile(projectRoot);
+  if (bindingResult.issue !== undefined) {
+    throw new Error(bindingResult.issue.message);
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    return await callback({ binding: bindingResult.binding, service });
   } finally {
     await Effect.runPromise(service.close());
   }
@@ -262,6 +372,33 @@ function toControlPlaneClaim(claim: CurrentClaim): ControlPlaneClaim {
     state: claim.state,
     text: claim.claimText,
   };
+}
+
+function toControlPlaneSourceBinding(binding: SourceBinding): ControlPlaneSourceBinding {
+  return {
+    displayName: binding.displayName ?? binding.sourceType,
+    enabled: binding.enabled,
+    id: binding.id,
+    sourceType: binding.sourceType,
+    sourceUri: binding.sourceUri,
+    updatedAt: binding.updatedAt.toISOString(),
+  };
+}
+
+function listWorkspaceSourceBindings(
+  service: DatabaseService,
+  workspaceId: string,
+): Promise<SourceBinding[]> {
+  return service.db
+    .select()
+    .from(sourceBindings)
+    .where(eq(sourceBindings.workspaceId, workspaceId))
+    .orderBy(sourceBindings.sourceType, sourceBindings.sourceUri);
+}
+
+function emptyToUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function errorMessage(cause: unknown): string {
