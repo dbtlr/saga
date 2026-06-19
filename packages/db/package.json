@@ -12,7 +12,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "test": "vp test run --passWithNoTests"
+    "test": "vp test run --passWithNoTests",
+    "test:postgres": "vp test run src/database.postgres.test.ts"
   },
   "dependencies": {
     "@saga/runtime": "workspace:*",
