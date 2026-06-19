@@ -64,10 +64,24 @@ describe("run", () => {
     expect(output).toEqual(["[err] unknown command: nope"]);
   });
 
-  test("keeps not-yet-implemented commands as placeholder failures", async () => {
+  test("dispatches start through the start handler", async () => {
     const output: string[] = [];
-    await expect(run(["start"], (text) => output.push(text))).resolves.toBe(1);
-    expect(output).toEqual(["start is not implemented yet"]);
+    const handlers: CommandHandlers = {
+      context: async () => "context",
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
+      init: async () => "init",
+      mcp: async () => "mcp",
+      service: async () => "service",
+      start: async (_args, _options, write) => {
+        write("start launched");
+        return 0;
+      },
+    };
+
+    await expect(run(["start"], (text) => output.push(text), handlers)).resolves.toBe(0);
+    expect(output).toEqual(["start launched"]);
   });
 
   test("dispatches init through the init handler", async () => {
@@ -80,6 +94,7 @@ describe("run", () => {
       init: async (args) => `init ${args.join(",")}`,
       mcp: async () => "mcp",
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(run(["init", "custom"], (text) => output.push(text), handlers)).resolves.toBe(0);
@@ -96,6 +111,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(run(["doctor"], (text) => output.push(text), handlers)).resolves.toBe(0);
@@ -112,6 +128,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async (args) => `service ${args.join(",")}`,
+      start: async () => 0,
     };
 
     await expect(run(["service", "status"], (text) => output.push(text), handlers)).resolves.toBe(
@@ -137,6 +154,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(
@@ -155,6 +173,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(
@@ -173,6 +192,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(run(["context"], (text) => output.push(text), handlers)).resolves.toBe(0);
@@ -192,6 +212,7 @@ describe("run", () => {
         return undefined;
       },
       service: async () => "service",
+      start: async () => 0,
     };
 
     await expect(run(["mcp"], (text) => output.push(text), handlers)).resolves.toBe(0);

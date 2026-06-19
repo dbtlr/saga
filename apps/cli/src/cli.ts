@@ -5,6 +5,7 @@ import { runIngestCommand } from "./ingest.js";
 import { runInit } from "./init.js";
 import { runMcpCommand } from "./mcp.js";
 import { runServiceCommand } from "./service.js";
+import { runStartCommand } from "./start.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
 export type OutputFormat = "records" | "json" | "jsonl" | "ids";
@@ -81,6 +82,7 @@ export interface CommandHandlers {
   init: typeof runInit;
   mcp: typeof runMcpCommand;
   service: typeof runServiceCommand;
+  start: typeof runStartCommand;
 }
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
@@ -91,6 +93,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   init: runInit,
   mcp: runMcpCommand,
   service: runServiceCommand,
+  start: runStartCommand,
 };
 
 const COMMAND_HELP = Object.entries(COMMANDS)
@@ -251,6 +254,9 @@ export async function run(
     if (parsed.command === "service") {
       write(await handlers.service(parsed.args, renderOptions));
       return 0;
+    }
+    if (parsed.command === "start") {
+      return handlers.start(parsed.args, renderOptions, write);
     }
 
     write(`${parsed.command} is not implemented yet`);
