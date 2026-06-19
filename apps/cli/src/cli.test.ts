@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { HELP_TEXT, parseArgs, run } from "./cli.js";
+import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from "./cli.js";
 
 describe("parseArgs", () => {
   test("parses global flags and command arguments", () => {
@@ -24,6 +24,21 @@ describe("parseArgs", () => {
 });
 
 describe("run", () => {
+  test("help lists reserved command groups", () => {
+    expect(HELP_TEXT).toContain("service");
+    expect(HELP_TEXT).toContain("harness");
+    expect(Object.keys(COMMANDS)).toEqual([
+      "init",
+      "doctor",
+      "start",
+      "service",
+      "harness",
+      "mcp",
+      "context",
+      "ingest",
+    ]);
+  });
+
   test("prints help without a command", () => {
     const output: string[] = [];
     expect(run([], (text) => output.push(text))).toBe(0);
@@ -46,5 +61,45 @@ describe("run", () => {
     const output: string[] = [];
     expect(run(["--ascii", "nope"], (text) => output.push(text))).toBe(2);
     expect(output).toEqual(["[err] unknown command: nope"]);
+  });
+
+  test("reserves known commands with placeholder behavior", () => {
+    const output: string[] = [];
+    expect(run(["doctor"], (text) => output.push(text))).toBe(1);
+    expect(output).toEqual(["doctor is not implemented yet"]);
+  });
+});
+
+describe("validateCommand", () => {
+  test("requires reserved service subcommands", () => {
+    expect(() =>
+      validateCommand({
+        args: [],
+        command: "service",
+        options: {
+          ascii: false,
+          color: "auto",
+          format: "records",
+          help: false,
+          version: false,
+        },
+      }),
+    ).toThrow("service: missing subcommand");
+  });
+
+  test("accepts reserved harness subcommands", () => {
+    expect(() =>
+      validateCommand({
+        args: ["install", "codex"],
+        command: "harness",
+        options: {
+          ascii: false,
+          color: "auto",
+          format: "records",
+          help: false,
+          version: false,
+        },
+      }),
+    ).not.toThrow();
   });
 });
