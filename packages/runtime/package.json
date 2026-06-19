@@ -7,5 +7,9 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "effect": "^3.21.4"
   }
 }

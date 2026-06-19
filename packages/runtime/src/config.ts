@@ -1,0 +1,160 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { parse as parseDotenv } from "dotenv";
+import { Context, Data, Effect, Layer } from "effect";
+
+export type SagaEnvironment = "development" | "test" | "production";
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface RuntimeConfig {
+  databaseUrl: string | undefined;
+  environment: SagaEnvironment;
+  logLevel: LogLevel;
+  secrets: {
+    openaiApiKey: string | undefined;
+  };
+}
+
+export interface RedactedRuntimeConfig {
+  databaseUrl: string | undefined;
+  environment: SagaEnvironment;
+  logLevel: LogLevel;
+  secrets: {
+    openaiApiKey: string | undefined;
+  };
+}
+
+export interface ConfigIssue {
+  key: string;
+  message: string;
+}
+
+export class ConfigError extends Data.TaggedError("ConfigError")<{
+  readonly issues: readonly ConfigIssue[];
+}> {}
+
+export interface LoadRuntimeConfigOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  envFiles?: readonly string[];
+}
+
+export const RuntimeConfigTag = Context.GenericTag<RuntimeConfig>("@saga/runtime/RuntimeConfig");
+
+export function RuntimeConfigLive(
+  options: LoadRuntimeConfigOptions = {},
+): Layer.Layer<RuntimeConfig, ConfigError> {
+  return Layer.effect(RuntimeConfigTag, loadRuntimeConfig(options));
+}
+
+const DEFAULT_ENV_FILES = [".env", ".env.local"] as const;
+const DEFAULT_ENVIRONMENT: SagaEnvironment = "development";
+const DEFAULT_LOG_LEVEL: LogLevel = "info";
+const REDACTED = "<redacted>";
+
+export function loadLocalEnv(
+  cwd = process.cwd(),
+  envFiles: readonly string[] = DEFAULT_ENV_FILES,
+): Record<string, string> {
+  const loaded: Record<string, string> = {};
+
+  for (const envFile of envFiles) {
+    const path = resolve(cwd, envFile);
+    if (!existsSync(path)) continue;
+    Object.assign(loaded, parseDotenv(readFileSync(path)));
+  }
+
+  return loaded;
+}
+
+export function loadRuntimeConfig(
+  options: LoadRuntimeConfigOptions = {},
+): Effect.Effect<RuntimeConfig, ConfigError> {
+  return Effect.sync(() => {
+    const env = mergeEnv(loadLocalEnv(options.cwd, options.envFiles), options.env ?? process.env);
+    return parseRuntimeConfig(env);
+  }).pipe(
+    Effect.flatMap((result) =>
+      result.issues.length === 0
+        ? Effect.succeed(result.config)
+        : Effect.fail(new ConfigError({ issues: result.issues })),
+    ),
+  );
+}
+
+export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
+  config: RuntimeConfig;
+  issues: readonly ConfigIssue[];
+} {
+  const issues: ConfigIssue[] = [];
+  const environment = parseEnum(
+    env.SAGA_ENV,
+    ["development", "test", "production"],
+    DEFAULT_ENVIRONMENT,
+    "SAGA_ENV",
+    issues,
+  );
+  const logLevel = parseEnum(
+    env.SAGA_LOG_LEVEL,
+    ["debug", "info", "warn", "error"],
+    DEFAULT_LOG_LEVEL,
+    "SAGA_LOG_LEVEL",
+    issues,
+  );
+
+  const config: RuntimeConfig = {
+    databaseUrl: optionalString(env.DATABASE_URL),
+    environment,
+    logLevel,
+    secrets: {
+      openaiApiKey: optionalString(env.OPENAI_API_KEY),
+    },
+  };
+
+  return { config, issues };
+}
+
+export function redactRuntimeConfig(config: RuntimeConfig): RedactedRuntimeConfig {
+  return {
+    databaseUrl: redactSecret(config.databaseUrl),
+    environment: config.environment,
+    logLevel: config.logLevel,
+    secrets: {
+      openaiApiKey: redactSecret(config.secrets.openaiApiKey),
+    },
+  };
+}
+
+function mergeEnv(
+  localEnv: Record<string, string>,
+  processEnv: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return { ...localEnv, ...processEnv };
+}
+
+function optionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function parseEnum<const Value extends string>(
+  value: string | undefined,
+  allowed: readonly Value[],
+  fallback: Value,
+  key: string,
+  issues: ConfigIssue[],
+): Value {
+  const normalized = optionalString(value);
+  if (normalized === undefined) return fallback;
+  if (allowed.includes(normalized as Value)) return normalized as Value;
+
+  issues.push({
+    key,
+    message: `expected one of ${allowed.join(", ")}`,
+  });
+  return fallback;
+}
+
+function redactSecret(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : REDACTED;
+}
