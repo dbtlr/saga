@@ -14,7 +14,8 @@ export interface CodexHarnessStatus {
   binding: "installed" | "missing";
   hookCommand: string;
   hookTrust: "not installed" | "requires review";
-  hooks: "installed" | "missing";
+  hooks: "installed" | "invalid" | "missing";
+  hooksError?: string;
   hooksPath: string;
   mcp: "deferred";
   target: "codex";
@@ -35,6 +36,15 @@ interface HookMatcher {
 interface CodexHooksFile {
   hooks?: Record<string, HookMatcher[]>;
 }
+
+interface CodexHooksParseError {
+  message: string;
+  path: string;
+}
+
+type CodexHooksReadResult =
+  | { file: CodexHooksFile; ok: true }
+  | { error: CodexHooksParseError; ok: false };
 
 const CODEX_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
 const LEGACY_CODEX_HOOK_COMMAND = "saga ingest codex-hook";
@@ -79,16 +89,16 @@ export async function installHarness(input: {
     throw new Error(`run saga init before installing the ${input.target} harness`);
   }
 
+  const codexSourceBinding = await (input.registerCodexSource ?? registerCodexSourceBinding)(
+    projectRoot,
+    binding.workspace.id,
+  );
   const hooksPath = codexHooksPath(projectRoot);
   const hookCommand = installCodexHookShim(projectRoot);
   const hooksFile = readCodexHooksFile(hooksPath);
   const nextHooksFile = installSagaCodexHooks(hooksFile, hookCommand);
   writeJsonFile(hooksPath, nextHooksFile);
   ensureGitignoreEntry(projectRoot, ".codex/");
-  const codexSourceBinding = await (input.registerCodexSource ?? registerCodexSourceBinding)(
-    projectRoot,
-    binding.workspace.id,
-  );
 
   const installedAt = new Date().toISOString();
   writeBindingFile(projectRoot, {
@@ -120,12 +130,10 @@ export function uninstallHarness(input: {
   const hooksPath = codexHooksPath(projectRoot);
 
   if (existsSync(hooksPath)) {
+    const hooksFile = readCodexHooksFile(hooksPath);
     writeJsonFile(
       hooksPath,
-      uninstallSagaCodexHooks(
-        readCodexHooksFile(hooksPath),
-        binding?.harnesses?.codex?.hookCommand,
-      ),
+      uninstallSagaCodexHooks(hooksFile, binding?.harnesses?.codex?.hookCommand),
     );
   }
 
@@ -151,7 +159,21 @@ function inspectCodexHarness(projectRoot: string): CodexHarnessStatus {
   const hooksPath = codexHooksPath(projectRoot);
   const binding = readBindingFile(projectRoot);
   const hookCommand = binding?.harnesses?.codex?.hookCommand ?? codexHookShimCommand(projectRoot);
-  const hooksInstalled = hasSagaCodexHooks(readCodexHooksFile(hooksPath), hookCommand);
+  const hooksFile = tryReadCodexHooksFile(hooksPath);
+  if (!hooksFile.ok) {
+    return {
+      binding: binding?.harnesses?.codex === undefined ? "missing" : "installed",
+      hookCommand,
+      hooks: "invalid",
+      hooksError: formatCodexHooksParseError(hooksFile.error),
+      hookTrust: "not installed",
+      hooksPath,
+      mcp: "deferred",
+      target: "codex",
+    };
+  }
+
+  const hooksInstalled = hasSagaCodexHooks(hooksFile.file, hookCommand);
   return {
     binding: binding?.harnesses?.codex === undefined ? "missing" : "installed",
     hookCommand,
@@ -177,6 +199,9 @@ function formatHarnessResult(
           { label: "target", value: status.target },
           { label: "binding", value: status.binding },
           { label: "hooks", value: status.hooks },
+          ...(status.hooksError === undefined
+            ? []
+            : [{ label: "hooks error", value: status.hooksError }]),
           { label: "hook trust", value: status.hookTrust },
           { label: "hooks path", value: status.hooksPath },
           { label: "hook command", value: status.hookCommand },
@@ -247,8 +272,28 @@ async function registerCodexSourceBinding(projectRoot: string, workspaceId: stri
 }
 
 function readCodexHooksFile(path: string): CodexHooksFile {
-  if (!existsSync(path)) return {};
-  return JSON.parse(readFileSync(path, "utf8")) as CodexHooksFile;
+  const result = tryReadCodexHooksFile(path);
+  if (result.ok) return result.file;
+  throw new Error(formatCodexHooksParseError(result.error));
+}
+
+function tryReadCodexHooksFile(path: string): CodexHooksReadResult {
+  if (!existsSync(path)) return { file: {}, ok: true };
+  try {
+    return { file: JSON.parse(readFileSync(path, "utf8")) as CodexHooksFile, ok: true };
+  } catch (error) {
+    return {
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        path,
+      },
+      ok: false,
+    };
+  }
+}
+
+function formatCodexHooksParseError(error: CodexHooksParseError): string {
+  return `invalid Codex hooks file ${error.path}: ${error.message}`;
 }
 
 function writeJsonFile(path: string, value: unknown): void {

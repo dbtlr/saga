@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,6 +106,52 @@ describe("installHarness", () => {
 
     await expect(installHarness({ cwd: projectRoot, target: "claude" })).rejects.toThrow(
       "harness claude is not implemented yet",
+    );
+  });
+
+  test("does not write active hooks when Codex source registration fails", async () => {
+    const projectRoot = boundProject();
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerCodexSource: async () => {
+          throw new Error("database unavailable");
+        },
+        target: "codex",
+      }),
+    ).rejects.toThrow("database unavailable");
+
+    expect(existsSync(join(projectRoot, ".codex", "hooks.json"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".codex", "saga-codex-hook.sh"))).toBe(false);
+    expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
+  });
+});
+
+describe("inspectHarness", () => {
+  test("reports malformed Codex hooks config", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(hooksPath, "{invalid-json");
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.hooks).toBe("invalid");
+    expect(status.hookTrust).toBe("not installed");
+    expect(status.hooksError).toContain(`invalid Codex hooks file ${hooksPath}:`);
+  });
+});
+
+describe("uninstallHarness", () => {
+  test("reports malformed Codex hooks config with path", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(hooksPath, "{invalid-json");
+
+    expect(() => uninstallHarness({ cwd: projectRoot, target: "codex" })).toThrow(
+      `invalid Codex hooks file ${hooksPath}:`,
     );
   });
 });
