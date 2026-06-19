@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMigrationsCurrent, makeDatabase, registerSourceBinding } from "@saga/db";
@@ -6,7 +14,12 @@ import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
-import { findProjectRoot, readBindingFile, writeBindingFile } from "./init.js";
+import {
+  findProjectRoot,
+  readBindingFile,
+  writeBindingFile,
+  type WorkspaceBindingFile,
+} from "./init.js";
 
 export type HarnessTarget = "codex" | "claude";
 
@@ -98,7 +111,7 @@ export async function installHarness(input: {
   const hooksFile = readCodexHooksFile(hooksPath);
 
   const installedAt = new Date().toISOString();
-  writeBindingFile(projectRoot, {
+  const nextBinding: WorkspaceBindingFile = {
     ...binding,
     harnesses: {
       ...binding.harnesses,
@@ -112,11 +125,17 @@ export async function installHarness(input: {
         target: "codex",
       },
     },
-  });
+  };
 
-  ensureGitignoreEntry(projectRoot, ".codex/");
-  installCodexHookShim(projectRoot);
-  writeJsonFile(hooksPath, installSagaCodexHooks(hooksFile, hookCommand));
+  writeBindingFile(projectRoot, nextBinding);
+  try {
+    ensureGitignoreEntry(projectRoot, ".codex/");
+    installCodexHookShim(projectRoot);
+    writeJsonFile(hooksPath, installSagaCodexHooks(hooksFile, hookCommand));
+  } catch (error) {
+    writeBindingFile(projectRoot, binding);
+    throw error;
+  }
 
   return inspectCodexHarness(projectRoot);
 }
@@ -347,7 +366,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function writeJsonFile(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  const tempPath = `${path}.${process.pid.toString()}.tmp`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`);
+    renameSync(tempPath, path);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function ensureGitignoreEntry(projectRoot: string, entry: string): void {
