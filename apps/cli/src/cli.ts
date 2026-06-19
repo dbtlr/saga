@@ -17,6 +17,30 @@ export interface ParsedCommand {
   options: GlobalOptions;
 }
 
+export interface CommandDefinition {
+  description: string;
+  subcommands?: readonly string[];
+}
+
+export const COMMANDS = {
+  init: { description: "bind this project to a Saga Workspace" },
+  doctor: { description: "inspect local environment and Saga state" },
+  start: { description: "launch local Saga service and control plane" },
+  service: {
+    description: "run or manage the Saga runtime service",
+    subcommands: ["run", "install", "uninstall", "start", "stop", "restart", "status"],
+  },
+  harness: {
+    description: "install or inspect harness integrations",
+    subcommands: ["install", "uninstall", "status"],
+  },
+  mcp: { description: "launch the stdio MCP adapter" },
+  context: { description: "preview compiled Active Context" },
+  ingest: { description: "manually ingest source data for debugging" },
+} as const satisfies Record<string, CommandDefinition>;
+
+export type CommandName = keyof typeof COMMANDS;
+
 const OUTPUT_FORMATS = new Set<OutputFormat>(["records", "json", "jsonl", "ids"]);
 const COLOR_MODES = new Set<ColorMode>(["auto", "always", "never"]);
 
@@ -39,19 +63,16 @@ export class UsageError extends Error {
 
 export const VERSION = "0.0.0";
 
+const COMMAND_HELP = Object.entries(COMMANDS)
+  .map(([name, command]) => `  ${name.padEnd(20)} ${command.description}`)
+  .join("\n");
+
 export const HELP_TEXT = `saga — workspace memory for agentic work
 
 usage: saga <command> [options]
 
 commands:
-  init                 bind this project to a Saga Workspace
-  doctor               inspect local environment and Saga state
-  start                launch local Saga service and control plane
-  service <sub>        run or manage the Saga runtime service
-  harness <sub>        install or inspect harness integrations
-  mcp                  launch the stdio MCP adapter
-  context              preview compiled Active Context
-  ingest               manually ingest source data for debugging
+${COMMAND_HELP}
 
 options:
   -f, --format <fmt>   records|json|jsonl|ids
@@ -60,6 +81,33 @@ options:
   -h, --help           show help
       --version        show version
 `;
+
+export function getCommand(name: string): CommandDefinition | undefined {
+  return Object.hasOwn(COMMANDS, name) ? COMMANDS[name as CommandName] : undefined;
+}
+
+export function validateCommand(parsed: ParsedCommand): void {
+  const name = parsed.command;
+  if (name === undefined) return;
+
+  const command = getCommand(name);
+  if (command === undefined) {
+    throw new UsageError(`unknown command: ${name}`);
+  }
+
+  const subcommands = command.subcommands;
+  if (subcommands === undefined) return;
+
+  const subcommand = parsed.args[0];
+  if (subcommand === undefined) {
+    throw new UsageError(`${name}: missing subcommand (expected: ${subcommands.join(" | ")})`);
+  }
+  if (!subcommands.includes(subcommand)) {
+    throw new UsageError(
+      `${name}: unknown subcommand ${subcommand} (expected: ${subcommands.join(" | ")})`,
+    );
+  }
+}
 
 export function parseArgs(argv: readonly string[]): ParsedCommand {
   const options: GlobalOptions = { ...DEFAULT_OPTIONS };
@@ -138,7 +186,10 @@ export function run(argv: readonly string[], write: (text: string) => void): num
       write(HELP_TEXT.trimEnd());
       return 0;
     }
-    throw new UsageError(`unknown command: ${parsed.command}`);
+
+    validateCommand(parsed);
+    write(`${parsed.command} is not implemented yet`);
+    return 1;
   } catch (error) {
     if (error instanceof UsageError) {
       write(errorLine(error.message, renderOptionsFromGlobals(options ?? DEFAULT_OPTIONS)));
