@@ -68,7 +68,11 @@ export function runMigrations(
 ): Effect.Effect<void, DatabaseError> {
   return Effect.tryPromise({
     try: () => migrate(service.db, { migrationsFolder }),
-    catch: (cause) => new DatabaseError({ message: "failed to run database migrations", cause }),
+    catch: (cause) =>
+      new DatabaseError({
+        message: `failed to run database migrations: ${errorMessage(cause)}`,
+        cause,
+      }),
   });
 }
 
@@ -84,4 +88,8 @@ function makeDatabaseService(sql: SagaSql): DatabaseService {
         catch: (cause) => new DatabaseError({ message: "failed to close database client", cause }),
       }),
   };
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
