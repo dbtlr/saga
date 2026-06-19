@@ -24,6 +24,12 @@ importers:
         specifier: ^0.2.1
         version: 0.2.1(@types/node@24.13.2)(typescript@6.0.3)(vite@8.0.16(@types/node@24.13.2))
 
+  apps/cli: {}
+
+  apps/control-plane: {}
+
+  apps/service: {}
+
 packages:
 
   '@babel/code-frame@7.29.7':
