@@ -61,6 +61,35 @@ export const sourceBindings = pgTable(
   ],
 );
 
+export const rawEvents = pgTable(
+  "raw_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceBindingId: uuid("source_binding_id")
+      .notNull()
+      .references(() => sourceBindings.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    actorId: text("actor_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    sessionId: text("session_id"),
+    traceId: text("trace_id"),
+    provenance: jsonb("provenance").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    trustLevel: text("trust_level").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("raw_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
+    index("raw_events_source_session_idx").on(table.sourceType, table.sourceId, table.sessionId),
+  ],
+);
+
 export const workspaceRelations = relations(workspaces, ({ many, one }) => ({
   profile: one(workspaceProfiles),
   sourceBindings: many(sourceBindings),
@@ -80,7 +109,20 @@ export const sourceBindingRelations = relations(sourceBindings, ({ one }) => ({
   }),
 }));
 
+export const rawEventRelations = relations(rawEvents, ({ one }) => ({
+  sourceBinding: one(sourceBindings, {
+    fields: [rawEvents.sourceBindingId],
+    references: [sourceBindings.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [rawEvents.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
 export const schema = {
+  rawEventRelations,
+  rawEvents,
   sourceBindingRelations,
   sourceBindings,
   workspaceProfileRelations,
@@ -97,3 +139,5 @@ export type WorkspaceProfile = typeof workspaceProfiles.$inferSelect;
 export type NewWorkspaceProfile = typeof workspaceProfiles.$inferInsert;
 export type SourceBinding = typeof sourceBindings.$inferSelect;
 export type NewSourceBinding = typeof sourceBindings.$inferInsert;
+export type RawEvent = typeof rawEvents.$inferSelect;
+export type NewRawEvent = typeof rawEvents.$inferInsert;

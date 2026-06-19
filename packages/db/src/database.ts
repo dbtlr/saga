@@ -23,7 +23,7 @@ export class DatabaseError extends Data.TaggedError("DatabaseError")<{
 export const DatabaseTag = Context.GenericTag<DatabaseService>("@saga/db/Database");
 
 export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
-export const EXPECTED_MIGRATION_COUNT = 2;
+export const EXPECTED_MIGRATION_COUNT = 3;
 
 export interface MakeDatabaseOptions {
   postgres?: Options<Record<string, PostgresType>>;
