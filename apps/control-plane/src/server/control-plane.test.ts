@@ -1,11 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  readClaimReviewAttributes,
-  readControlPlaneSnapshot,
-  reviewAttributesForAction,
-} from "./control-plane.js";
+import { readClaimReviewAttributes, readControlPlaneSnapshot } from "./control-plane.js";
 
 describe("readControlPlaneSnapshot", () => {
   it("returns an unbound snapshot when no local binding exists", async () => {
@@ -69,16 +65,6 @@ describe("claim review attributes", () => {
     ).toEqual({
       pinned: true,
       watched: true,
-    });
-  });
-
-  it("updates pin and watch flags without dropping other attributes", () => {
-    expect(reviewAttributesForAction({ source: "test" }, "pin")).toEqual({
-      reviewPinned: true,
-      source: "test",
-    });
-    expect(reviewAttributesForAction({ reviewWatched: true }, "unwatch")).toEqual({
-      reviewWatched: false,
     });
   });
 });

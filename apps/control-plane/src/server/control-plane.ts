@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { compileActiveContext, type ActiveContextDocument } from "@saga/active-context";
 import {
   currentClaims,
-  insertClaimEventAndProject,
+  insertClaimReviewEventAndProject,
   listCurrentClaims,
   listRecentRawEvents,
   makeDatabase,
@@ -294,7 +294,7 @@ export async function updateWorkspaceProfile(input: UpdateWorkspaceProfileInput)
 
 export async function updateSourceBinding(input: UpdateSourceBindingInput): Promise<void> {
   await withBoundDatabase(async ({ binding, service }) => {
-    await service.db
+    const [updated] = await service.db
       .update(sourceBindings)
       .set({
         displayName: emptyToUndefined(input.displayName),
@@ -303,7 +303,12 @@ export async function updateSourceBinding(input: UpdateSourceBindingInput): Prom
       })
       .where(
         and(eq(sourceBindings.workspaceId, binding.workspace.id), eq(sourceBindings.id, input.id)),
-      );
+      )
+      .returning({ id: sourceBindings.id });
+
+    if (updated === undefined) {
+      throw new Error("source binding is not available for update");
+    }
   });
 }
 
@@ -324,36 +329,13 @@ export async function updateClaimReview(input: UpdateClaimReviewInput): Promise<
       throw new Error("claim is not available for review");
     }
 
-    if (input.action === "accept" || input.action === "reject") {
-      type InsertClaimEventInput = Parameters<typeof insertClaimEventAndProject>[1];
-      await Effect.runPromise(
-        insertClaimEventAndProject(service, {
-          attributes: claim.attributes,
-          claimKey: claim.claimKey,
-          confidence: claim.confidence,
-          evidence: claim.evidence as unknown as InsertClaimEventInput["evidence"],
-          eventType: input.action === "accept" ? "supported" : "rejected",
-          kind: claim.claimKind as InsertClaimEventInput["kind"],
-          text: claim.claimText,
-          workspaceId: binding.workspace.id,
-        }),
-      );
-      return;
-    }
-
-    const attributes = reviewAttributesForAction(claim.attributes, input.action);
-    await service.db
-      .update(currentClaims)
-      .set({
-        attributes,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(currentClaims.workspaceId, binding.workspace.id),
-          eq(currentClaims.claimKey, claim.claimKey),
-        ),
-      );
+    await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: input.action,
+        claimKey: claim.claimKey,
+        workspaceId: binding.workspace.id,
+      }),
+    );
   });
 }
 
@@ -502,17 +484,6 @@ export function readClaimReviewAttributes(
     pinned: attributes.reviewPinned === true,
     watched: attributes.reviewWatched === true,
   };
-}
-
-export function reviewAttributesForAction(
-  attributes: Record<string, unknown>,
-  action: UpdateClaimReviewInput["action"],
-): Record<string, unknown> {
-  if (action === "pin") return { ...attributes, reviewPinned: true };
-  if (action === "unpin") return { ...attributes, reviewPinned: false };
-  if (action === "watch") return { ...attributes, reviewWatched: true };
-  if (action === "unwatch") return { ...attributes, reviewWatched: false };
-  return attributes;
 }
 
 function errorMessage(cause: unknown): string {

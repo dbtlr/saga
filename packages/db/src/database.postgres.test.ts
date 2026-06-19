@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { eq } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import {
   insertClaimEventAndProject,
+  insertClaimReviewEventAndProject,
   insertExtractedCandidateClaim,
   listCurrentClaims,
 } from "./claim.js";
@@ -380,6 +382,298 @@ describePostgres("postgres integration", () => {
     );
     expect(await service.db.select().from(currentClaims)).toContainEqual(
       expect.objectContaining({ id: firstProjection.currentClaim.id }),
+    );
+  });
+
+  test("projects claim review actions from append-only events", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `review-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const rawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:review:${workspace.id}:turn-1`,
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Agreed. Claim review should be durable.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-1",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const firstProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, {
+        attributes: { extractor: "deterministic-v1" },
+        confidence: 0.72,
+        evidence: {
+          eventType: rawEvent.eventType,
+          externalEventId: rawEvent.externalEventId,
+          occurredAt: rawEvent.occurredAt.toISOString(),
+          quote: "Agreed. Claim review should be durable.",
+          rawEventId: rawEvent.id,
+          sessionId: rawEvent.sessionId ?? undefined,
+          sourceId: rawEvent.sourceId,
+          sourceType: rawEvent.sourceType,
+          traceId: rawEvent.traceId ?? undefined,
+        },
+        kind: "decision",
+        text: "Claim review should be durable.",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const acceptedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "accept",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:10:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const pinnedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "pin",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:11:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const watchedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "watch",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:12:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const laterRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:review:${workspace.id}:turn-2`,
+        occurredAt: "2026-06-19T20:20:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Agreed. Claim review should be durable.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-2",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    const laterSourceProjection = await Effect.runPromise(
+      insertClaimEventAndProject(service, {
+        attributes: { extractor: "deterministic-v2" },
+        claimKey: firstProjection.currentClaim.claimKey,
+        confidence: 0.91,
+        evidence: {
+          eventType: laterRawEvent.eventType,
+          externalEventId: laterRawEvent.externalEventId,
+          occurredAt: laterRawEvent.occurredAt.toISOString(),
+          quote: "Agreed. Claim review should be durable.",
+          rawEventId: laterRawEvent.id,
+          sessionId: laterRawEvent.sessionId ?? undefined,
+          sourceId: laterRawEvent.sourceId,
+          sourceType: laterRawEvent.sourceType,
+          traceId: laterRawEvent.traceId ?? undefined,
+        },
+        eventType: "supported",
+        kind: "decision",
+        text: "Claim review should be durable.",
+        workspaceId: workspace.id,
+      }),
+    );
+    const unwatchedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "unwatch",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:20:30.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const rejectedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "reject",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:21:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const revivedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "accept",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:22:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const contradictedRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:review:${workspace.id}:turn-3`,
+        occurredAt: "2026-06-19T20:23:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Actually, claim review should not be durable.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-3",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    const contradictedProjection = await Effect.runPromise(
+      insertClaimEventAndProject(service, {
+        attributes: { extractor: "deterministic-v2" },
+        claimKey: firstProjection.currentClaim.claimKey,
+        confidence: 0.87,
+        evidence: {
+          eventType: contradictedRawEvent.eventType,
+          externalEventId: contradictedRawEvent.externalEventId,
+          occurredAt: contradictedRawEvent.occurredAt.toISOString(),
+          quote: "Actually, claim review should not be durable.",
+          rawEventId: contradictedRawEvent.id,
+          sessionId: contradictedRawEvent.sessionId ?? undefined,
+          sourceId: contradictedRawEvent.sourceId,
+          sourceType: contradictedRawEvent.sourceType,
+          traceId: contradictedRawEvent.traceId ?? undefined,
+        },
+        eventType: "contradicted",
+        kind: "decision",
+        text: "Claim review should be durable.",
+        workspaceId: workspace.id,
+      }),
+    );
+    const revivedFromContradictedProjection = await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "accept",
+        claimKey: firstProjection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T20:24:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const staleProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, {
+        attributes: { extractor: "deterministic-v1" },
+        confidence: 0.72,
+        evidence: {
+          eventType: rawEvent.eventType,
+          externalEventId: rawEvent.externalEventId,
+          occurredAt: rawEvent.occurredAt.toISOString(),
+          quote: "Agreed. Claim review should be durable.",
+          rawEventId: rawEvent.id,
+          sessionId: rawEvent.sessionId ?? undefined,
+          sourceId: rawEvent.sourceId,
+          sourceType: rawEvent.sourceType,
+          traceId: rawEvent.traceId ?? undefined,
+        },
+        kind: "decision",
+        text: "Claim review should be durable.",
+        workspaceId: workspace.id,
+      }),
+    );
+    const reviewEvents = await service.db
+      .select()
+      .from(claimEvents)
+      .where(eq(claimEvents.claimKey, firstProjection.currentClaim.claimKey));
+
+    expect(acceptedProjection.event.eventType).toBe("supported");
+    expect(acceptedProjection.event.rawEventId).not.toBe(rawEvent.id);
+    expect(acceptedProjection.event.occurredAt.toISOString()).toBe("2026-06-19T20:10:00.000Z");
+    expect(pinnedProjection.event.eventType).toBe("pinned");
+    expect(pinnedProjection.currentClaim.state).toBe("supported");
+    expect(pinnedProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "pinned",
+      reviewPinned: true,
+    });
+    expect(watchedProjection.event.eventType).toBe("watched");
+    expect(watchedProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "watched",
+      reviewPinned: true,
+      reviewWatched: true,
+    });
+    expect(laterSourceProjection.currentClaim.attributes).toMatchObject({
+      extractor: "deterministic-v2",
+      reviewLastAction: "watched",
+      reviewPinned: true,
+      reviewWatched: true,
+    });
+    expect(unwatchedProjection.event.eventType).toBe("unwatched");
+    expect(unwatchedProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "unwatched",
+      reviewPinned: true,
+      reviewWatched: false,
+    });
+    expect(rejectedProjection.currentClaim.state).toBe("rejected");
+    expect(revivedProjection.currentClaim.state).toBe("supported");
+    expect(revivedProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "supported",
+      reviewPinned: true,
+      reviewWatched: false,
+    });
+    expect(contradictedProjection.currentClaim.state).toBe("contradicted");
+    expect(contradictedProjection.currentClaim.attributes).toMatchObject({
+      reviewPinned: true,
+      reviewWatched: false,
+    });
+    expect(revivedFromContradictedProjection.currentClaim.state).toBe("supported");
+    expect(revivedFromContradictedProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "supported",
+      reviewPinned: true,
+      reviewWatched: false,
+    });
+    expect(staleProjection.currentClaim.state).toBe("supported");
+    expect(staleProjection.currentClaim.attributes).toMatchObject({
+      reviewLastAction: "supported",
+      reviewPinned: true,
+      reviewWatched: false,
+    });
+    expect(reviewEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining([
+        "contradicted",
+        "extracted",
+        "pinned",
+        "rejected",
+        "supported",
+        "unwatched",
+        "watched",
+      ]),
     );
   });
 });
