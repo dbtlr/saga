@@ -4,8 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build": "vite build",
     "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite dev --host 127.0.0.1 --port 4767",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@saga/active-context": "workspace:*",
+    "@saga/db": "workspace:*",
+    "@saga/runtime": "workspace:*",
+    "@tanstack/react-router": "^1.170.16",
+    "@tanstack/react-start": "^1.168.26",
+    "drizzle-orm": "^0.45.2",
+    "effect": "^3.21.4",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.16"
   }
 }
