@@ -3,6 +3,7 @@ import { runDoctor } from "./doctor.js";
 import { runHarnessCommand } from "./harness.js";
 import { runIngestCommand } from "./ingest.js";
 import { runInit } from "./init.js";
+import { runMcpCommand } from "./mcp.js";
 import { runServiceCommand } from "./service.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
@@ -78,6 +79,7 @@ export interface CommandHandlers {
   harness: typeof runHarnessCommand;
   ingest: typeof runIngestCommand;
   init: typeof runInit;
+  mcp: typeof runMcpCommand;
   service: typeof runServiceCommand;
 }
 
@@ -87,6 +89,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   harness: runHarnessCommand,
   ingest: runIngestCommand,
   init: runInit,
+  mcp: runMcpCommand,
   service: runServiceCommand,
 };
 
@@ -238,6 +241,11 @@ export async function run(
     }
     if (parsed.command === "ingest") {
       write(await handlers.ingest(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "mcp") {
+      const output = await handlers.mcp(parsed.args, renderOptions, write);
+      if (output !== undefined && output !== "") write(output);
       return 0;
     }
     if (parsed.command === "service") {

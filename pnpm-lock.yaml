@@ -38,6 +38,9 @@ importers:
       '@saga/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@saga/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
       '@saga/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime

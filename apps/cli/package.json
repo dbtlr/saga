@@ -15,6 +15,7 @@
     "@saga/active-context": "workspace:*",
     "@saga/collectors": "workspace:*",
     "@saga/db": "workspace:*",
+    "@saga/mcp": "workspace:*",
     "@saga/runtime": "workspace:*",
     "@saga/service": "workspace:*",
     "drizzle-orm": "^0.45.2",

@@ -66,8 +66,8 @@ describe("run", () => {
 
   test("keeps not-yet-implemented commands as placeholder failures", async () => {
     const output: string[] = [];
-    await expect(run(["mcp"], (text) => output.push(text))).resolves.toBe(1);
-    expect(output).toEqual(["mcp is not implemented yet"]);
+    await expect(run(["start"], (text) => output.push(text))).resolves.toBe(1);
+    expect(output).toEqual(["start is not implemented yet"]);
   });
 
   test("dispatches init through the init handler", async () => {
@@ -78,6 +78,7 @@ describe("run", () => {
       harness: async () => "harness",
       ingest: async () => "ingest",
       init: async (args) => `init ${args.join(",")}`,
+      mcp: async () => "mcp",
       service: async () => "service",
     };
 
@@ -93,6 +94,7 @@ describe("run", () => {
       harness: async () => "harness",
       ingest: async () => "ingest",
       init: async () => "init",
+      mcp: async () => "mcp",
       service: async () => "service",
     };
 
@@ -108,6 +110,7 @@ describe("run", () => {
       harness: async () => "harness",
       ingest: async () => "ingest",
       init: async () => "init",
+      mcp: async () => "mcp",
       service: async (args) => `service ${args.join(",")}`,
     };
 
@@ -132,6 +135,7 @@ describe("run", () => {
       harness: async (args) => `harness ${args.join(",")}`,
       ingest: async () => "ingest",
       init: async () => "init",
+      mcp: async () => "mcp",
       service: async () => "service",
     };
 
@@ -149,6 +153,7 @@ describe("run", () => {
       harness: async () => "harness",
       ingest: async (args) => `ingest ${args.join(",")}`,
       init: async () => "init",
+      mcp: async () => "mcp",
       service: async () => "service",
     };
 
@@ -166,11 +171,31 @@ describe("run", () => {
       harness: async () => "harness",
       ingest: async () => "ingest",
       init: async () => "init",
+      mcp: async () => "mcp",
       service: async () => "service",
     };
 
     await expect(run(["context"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["compiled context"]);
+  });
+
+  test("dispatches mcp through the streaming mcp handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      context: async () => "context",
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
+      init: async () => "init",
+      mcp: async (_args, _options, write) => {
+        write("mcp response");
+        return undefined;
+      },
+      service: async () => "service",
+    };
+
+    await expect(run(["mcp"], (text) => output.push(text), handlers)).resolves.toBe(0);
+    expect(output).toEqual(["mcp response"]);
   });
 
   test("implemented commands can render structured output", async () => {

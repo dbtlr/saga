@@ -1,0 +1,118 @@
+import { renderActiveContextMarkdown } from "@saga/active-context";
+import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
+import { listCurrentClaims, makeDatabase } from "@saga/db";
+import { loadRuntimeConfig } from "@saga/runtime";
+import { Effect } from "effect";
+import { compileProjectActiveContext } from "./context.js";
+import { findProjectRoot, readBindingFile } from "./init.js";
+import { type RenderOptions } from "./render.js";
+
+export async function runMcpCommand(
+  _args: readonly string[],
+  _options: RenderOptions,
+  write: (text: string) => void,
+  stdin: AsyncIterable<Buffer | string> = process.stdin,
+): Promise<string | undefined> {
+  const server = createProjectMcpServer();
+  for (const line of await readJsonLines(stdin)) {
+    const response = await server.handle(parseJsonRpcRequest(line));
+    if (response !== undefined) write(JSON.stringify(response));
+  }
+  return undefined;
+}
+
+export function createProjectMcpServer(input: { cwd?: string } = {}) {
+  const cwd = input.cwd;
+  return createSagaMcpServer({
+    getActiveContext: async () => {
+      const document = await compileProjectActiveContext(cwd === undefined ? {} : { cwd });
+      return {
+        document,
+        markdown: renderActiveContextMarkdown(document),
+      };
+    },
+    searchMemory: (search) => searchProjectMemory(search, cwd === undefined ? {} : { cwd }),
+  });
+}
+
+export async function searchProjectMemory(
+  input: SearchMemoryInput,
+  options: { cwd?: string } = {},
+) {
+  const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
+    throw new Error("workspace binding is missing; run saga init");
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    const query = input.query.toLowerCase();
+    const claims = await Effect.runPromise(
+      listCurrentClaims(service, {
+        limit: 50,
+        workspaceId: binding.workspace.id,
+      }),
+    );
+    const matches = claims
+      .filter((claim) => claim.claimText.toLowerCase().includes(query))
+      .slice(0, input.limit ?? 10)
+      .map((claim) => ({
+        confidence: claim.confidence,
+        key: claim.claimKey,
+        kind: claim.claimKind,
+        state: claim.state,
+        text: claim.claimText,
+      }));
+
+    return {
+      markdown:
+        matches.length === 0
+          ? `# Saga Memory Search\n\nNo matches for ${input.query}.`
+          : [
+              "# Saga Memory Search",
+              "",
+              ...matches.map(
+                (match) =>
+                  `- [${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%)`,
+              ),
+            ].join("\n"),
+      matches,
+    };
+  } finally {
+    await Effect.runPromise(service.close());
+  }
+}
+
+async function readJsonLines(stdin: AsyncIterable<Buffer | string>): Promise<string[]> {
+  const chunks: string[] = [];
+  for await (const chunk of stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+  }
+  return chunks
+    .join("")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+function parseJsonRpcRequest(line: string): JsonRpcRequest {
+  const parsed = JSON.parse(line) as unknown;
+  if (!isRecord(parsed) || parsed.jsonrpc !== "2.0" || typeof parsed.method !== "string") {
+    throw new Error("expected a JSON-RPC 2.0 request object");
+  }
+  return {
+    id:
+      typeof parsed.id === "string" || typeof parsed.id === "number" || parsed.id === null
+        ? parsed.id
+        : undefined,
+    jsonrpc: "2.0",
+    method: parsed.method,
+    params: parsed.params,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
