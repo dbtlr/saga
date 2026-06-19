@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { renderDoctor, type DoctorCheck } from "./doctor.js";
+import { doctorProject, renderDoctor, runDoctor, type DoctorCheck } from "./doctor.js";
 
 const checks: DoctorCheck[] = [
   {
@@ -21,14 +24,43 @@ const checks: DoctorCheck[] = [
 
 describe("renderDoctor", () => {
   test("renders unicode status tokens", () => {
-    expect(renderDoctor(checks, { ascii: false, color: "never", isTty: false })).toContain(
-      "postgres    ⚠ DATABASE_URL is not set",
-    );
+    expect(
+      renderDoctor(checks, { ascii: false, color: "never", format: "records", isTty: false }),
+    ).toContain("postgres    ⚠ DATABASE_URL is not set");
   });
 
   test("renders ascii status tokens", () => {
-    expect(renderDoctor(checks, { ascii: true, color: "never", isTty: false })).toContain(
-      "migrations  [fail] connection refused",
+    expect(
+      renderDoctor(checks, { ascii: true, color: "never", format: "records", isTty: false }),
+    ).toContain("migrations  [fail] connection refused");
+  });
+});
+
+describe("runDoctor", () => {
+  test("renders json output", async () => {
+    const output = await runDoctor([], {
+      ascii: true,
+      color: "never",
+      format: "json",
+      isTty: false,
+    });
+
+    expect(Array.isArray(JSON.parse(output))).toBe(true);
+  });
+});
+
+describe("doctorProject", () => {
+  test("reports invalid binding files as binding failures", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    writeFileSync(join(cwd, ".saga.local.json"), "not json");
+
+    const checks = await doctorProject({ cwd });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "binding",
+        status: "fail",
+      }),
     );
   });
 });

@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { makeDatabase } from "@saga/db";
+import { EXPECTED_MIGRATION_COUNT, makeDatabase, type SagaSql } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { bindingPathFor, findProjectRoot, readBindingFile } from "./init.js";
+import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
+import { inspectServiceStatus } from "./service.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -15,7 +17,14 @@ export interface DoctorCheck {
 
 export async function runDoctor(_args: readonly string[], options: RenderOptions): Promise<string> {
   const checks = await doctorProject();
-  return renderDoctor(checks, options);
+  return formatCommandOutput(
+    {
+      id: "doctor",
+      records: renderDoctor(checks, options),
+      value: checks,
+    },
+    options.format,
+  );
 }
 
 export async function doctorProject(input: { cwd?: string } = {}): Promise<DoctorCheck[]> {
@@ -31,10 +40,11 @@ export async function doctorProject(input: { cwd?: string } = {}): Promise<Docto
   ];
 
   checks.push(...(await checkPostgres(projectRoot)));
+  const service = await inspectService();
   checks.push({
-    detail: "foreground/status implementation lands in SGA-22",
+    detail: `${service.process}; ${service.health}`,
     label: "service",
-    status: "warn",
+    status: service.process === "running" ? "ok" : "warn",
   });
   checks.push({
     detail: "codex/claude harness checks are placeholders",
@@ -76,7 +86,17 @@ function checkPnpm(): DoctorCheck {
 }
 
 function checkBinding(projectRoot: string): DoctorCheck {
-  const binding = readBindingFile(projectRoot);
+  let binding;
+  try {
+    binding = readBindingFile(projectRoot);
+  } catch (error) {
+    return {
+      detail: `invalid ${bindingPathFor(projectRoot)}: ${error instanceof Error ? error.message : String(error)}`,
+      label: "binding",
+      status: "fail",
+    };
+  }
+
   if (binding === undefined) {
     return {
       detail: `missing ${bindingPathFor(projectRoot)}`,
@@ -113,21 +133,14 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
     const service = await Effect.runPromise(makeDatabase(config));
     try {
       await service.sql`select 1`;
-      const migrations = await service.sql.unsafe(
-        "select count(*)::text as count from drizzle.__drizzle_migrations",
-      );
-      const migrationCount = String(migrations[0]?.count ?? "0");
+      const migrationCheck = await checkMigrations(service.sql);
       return [
         {
           detail: "connected",
           label: "postgres",
           status: "ok",
         },
-        {
-          detail: `${migrationCount} applied`,
-          label: "migrations",
-          status: "ok",
-        },
+        migrationCheck,
       ];
     } finally {
       await Effect.runPromise(service.close());
@@ -145,6 +158,48 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
         status: "warn",
       },
     ];
+  }
+}
+
+async function checkMigrations(sql: SagaSql): Promise<DoctorCheck> {
+  try {
+    const migrations = await sql.unsafe(
+      "select count(*)::text as count from drizzle.__drizzle_migrations",
+    );
+    const migrationCount = Number.parseInt(String(migrations[0]?.count ?? "0"), 10);
+    if (migrationCount < EXPECTED_MIGRATION_COUNT) {
+      return {
+        detail: `${String(migrationCount)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}`,
+        label: "migrations",
+        status: "fail",
+      };
+    }
+
+    return {
+      detail: `${String(migrationCount)} applied`,
+      label: "migrations",
+      status: "ok",
+    };
+  } catch (error) {
+    return {
+      detail: error instanceof Error ? error.message : String(error),
+      label: "migrations",
+      status: "fail",
+    };
+  }
+}
+
+async function inspectService(): Promise<{
+  health: string;
+  process: "running" | "not running";
+}> {
+  try {
+    return await inspectServiceStatus();
+  } catch (error) {
+    return {
+      health: error instanceof Error ? error.message : String(error),
+      process: "not running",
+    };
   }
 }
 
