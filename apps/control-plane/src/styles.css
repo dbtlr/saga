@@ -432,6 +432,49 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.claim-review-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid #e7ebe3;
+}
+
+.claim-review-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.claim-review-actions,
+.claim-review-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.claim-review-actions button {
+  flex: 1 1 92px;
+}
+
+.danger-button {
+  border-color: #8b2631;
+  background: #8b2631;
+}
+
+.claim-review-flags label {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px;
+  color: #65716b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.claim-review-flags input {
+  width: 16px;
+  height: 16px;
+}
+
 .empty-state {
   margin: 0;
   padding: 18px;

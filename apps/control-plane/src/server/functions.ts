@@ -1,8 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
   readControlPlaneSnapshot,
+  updateClaimReview,
   updateSourceBinding,
   updateWorkspaceProfile,
+  type UpdateClaimReviewInput,
   type UpdateSourceBindingInput,
   type UpdateWorkspaceProfileInput,
 } from "./control-plane.js";
@@ -29,5 +31,15 @@ export const saveSourceBinding = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     await updateSourceBinding(data);
+    return { ok: true };
+  });
+
+export const reviewClaim = createServerFn({ method: "POST" })
+  .validator((data: UpdateClaimReviewInput) => ({
+    action: data.action,
+    claimKey: data.claimKey,
+  }))
+  .handler(async ({ data }) => {
+    await updateClaimReview(data);
     return { ok: true };
   });

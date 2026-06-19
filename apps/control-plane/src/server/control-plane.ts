@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { compileActiveContext, type ActiveContextDocument } from "@saga/active-context";
 import {
+  currentClaims,
+  insertClaimEventAndProject,
   listCurrentClaims,
   listRecentRawEvents,
   makeDatabase,
@@ -61,8 +63,21 @@ export interface ControlPlaneSnapshot {
 export interface ControlPlaneClaim {
   confidence: number;
   key: string;
+  kind: string;
+  pinned: boolean;
   state: string;
   text: string;
+  watched: boolean;
+}
+
+export interface UpdateClaimReviewInput {
+  action: "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch";
+  claimKey: string;
+}
+
+interface ClaimReviewAttributes {
+  pinned?: boolean | undefined;
+  watched?: boolean | undefined;
 }
 
 export interface ControlPlaneSourceBinding {
@@ -292,6 +307,56 @@ export async function updateSourceBinding(input: UpdateSourceBindingInput): Prom
   });
 }
 
+export async function updateClaimReview(input: UpdateClaimReviewInput): Promise<void> {
+  await withBoundDatabase(async ({ binding, service }) => {
+    const [claim] = await service.db
+      .select()
+      .from(currentClaims)
+      .where(
+        and(
+          eq(currentClaims.workspaceId, binding.workspace.id),
+          eq(currentClaims.claimKey, input.claimKey),
+        ),
+      )
+      .limit(1);
+
+    if (claim === undefined) {
+      throw new Error("claim is not available for review");
+    }
+
+    if (input.action === "accept" || input.action === "reject") {
+      type InsertClaimEventInput = Parameters<typeof insertClaimEventAndProject>[1];
+      await Effect.runPromise(
+        insertClaimEventAndProject(service, {
+          attributes: claim.attributes,
+          claimKey: claim.claimKey,
+          confidence: claim.confidence,
+          evidence: claim.evidence as unknown as InsertClaimEventInput["evidence"],
+          eventType: input.action === "accept" ? "supported" : "rejected",
+          kind: claim.claimKind as InsertClaimEventInput["kind"],
+          text: claim.claimText,
+          workspaceId: binding.workspace.id,
+        }),
+      );
+      return;
+    }
+
+    const attributes = reviewAttributesForAction(claim.attributes, input.action);
+    await service.db
+      .update(currentClaims)
+      .set({
+        attributes,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(currentClaims.workspaceId, binding.workspace.id),
+          eq(currentClaims.claimKey, claim.claimKey),
+        ),
+      );
+  });
+}
+
 async function withBoundDatabase<T>(
   callback: (input: { binding: WorkspaceBindingFile; service: DatabaseService }) => Promise<T>,
 ): Promise<T> {
@@ -381,11 +446,15 @@ function bindingSummary(binding: WorkspaceBindingFile): ControlPlaneSnapshot["bi
 }
 
 function toControlPlaneClaim(claim: CurrentClaim): ControlPlaneClaim {
+  const review = readClaimReviewAttributes(claim.attributes);
   return {
     confidence: claim.confidence,
     key: claim.claimKey,
+    kind: claim.claimKind,
+    pinned: review.pinned ?? false,
     state: claim.state,
     text: claim.claimText,
+    watched: review.watched ?? false,
   };
 }
 
@@ -424,6 +493,26 @@ function listWorkspaceSourceBindings(
 function emptyToUndefined(value: string): string | undefined {
   const trimmed = value.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+export function readClaimReviewAttributes(
+  attributes: Record<string, unknown>,
+): ClaimReviewAttributes {
+  return {
+    pinned: attributes.reviewPinned === true,
+    watched: attributes.reviewWatched === true,
+  };
+}
+
+export function reviewAttributesForAction(
+  attributes: Record<string, unknown>,
+  action: UpdateClaimReviewInput["action"],
+): Record<string, unknown> {
+  if (action === "pin") return { ...attributes, reviewPinned: true };
+  if (action === "unpin") return { ...attributes, reviewPinned: false };
+  if (action === "watch") return { ...attributes, reviewWatched: true };
+  if (action === "unwatch") return { ...attributes, reviewWatched: false };
+  return attributes;
 }
 
 function errorMessage(cause: unknown): string {

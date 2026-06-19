@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useState, useTransition, type FormEvent } from "react";
 import {
   getControlPlaneSnapshot,
+  reviewClaim,
   saveSourceBinding,
   saveWorkspaceProfile,
 } from "../server/functions.js";
@@ -77,12 +78,11 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
             ) : (
               <ol className="claim-list">
                 {snapshot.claims.map((claim) => (
-                  <li key={claim.key}>
-                    <span>{claim.text}</span>
-                    <small>
-                      {claim.state} · {Math.round(claim.confidence * 100).toString()}%
-                    </small>
-                  </li>
+                  <ClaimReviewItem
+                    canEdit={snapshot.status === "ready"}
+                    claim={claim}
+                    key={claim.key}
+                  />
                 ))}
               </ol>
             )}
@@ -90,6 +90,83 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
         </aside>
       </div>
     </main>
+  );
+}
+
+function ClaimReviewItem({
+  canEdit,
+  claim,
+}: {
+  canEdit: boolean;
+  claim: ControlPlaneSnapshot["claims"][number];
+}) {
+  const router = useRouter();
+  const review = useServerFn(reviewClaim);
+  const [isPending, startTransition] = useTransition();
+
+  function runReview(action: "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch") {
+    if (!canEdit) return;
+    startTransition(async () => {
+      await review({
+        data: {
+          action,
+          claimKey: claim.key,
+        },
+      });
+      await router.invalidate();
+    });
+  }
+
+  return (
+    <li className="claim-review-item">
+      <div>
+        <span>{claim.text}</span>
+        <small>
+          {claim.state} · {claim.kind} · {Math.round(claim.confidence * 100).toString()}%
+        </small>
+      </div>
+      <div className="claim-review-actions">
+        <button
+          disabled={!canEdit || isPending || claim.state === "supported"}
+          onClick={() => runReview("accept")}
+          type="button"
+        >
+          Accept
+        </button>
+        <button
+          className="danger-button"
+          disabled={!canEdit || isPending || claim.state === "rejected"}
+          onClick={() => runReview("reject")}
+          type="button"
+        >
+          Reject
+        </button>
+      </div>
+      <div className="claim-review-flags">
+        <label>
+          <input
+            checked={claim.pinned}
+            disabled={!canEdit || isPending}
+            onChange={(event) =>
+              runReview((event.target as HTMLInputElement).checked ? "pin" : "unpin")
+            }
+            type="checkbox"
+          />
+          <span>Pin</span>
+        </label>
+        <label>
+          <input
+            checked={claim.watched}
+            disabled={!canEdit || isPending}
+            onChange={(event) =>
+              runReview((event.target as HTMLInputElement).checked ? "watch" : "unwatch")
+            }
+            type="checkbox"
+          />
+          <span>Watch</span>
+        </label>
+      </div>
+    </li>
   );
 }
 
