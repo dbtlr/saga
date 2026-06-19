@@ -26,10 +26,16 @@ const forbid = (files: string[], imports: string[], message: string): Override =
 
 export default defineConfig({
   fmt: {
-    ignorePatterns: ["dist/**", "coverage/**", "**/*.generated.ts"],
+    ignorePatterns: ["dist/**", "coverage/**", "**/*.generated.ts", "**/*.gen.ts"],
   },
   lint: {
-    ignorePatterns: ["dist/**", "coverage/**", "node_modules/**", "**/*.generated.ts"],
+    ignorePatterns: [
+      "dist/**",
+      "coverage/**",
+      "node_modules/**",
+      "**/*.generated.ts",
+      "**/*.gen.ts",
+    ],
     options: {
       typeAware: true,
       typeCheck: true,
