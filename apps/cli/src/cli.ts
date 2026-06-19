@@ -1,3 +1,4 @@
+import { runInit } from "./init.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
 export type OutputFormat = "records" | "json" | "jsonl" | "ids";
@@ -62,6 +63,14 @@ export class UsageError extends Error {
 }
 
 export const VERSION = "0.0.0";
+
+export interface CommandHandlers {
+  init: typeof runInit;
+}
+
+export const DEFAULT_HANDLERS: CommandHandlers = {
+  init: runInit,
+};
 
 const COMMAND_HELP = Object.entries(COMMANDS)
   .map(([name, command]) => `  ${name.padEnd(20)} ${command.description}`)
@@ -173,7 +182,11 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
   };
 }
 
-export function run(argv: readonly string[], write: (text: string) => void): number {
+export async function run(
+  argv: readonly string[],
+  write: (text: string) => void,
+  handlers: CommandHandlers = DEFAULT_HANDLERS,
+): Promise<number> {
   let options: GlobalOptions | undefined;
   try {
     const parsed = parseArgs(argv);
@@ -188,6 +201,12 @@ export function run(argv: readonly string[], write: (text: string) => void): num
     }
 
     validateCommand(parsed);
+    const renderOptions = renderOptionsFromGlobals(parsed.options);
+    if (parsed.command === "init") {
+      write(await handlers.init(parsed.args, renderOptions));
+      return 0;
+    }
+
     write(`${parsed.command} is not implemented yet`);
     return 1;
   } catch (error) {
@@ -195,6 +214,8 @@ export function run(argv: readonly string[], write: (text: string) => void): num
       write(errorLine(error.message, renderOptionsFromGlobals(options ?? DEFAULT_OPTIONS)));
       return 2;
     }
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    write(errorLine(message, renderOptionsFromGlobals(options ?? DEFAULT_OPTIONS)));
+    return 1;
   }
 }

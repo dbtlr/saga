@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { CommandHandlers } from "./cli.js";
 import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from "./cli.js";
 
 describe("parseArgs", () => {
@@ -39,34 +40,44 @@ describe("run", () => {
     ]);
   });
 
-  test("prints help without a command", () => {
+  test("prints help without a command", async () => {
     const output: string[] = [];
-    expect(run([], (text) => output.push(text))).toBe(0);
+    await expect(run([], (text) => output.push(text))).resolves.toBe(0);
     expect(output).toEqual([HELP_TEXT.trimEnd()]);
   });
 
-  test("prints version", () => {
+  test("prints version", async () => {
     const output: string[] = [];
-    expect(run(["--version"], (text) => output.push(text))).toBe(0);
+    await expect(run(["--version"], (text) => output.push(text))).resolves.toBe(0);
     expect(output).toEqual(["saga 0.0.0"]);
   });
 
-  test("reports unknown commands as usage errors", () => {
+  test("reports unknown commands as usage errors", async () => {
     const output: string[] = [];
-    expect(run(["nope"], (text) => output.push(text))).toBe(2);
+    await expect(run(["nope"], (text) => output.push(text))).resolves.toBe(2);
     expect(output).toEqual(["✗ unknown command: nope"]);
   });
 
-  test("renders usage errors without glyphs in ascii mode", () => {
+  test("renders usage errors without glyphs in ascii mode", async () => {
     const output: string[] = [];
-    expect(run(["--ascii", "nope"], (text) => output.push(text))).toBe(2);
+    await expect(run(["--ascii", "nope"], (text) => output.push(text))).resolves.toBe(2);
     expect(output).toEqual(["[err] unknown command: nope"]);
   });
 
-  test("reserves known commands with placeholder behavior", () => {
+  test("reserves known commands with placeholder behavior", async () => {
     const output: string[] = [];
-    expect(run(["doctor"], (text) => output.push(text))).toBe(1);
+    await expect(run(["doctor"], (text) => output.push(text))).resolves.toBe(1);
     expect(output).toEqual(["doctor is not implemented yet"]);
+  });
+
+  test("dispatches init through the init handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      init: async (args) => `init ${args.join(",")}`,
+    };
+
+    await expect(run(["init", "custom"], (text) => output.push(text), handlers)).resolves.toBe(0);
+    expect(output).toEqual(["init custom"]);
   });
 });
 
