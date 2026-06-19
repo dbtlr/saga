@@ -77,6 +77,7 @@ export const rawEvents = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
     eventType: text("event_type").notNull(),
+    externalEventId: text("external_event_id").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(emptyJson),
     sessionId: text("session_id"),
     traceId: text("trace_id"),
@@ -87,6 +88,11 @@ export const rawEvents = pgTable(
   (table) => [
     index("raw_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
     index("raw_events_source_session_idx").on(table.sourceType, table.sourceId, table.sessionId),
+    uniqueIndex("raw_events_source_external_unique").on(
+      table.sourceType,
+      table.sourceId,
+      table.externalEventId,
+    ),
   ],
 );
 

@@ -24,6 +24,14 @@ export interface RegisterWorkspaceResult {
   workspace: Workspace;
 }
 
+export interface RegisterSourceBindingInput {
+  config?: Record<string, unknown>;
+  displayName?: string | undefined;
+  sourceType: string;
+  sourceUri: string;
+  workspaceId: string;
+}
+
 export class WorkspaceRegistrationError extends Data.TaggedError("WorkspaceRegistrationError")<{
   readonly message: string;
 }> {}
@@ -88,6 +96,46 @@ export function registerWorkspace(
       }
 
       return { sourceBinding, workspace };
+    },
+    catch: (cause) =>
+      cause instanceof WorkspaceRegistrationError
+        ? cause
+        : new WorkspaceRegistrationError({ message: errorMessage(cause) }),
+  });
+}
+
+export function registerSourceBinding(
+  service: DatabaseService,
+  input: RegisterSourceBindingInput,
+): Effect.Effect<SourceBinding, DatabaseError | WorkspaceRegistrationError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const now = new Date();
+      const [sourceBinding] = await service.db
+        .insert(sourceBindings)
+        .values({
+          config: input.config ?? {},
+          displayName: input.displayName,
+          sourceType: input.sourceType,
+          sourceUri: input.sourceUri,
+          workspaceId: input.workspaceId,
+        })
+        .onConflictDoUpdate({
+          set: {
+            config: input.config ?? {},
+            displayName: input.displayName,
+            enabled: true,
+            updatedAt: now,
+          },
+          target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],
+        })
+        .returning();
+
+      if (sourceBinding === undefined) {
+        throw new WorkspaceRegistrationError({ message: "source binding returned no row" });
+      }
+
+      return sourceBinding;
     },
     catch: (cause) =>
       cause instanceof WorkspaceRegistrationError

@@ -34,6 +34,7 @@ describe("schema", () => {
     expect(columns.sourceBindingId.notNull).toBe(true);
     expect(columns.sourceType.notNull).toBe(true);
     expect(columns.eventType.notNull).toBe(true);
+    expect(columns.externalEventId.notNull).toBe(true);
     expect(columns.payload.notNull).toBe(true);
     expect(columns.provenance.notNull).toBe(true);
   });

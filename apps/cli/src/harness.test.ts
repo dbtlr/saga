@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -28,28 +29,39 @@ function boundProject(): string {
 }
 
 describe("installHarness", () => {
-  test("installs Codex hooks and records local harness state", () => {
+  test("installs Codex hooks and records local harness state", async () => {
     const projectRoot = boundProject();
 
-    const status = installHarness({ cwd: projectRoot, target: "codex" });
+    const status = await installHarness({
+      cwd: projectRoot,
+      registerCodexSource: async () => ({ id: "codex-source-id" }),
+      target: "codex",
+    });
 
     expect(status.binding).toBe("installed");
     expect(status.hooks).toBe("installed");
+    expect(status.hookTrust).toBe("requires review");
     expect(status.hooksPath).toBe(join(projectRoot, ".codex", "hooks.json"));
-    expect(readBindingFile(projectRoot)?.harnesses?.codex?.hookCommand).toBe(
-      "saga ingest codex-hook",
-    );
+    const binding = readBindingFile(projectRoot);
+    expect(binding?.harnesses?.codex?.sourceBindingId).toBe("codex-source-id");
+    expect(binding?.harnesses?.codex?.hookTrust).toBe("requires-review");
     expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(".codex/\n");
 
     const hooks = JSON.parse(readFileSync(status.hooksPath, "utf8")) as {
       hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
     };
-    expect(hooks.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe("saga ingest codex-hook");
-    expect(hooks.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe("saga ingest codex-hook");
-    expect(hooks.hooks.Stop?.[0]?.hooks[0]?.command).toBe("saga ingest codex-hook");
+    expect(hooks.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(hooks.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(hooks.hooks.Stop?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+
+    const commandCheck = spawnSync("/bin/sh", [
+      "-n",
+      join(projectRoot, ".codex", "saga-codex-hook.sh"),
+    ]);
+    expect(commandCheck.status).toBe(0);
   });
 
-  test("preserves non-Saga Codex hooks", () => {
+  test("preserves non-Saga Codex hooks", async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
     mkdirSync(join(projectRoot, ".codex"));
@@ -66,7 +78,11 @@ describe("installHarness", () => {
       })}\n`,
     );
 
-    installHarness({ cwd: projectRoot, target: "codex" });
+    await installHarness({
+      cwd: projectRoot,
+      registerCodexSource: async () => ({ id: "codex-source-id" }),
+      target: "codex",
+    });
     uninstallHarness({ cwd: projectRoot, target: "codex" });
 
     const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
@@ -77,18 +93,18 @@ describe("installHarness", () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test("requires saga init first", () => {
+  test("requires saga init first", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "saga-harness-missing-"));
 
-    expect(() => installHarness({ cwd: projectRoot, target: "codex" })).toThrow(
+    await expect(installHarness({ cwd: projectRoot, target: "codex" })).rejects.toThrow(
       "run saga init before installing the codex harness",
     );
   });
 
-  test("rejects unsupported targets", () => {
+  test("rejects unsupported targets", async () => {
     const projectRoot = boundProject();
 
-    expect(() => installHarness({ cwd: projectRoot, target: "claude" })).toThrow(
+    await expect(installHarness({ cwd: projectRoot, target: "claude" })).rejects.toThrow(
       "harness claude is not implemented yet",
     );
   });

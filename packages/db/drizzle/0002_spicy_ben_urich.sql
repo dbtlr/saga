@@ -8,6 +8,7 @@ CREATE TABLE "raw_events" (
 	"occurred_at" timestamp with time zone NOT NULL,
 	"ingested_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"event_type" text NOT NULL,
+	"external_event_id" text NOT NULL,
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"session_id" text,
 	"trace_id" text,
@@ -20,4 +21,5 @@ CREATE TABLE "raw_events" (
 ALTER TABLE "raw_events" ADD CONSTRAINT "raw_events_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "raw_events" ADD CONSTRAINT "raw_events_source_binding_id_source_bindings_id_fk" FOREIGN KEY ("source_binding_id") REFERENCES "public"."source_bindings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "raw_events_workspace_occurred_idx" ON "raw_events" USING btree ("workspace_id","occurred_at");--> statement-breakpoint
-CREATE INDEX "raw_events_source_session_idx" ON "raw_events" USING btree ("source_type","source_id","session_id");
+CREATE INDEX "raw_events_source_session_idx" ON "raw_events" USING btree ("source_type","source_id","session_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "raw_events_source_external_unique" ON "raw_events" USING btree ("source_type","source_id","external_event_id");
