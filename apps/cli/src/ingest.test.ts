@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { ingestCodexHook, ingestHook, runIngestCommand } from "./ingest.js";
+import { captureHook, ingestCodexHook, ingestHook, runIngestCommand } from "./ingest.js";
+import { writeBindingFile } from "./init.js";
 
 describe("ingestCodexHook", () => {
   test("returns Codex hook-compatible JSON for record output", async () => {
@@ -181,6 +182,44 @@ describe("ingestHook", () => {
       accepted: true,
       mode: "skipped",
       source: "claude",
+    });
+  });
+
+  test("skips capture with a clear error when harness binding lacks sourceBindingId", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-invalid-binding-"));
+    writeBindingFile(projectRoot, {
+      harnesses: {
+        codex: {
+          hookCommand: "'/tmp/saga-codex-hook.sh'",
+          hookTrust: "requires-review",
+          hooksPath: join(projectRoot, ".codex", "hooks.json"),
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "",
+          sourceUri: "codex://local",
+          target: "codex",
+        },
+      },
+      project: {
+        gitRemote: undefined,
+        root: projectRoot,
+      },
+      schemaVersion: 1,
+      service: {
+        databaseUrl: "env:DATABASE_URL",
+      },
+      sourceBinding: {
+        id: "source-id",
+      },
+      workspace: {
+        handle: "saga",
+        id: "workspace-id",
+      },
+    });
+
+    await expect(captureHook("codex", { cwd: projectRoot })).resolves.toMatchObject({
+      error: "Codex harness binding is invalid: sourceBindingId is missing",
+      mode: "skipped",
+      source: "codex",
     });
   });
 });

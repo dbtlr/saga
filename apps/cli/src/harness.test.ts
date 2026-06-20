@@ -427,6 +427,82 @@ describe("inspectHarness", () => {
     expect(status.stateDetail).toBe("hooks are installed but local binding is missing");
   });
 
+  test("reports configured harness state for complete recognized shim hooks", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeBindingFile(projectRoot, {
+      ...readBindingFile(projectRoot)!,
+      harnesses: {
+        codex: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "codex-source-id",
+          sourceUri: "codex://local",
+          target: "codex",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("configured");
+    expect(status.hooks).toBe("installed");
+    expect(status.hooksCoverage).toBe("complete");
+    expect(status.stateDetail).toBe("binding is valid and complete Saga hooks are active");
+  });
+
+  test("reports invalid harness state for malformed local harness binding", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeBindingFile(projectRoot, {
+      ...readBindingFile(projectRoot)!,
+      harnesses: {
+        codex: {
+          hookCommand: `'${join(projectRoot, ".codex", "saga-codex-hook.sh")}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "",
+          sourceUri: "codex://local",
+          target: "codex",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          Stop: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("invalid");
+    expect(status.hooks).toBe("installed");
+    expect(status.stateDetail).toBe(
+      "invalid harness binding: sourceBindingId must be a non-empty string",
+    );
+  });
+
   test("reports stale harness state when binding metadata no longer matches the adapter", () => {
     const projectRoot = boundProject();
     writeBindingFile(projectRoot, {

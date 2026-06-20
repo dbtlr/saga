@@ -59,7 +59,10 @@ export interface HarnessAdapter {
 
 interface HarnessBindingSnapshot {
   hookCommand: string;
+  hookTrust: string;
   hooksPath: string;
+  installedAt: string;
+  sourceBindingId: string;
   sourceUri: string;
   target: string;
 }
@@ -267,12 +270,28 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     };
   }
 
-  const hooksInstalled =
-    hasSagaHooks(hooksFile.file, hookCommand) || hasSagaHooks(hooksFile.file, expectedHookCommand);
   const sagaHookCoverage = inspectSagaHookCoverage(hooksFile.file, {
     hookCommand,
     target: adapter.target,
   });
+  const hooksInstalled = sagaHookCoverage === "complete";
+  const bindingIssue = validateHarnessBindingSnapshot(harnessBinding);
+  if (bindingIssue !== undefined) {
+    return {
+      binding: "installed",
+      displayName: adapter.displayName,
+      hookCommand,
+      hookTrust: hooksInstalled ? "requires review" : "not installed",
+      hooksCoverage: sagaHookCoverage,
+      hooks: hooksInstalled ? "installed" : "missing",
+      hooksPath,
+      mcp: "deferred",
+      skills: "deferred",
+      state: "invalid",
+      stateDetail: `invalid harness binding: ${bindingIssue}`,
+      target: adapter.target,
+    };
+  }
   const state = classifyHarnessState({
     adapter,
     expectedHookCommand,
@@ -295,6 +314,26 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     stateDetail: state.detail,
     target: adapter.target,
   };
+}
+
+function validateHarnessBindingSnapshot(
+  binding: Partial<HarnessBindingSnapshot> | undefined,
+): string | undefined {
+  if (binding === undefined) return undefined;
+  const requiredStrings = [
+    "hookCommand",
+    "hooksPath",
+    "installedAt",
+    "sourceBindingId",
+    "sourceUri",
+    "target",
+  ] as const satisfies readonly (keyof HarnessBindingSnapshot)[];
+  const invalidField = requiredStrings.find(
+    (field) => typeof binding[field] !== "string" || binding[field].trim() === "",
+  );
+  if (invalidField !== undefined) return `${invalidField} must be a non-empty string`;
+  if (binding.hookTrust !== "requires-review") return "hookTrust must be requires-review";
+  return undefined;
 }
 
 function classifyHarnessState(input: {
@@ -326,7 +365,7 @@ function classifyHarnessState(input: {
     return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: "divergent" };
   }
 
-  return { detail: "binding and hooks match the current adapter", state: "configured" };
+  return { detail: "binding is valid and complete Saga hooks are active", state: "configured" };
 }
 
 function activeHooksWithoutBindingDetail(coverage: "complete" | "partial" | "none"): string {
@@ -614,14 +653,6 @@ function uninstallSagaHooks(
     }
   }
   return { ...file, hooks };
-}
-
-function hasSagaHooks(file: HooksSettingsFile, hookCommand: string): boolean {
-  return HARNESS_HOOK_EVENTS.every((event) =>
-    (file.hooks?.[event] ?? []).some((matcher) =>
-      (matcher.hooks ?? []).some((hook) => hook.command === hookCommand),
-    ),
-  );
 }
 
 function inspectSagaHookCoverage(

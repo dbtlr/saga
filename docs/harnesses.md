@@ -39,7 +39,7 @@ Saga installs the same command hook for each event. `SessionStart` is scoped to 
 
 `saga harness status` and `saga doctor` use the same state model:
 
-- `configured`: local binding and installed hooks match the current adapter.
+- `configured`: local binding is valid and complete recognized Saga hooks are active for the target.
 - `missing`: neither local binding nor Saga hooks are installed for the target.
 - `stale`: local binding metadata points at an older adapter path, command, target, or source URI.
 - `divergent`: local binding and hook activation disagree, such as binding without hooks or hooks without binding.

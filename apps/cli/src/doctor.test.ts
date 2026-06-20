@@ -94,6 +94,61 @@ describe("doctorProject", () => {
     );
   });
 
+  test("fails malformed harness binding even when hooks are active", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    mkdirSync(join(cwd, ".codex"));
+    writeFileSync(
+      join(cwd, ".saga.local.json"),
+      JSON.stringify({
+        harnesses: {
+          codex: {
+            hookCommand: `'${join(cwd, ".codex", "saga-codex-hook.sh")}'`,
+            hookTrust: "requires-review",
+            hooksPath: join(cwd, ".codex", "hooks.json"),
+            installedAt: new Date().toISOString(),
+            sourceBindingId: "",
+            sourceUri: "codex://local",
+            target: "codex",
+          },
+        },
+        project: {
+          root: cwd,
+        },
+        schemaVersion: 1,
+        service: {
+          databaseUrl: "env:DATABASE_URL",
+        },
+        sourceBinding: {
+          id: "source-id",
+        },
+        workspace: {
+          handle: "saga",
+          id: "workspace-id",
+        },
+      }),
+    );
+    writeFileSync(
+      join(cwd, ".codex", "hooks.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          Stop: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+        },
+      }),
+    );
+
+    const checks = await doctorProject({ cwd });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: "invalid; invalid harness binding: sourceBindingId must be a non-empty string",
+        label: "harness:codex",
+        status: "fail",
+      }),
+    );
+  });
+
   test("reports invalid binding files as binding failures", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
     writeFileSync(join(cwd, ".saga.local.json"), "not json");

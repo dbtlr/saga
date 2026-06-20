@@ -219,6 +219,14 @@ export async function captureHook(
         `${sourceDisplayName(source)} harness is not installed; run saga harness install ${source}`,
       );
     }
+    if (
+      typeof sourceBinding.sourceBindingId !== "string" ||
+      sourceBinding.sourceBindingId.trim() === ""
+    ) {
+      throw new Error(
+        `${sourceDisplayName(source)} harness binding is invalid: sourceBindingId is missing`,
+      );
+    }
 
     const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
     const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
