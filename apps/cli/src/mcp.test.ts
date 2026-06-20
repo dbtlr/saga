@@ -111,7 +111,8 @@ describe("rewriteResolvedSagaLinkReferences", () => {
         },
         sourceBinding: {
           id: "source-1",
-          sourceType: "vault",
+          sourceType: "norn",
+          sourceUri: "norn://workspace",
         },
       },
       [
@@ -133,7 +134,7 @@ describe("rewriteResolvedSagaLinkReferences", () => {
       url: "saga:context/adr",
     });
     expect(rewritten.references[1]).toEqual({
-      connector: "vault",
+      connector: "norn",
       externalId: "notes/adr.md",
       sourceBindingId: "source-2",
       title: "Other ADR",

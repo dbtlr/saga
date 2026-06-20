@@ -1,8 +1,7 @@
 import { renderActiveContextMarkdown } from "@saga/active-context";
 import {
+  resolveConnector,
   rewriteConnectorResultToSagaLinks,
-  type ConnectorReference,
-  type ConnectorRetrievalResult,
   type SagaLinkIndexReference,
 } from "@saga/connectors";
 import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
@@ -267,9 +266,12 @@ export function rewriteResolvedSagaLinkReferences(
     externalId: string;
     metadata: Record<string, unknown>;
     sourceBinding: {
+      config?: Record<string, unknown> | undefined;
       id: string;
       sourceType: string;
+      sourceUri: string;
     };
+    title?: string | undefined;
   },
   contextIndex: ReadonlyArray<{
     externalId: string;
@@ -281,7 +283,12 @@ export function rewriteResolvedSagaLinkReferences(
   }>,
 ) {
   return rewriteConnectorResultToSagaLinks(
-    connectorResultFromEntryMetadata(entry),
+    resolveConnector({
+      externalId: entry.externalId,
+      metadata: entry.metadata,
+      sourceBinding: entry.sourceBinding,
+      title: entry.title,
+    }),
     contextIndex.map(
       (indexEntry): SagaLinkIndexReference => ({
         connector: indexEntry.sourceBinding.sourceType,
@@ -402,51 +409,6 @@ function renderResolvedSagaLinkMarkdown(
     `- Provenance: sourceBinding=${resolved.provenance.sourceBindingId}`,
     ...referenceLines,
   ].join("\n");
-}
-
-function connectorResultFromEntryMetadata(entry: {
-  metadata: Record<string, unknown>;
-  sourceBinding: {
-    id: string;
-    sourceType: string;
-  };
-}): ConnectorRetrievalResult {
-  return {
-    content: readOptionalString(entry.metadata.content),
-    references: readConnectorReferences(entry.metadata.references, entry),
-  };
-}
-
-function readConnectorReferences(
-  value: unknown,
-  entry: {
-    sourceBinding: {
-      id: string;
-      sourceType: string;
-    };
-  },
-): ConnectorReference[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.flatMap((reference): ConnectorReference[] => {
-    if (!isRecord(reference)) return [];
-    const externalId = readOptionalString(reference.externalId);
-    if (externalId === undefined) return [];
-
-    return [
-      {
-        connector: readOptionalString(reference.connector) ?? entry.sourceBinding.sourceType,
-        externalId,
-        sourceBindingId: readOptionalString(reference.sourceBindingId) ?? entry.sourceBinding.id,
-        title: readOptionalString(reference.title),
-        url: readOptionalString(reference.url),
-      },
-    ];
-  });
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 function matchedSnippet(value: string, tokens: readonly string[]): string {

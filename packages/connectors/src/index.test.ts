@@ -1,5 +1,101 @@
 import { describe, expect, test } from "vitest";
-import { rewriteConnectorReferencesToSagaLinks } from "./index.js";
+import { resolveConnector, rewriteConnectorReferencesToSagaLinks } from "./index.js";
+
+describe("resolveConnector", () => {
+  test("resolves GitHub pull requests through a configured repository", () => {
+    const result = resolveConnector({
+      externalId: "pr:12",
+      sourceBinding: {
+        config: {
+          repositoryFullName: "dbtlr/saga",
+        },
+        id: "github-source",
+        sourceType: "github",
+        sourceUri: "github://dbtlr/saga",
+      },
+    });
+
+    expect(result).toMatchObject({
+      content: "GitHub pull request #12 in dbtlr/saga",
+      provenance: {
+        connector: "github",
+        repository: "dbtlr/saga",
+      },
+      target: {
+        apiUrl: "https://api.github.com/repos/dbtlr/saga/pulls/12",
+        kind: "pr",
+        url: "https://github.com/dbtlr/saga/pull/12",
+      },
+    });
+  });
+
+  test("resolves Mimir and Norn sources without owning their domains", () => {
+    expect(
+      resolveConnector({
+        externalId: "SGA-72",
+        sourceBinding: {
+          id: "mimir-source",
+          sourceType: "mimir",
+          sourceUri: "mimir://SGA",
+        },
+      }),
+    ).toMatchObject({
+      content: "Mimir work item: SGA-72",
+      target: {
+        url: "mimir:SGA-72",
+      },
+    });
+
+    expect(
+      resolveConnector({
+        externalId: "cli-output-spec",
+        sourceBinding: {
+          id: "norn-source",
+          sourceType: "norn",
+          sourceUri: "norn://workspace",
+        },
+      }),
+    ).toMatchObject({
+      content: "Norn document: cli-output-spec",
+      target: {
+        url: "norn:cli-output-spec",
+      },
+    });
+  });
+
+  test("resolves generic document-store sources", () => {
+    expect(
+      resolveConnector({
+        externalId: "ENG-CI-CD-QUALITY-GATES",
+        sourceBinding: {
+          id: "confluence-source",
+          sourceType: "confluence",
+          sourceUri: "https://confluence.example/wiki",
+        },
+        title: "Quality Gates",
+      }),
+    ).toMatchObject({
+      content: "Quality Gates from confluence",
+      target: {
+        kind: "document",
+        url: "https://confluence.example/wiki/ENG-CI-CD-QUALITY-GATES",
+      },
+    });
+  });
+
+  test("rejects unsupported source types", () => {
+    expect(() =>
+      resolveConnector({
+        externalId: "x",
+        sourceBinding: {
+          id: "unsupported-source",
+          sourceType: "spreadsheet",
+          sourceUri: "spreadsheet://local",
+        },
+      }),
+    ).toThrow("unsupported connector source type: spreadsheet");
+  });
+});
 
 describe("rewriteConnectorReferencesToSagaLinks", () => {
   test("rewrites matching connector references to Saga Links", () => {

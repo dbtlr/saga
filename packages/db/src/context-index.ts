@@ -30,6 +30,7 @@ export interface ResolveSagaLinkInput {
 }
 
 export interface ContextIndexSourceBinding {
+  config: Record<string, unknown>;
   displayName: string | null;
   enabled: boolean;
   id: string;
@@ -163,6 +164,7 @@ export function listContextIndexEntries(
         .select({
           entry: contextIndexEntries,
           sourceBinding: {
+            config: sourceBindings.config,
             displayName: sourceBindings.displayName,
             enabled: sourceBindings.enabled,
             id: sourceBindings.id,
@@ -213,6 +215,7 @@ export function resolveSagaLink(
         .select({
           entry: contextIndexEntries,
           sourceBinding: {
+            config: sourceBindings.config,
             displayName: sourceBindings.displayName,
             enabled: sourceBindings.enabled,
             id: sourceBindings.id,
