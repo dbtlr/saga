@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { runMcpCommand } from "./mcp.js";
+import { runMcpCommand, searchMemoryEntries, type MemorySearchEntry } from "./mcp.js";
 
 async function* chunks(text: string) {
   yield text;
@@ -79,6 +79,66 @@ describe("runMcpCommand", () => {
       },
       id: null,
       jsonrpc: "2.0",
+    });
+  });
+});
+
+describe("searchMemoryEntries", () => {
+  test("ranks matches across claims, recent activity, and Active Context lines", () => {
+    const entries: MemorySearchEntry[] = [
+      {
+        confidence: 0.72,
+        fields: {
+          evidence: '{"quote":"Use typed route contracts for MCP calls"}',
+          text: "Control plane should expose governance actions.",
+        },
+        key: "claim-1",
+        kind: "decision",
+        source: "current_claim",
+        state: "supported",
+        text: "Control plane should expose governance actions.",
+      },
+      {
+        confidence: 0.45,
+        fields: {
+          payload: '{"prompt":"Investigate missing search provenance in MCP results"}',
+          provenance: '{"transcriptPath":"/tmp/session.jsonl"}',
+        },
+        key: "raw-1",
+        kind: "raw_event",
+        source: "recent_activity",
+        state: "raw",
+        text: "codex.UserPromptSubmit codex:turn-1",
+      },
+      {
+        confidence: 1,
+        fields: {
+          line: "Current Claims: Active Context should include promoted decisions.",
+          provenance: "claim:claim-2",
+          section: "Current Claims",
+        },
+        key: "active-context:Current Claims:0",
+        kind: "active_context",
+        source: "active_context",
+        state: "compiled",
+        text: "Current Claims: Active Context should include promoted decisions.",
+      },
+    ];
+
+    expect(searchMemoryEntries({ query: "typed route" }, entries)[0]).toMatchObject({
+      key: "claim-1",
+      matchedFields: ["evidence"],
+      source: "current_claim",
+    });
+    expect(searchMemoryEntries({ query: "search session" }, entries)[0]).toMatchObject({
+      key: "raw-1",
+      matchedFields: ["payload", "provenance"],
+      source: "recent_activity",
+    });
+    expect(searchMemoryEntries({ query: "promoted decisions" }, entries)[0]).toMatchObject({
+      key: "active-context:Current Claims:0",
+      matchedFields: ["line"],
+      source: "active_context",
     });
   });
 });

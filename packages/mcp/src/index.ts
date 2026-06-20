@@ -32,6 +32,8 @@ export interface SearchMemoryToolResult {
     confidence: number;
     key: string;
     kind: string;
+    matchedFields?: string[] | undefined;
+    source?: string | undefined;
     state: string;
     text: string;
   }>;
@@ -54,7 +56,8 @@ export const SAGA_MCP_TOOLS = [
     name: "get_active_context",
   },
   {
-    description: "Search projected Saga memory claims for the current workspace.",
+    description:
+      "Search projected Saga memory, recent activity, and compiled Active Context for the current workspace.",
     inputSchema: {
       additionalProperties: false,
       properties: {

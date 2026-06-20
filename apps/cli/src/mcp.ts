@@ -1,11 +1,37 @@
 import { renderActiveContextMarkdown } from "@saga/active-context";
 import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
-import { listCurrentClaims, makeDatabase } from "@saga/db";
+import {
+  listActiveContextClaims,
+  listCurrentClaims,
+  listRecentRawEvents,
+  makeDatabase,
+} from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
-import { compileProjectActiveContext } from "./context.js";
+import { compileActiveContextFromDatabase, compileProjectActiveContext } from "./context.js";
 import { findProjectRoot, readBindingFile } from "./init.js";
 import { type RenderOptions } from "./render.js";
+
+export interface MemorySearchEntry {
+  confidence: number;
+  fields: Record<string, string>;
+  key: string;
+  kind: string;
+  source: string;
+  state: string;
+  text: string;
+}
+
+export interface RankedMemorySearchMatch {
+  confidence: number;
+  key: string;
+  kind: string;
+  matchedFields: string[];
+  score: number;
+  source: string;
+  state: string;
+  text: string;
+}
 
 export async function runMcpCommand(
   _args: readonly string[],
@@ -52,41 +78,191 @@ export async function searchProjectMemory(
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
-    const query = input.query.toLowerCase();
-    const claims = await Effect.runPromise(
-      listCurrentClaims(service, {
-        limit: 50,
-        workspaceId: binding.workspace.id,
+    const [claims, activeContextClaims, recentEvents] = await Promise.all([
+      Effect.runPromise(
+        listCurrentClaims(service, {
+          limit: 100,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+      Effect.runPromise(
+        listActiveContextClaims(service, {
+          limit: 20,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+      Effect.runPromise(
+        listRecentRawEvents(service, {
+          limit: 50,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+    ]);
+    const activeContext = await compileActiveContextFromDatabase(service, binding.workspace);
+    const matches = searchMemoryEntries(input, [
+      ...claims.map((claim): MemorySearchEntry => {
+        const evidence = JSON.stringify(claim.evidence);
+        const attributes = JSON.stringify(claim.attributes);
+        return {
+          confidence: claim.confidence,
+          fields: {
+            attributes,
+            evidence,
+            key: claim.claimKey,
+            kind: claim.claimKind,
+            state: claim.state,
+            text: claim.claimText,
+          },
+          key: claim.claimKey,
+          kind: claim.claimKind,
+          source: "current_claim",
+          state: claim.state,
+          text: claim.claimText,
+        };
       }),
-    );
-    const matches = claims
-      .filter((claim) => claim.claimText.toLowerCase().includes(query))
-      .slice(0, input.limit ?? 10)
-      .map((claim) => ({
-        confidence: claim.confidence,
-        key: claim.claimKey,
-        kind: claim.claimKind,
-        state: claim.state,
-        text: claim.claimText,
-      }));
+      ...recentEvents.map(
+        (event): MemorySearchEntry => ({
+          confidence: event.trustLevel === "trusted" ? 0.8 : 0.45,
+          fields: {
+            actor: event.actorId ?? "",
+            event: event.eventType,
+            externalEventId: event.externalEventId,
+            payload: JSON.stringify(event.payload),
+            provenance: JSON.stringify(event.provenance),
+            session: event.sessionId ?? "",
+            source: `${event.sourceType}:${event.sourceId}`,
+            trace: event.traceId ?? "",
+          },
+          key: event.id,
+          kind: "raw_event",
+          source: "recent_activity",
+          state: event.trustLevel ?? "raw",
+          text: `${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, "")} ${event.externalEventId}`,
+        }),
+      ),
+      ...activeContext.sections.flatMap((section) =>
+        section.lines.map(
+          (line, index): MemorySearchEntry => ({
+            confidence: 1,
+            fields: {
+              line,
+              provenance: section.provenance.join(" "),
+              section: section.title,
+            },
+            key: `active-context:${section.title}:${index.toString()}`,
+            kind: "active_context",
+            source: "active_context",
+            state: "compiled",
+            text: `${section.title}: ${line}`,
+          }),
+        ),
+      ),
+      ...activeContextClaims.map(
+        (claim): MemorySearchEntry => ({
+          confidence: claim.confidence,
+          fields: {
+            key: claim.claimKey,
+            kind: claim.claimKind,
+            state: claim.state,
+            text: claim.claimText,
+          },
+          key: `active-context-claim:${claim.claimKey}`,
+          kind: claim.claimKind,
+          source: "active_context_input",
+          state: claim.state,
+          text: claim.claimText,
+        }),
+      ),
+    ]);
 
     return {
-      markdown:
-        matches.length === 0
-          ? `# Saga Memory Search\n\nNo matches for ${input.query}.`
-          : [
-              "# Saga Memory Search",
-              "",
-              ...matches.map(
-                (match) =>
-                  `- [${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%)`,
-              ),
-            ].join("\n"),
-      matches,
+      markdown: renderSearchMemoryMarkdown(input.query, matches),
+      matches: matches.map(({ score: _score, ...match }) => match),
     };
   } finally {
     await Effect.runPromise(service.close());
   }
+}
+
+export function searchMemoryEntries(
+  input: SearchMemoryInput,
+  entries: readonly MemorySearchEntry[],
+): RankedMemorySearchMatch[] {
+  const tokens = tokenize(input.query);
+  if (tokens.length === 0) return [];
+
+  return entries
+    .map((entry) => rankMemoryEntry(entry, tokens))
+    .filter((match): match is RankedMemorySearchMatch => match !== undefined)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.confidence - left.confidence ||
+        left.text.localeCompare(right.text),
+    )
+    .slice(0, input.limit ?? 10);
+}
+
+function rankMemoryEntry(
+  entry: MemorySearchEntry,
+  tokens: readonly string[],
+): RankedMemorySearchMatch | undefined {
+  const fieldMatches = Object.entries(entry.fields).flatMap(([field, value]) => {
+    const normalized = value.toLowerCase();
+    const hits = tokens.filter((token) => normalized.includes(token)).length;
+    return hits === 0 ? [] : [{ field, hits }];
+  });
+  if (fieldMatches.length === 0) return undefined;
+
+  const matchedFields = [...new Set(fieldMatches.map((match) => match.field))];
+  const exactTextBonus = tokens.every((token) => entry.text.toLowerCase().includes(token)) ? 4 : 0;
+  const weightedHits = fieldMatches.reduce((score, match) => score + match.hits, 0);
+  const sourceWeight = sourceSearchWeight(entry.source);
+  return {
+    confidence: entry.confidence,
+    key: entry.key,
+    kind: entry.kind,
+    matchedFields,
+    score: weightedHits + exactTextBonus + sourceWeight + entry.confidence,
+    source: entry.source,
+    state: entry.state,
+    text: entry.text,
+  };
+}
+
+function renderSearchMemoryMarkdown(
+  query: string,
+  matches: readonly RankedMemorySearchMatch[],
+): string {
+  if (matches.length === 0) return `# Saga Memory Search\n\nNo matches for ${query}.`;
+
+  return [
+    "# Saga Memory Search",
+    "",
+    ...matches.map(
+      (match) =>
+        `- [${match.source}/${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")})`,
+    ),
+  ].join("\n");
+}
+
+function sourceSearchWeight(source: string): number {
+  if (source === "current_claim") return 2;
+  if (source === "active_context") return 1.5;
+  if (source === "active_context_input") return 1;
+  return 0;
+}
+
+function tokenize(query: string): string[] {
+  return [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9_:-]+/u)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0),
+    ),
+  ];
 }
 
 async function* readJsonLines(stdin: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
