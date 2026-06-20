@@ -1,8 +1,19 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { doctorProject, renderDoctor, runDoctor, type DoctorCheck } from "./doctor.js";
+import {
+  checkNodeVersion,
+  doctorProject,
+  renderDoctor,
+  runDoctor,
+  serviceDoctorStatus,
+  satisfiesEngineRange,
+  type DoctorCheck,
+} from "./doctor.js";
+
+const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 const checks: DoctorCheck[] = [
   {
@@ -66,6 +77,25 @@ describe("runDoctor", () => {
 });
 
 describe("doctorProject", () => {
+  test("reports Node and pnpm engine requirements", async () => {
+    const checks = await doctorProject({ cwd: workspaceRoot });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: expect.stringContaining("requires >=24.0.0 <27.0.0"),
+        label: "node",
+        status: "ok",
+      }),
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: expect.stringContaining("requires ^11.0.0"),
+        label: "pnpm",
+        status: "ok",
+      }),
+    );
+  });
+
   test("reports harness target states", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
 
@@ -183,5 +213,44 @@ describe("doctorProject", () => {
         status: "fail",
       }),
     );
+  });
+});
+
+describe("engine checks", () => {
+  test("evaluates the root Node engine range", () => {
+    expect(checkNodeVersion(workspaceRoot, "23.9.0")).toMatchObject({
+      label: "node",
+      status: "fail",
+    });
+    expect(checkNodeVersion(workspaceRoot, "24.0.0")).toMatchObject({
+      label: "node",
+      status: "ok",
+    });
+    expect(checkNodeVersion(workspaceRoot, "27.0.0")).toMatchObject({
+      label: "node",
+      status: "fail",
+    });
+  });
+
+  test("evaluates caret engine ranges", () => {
+    expect(satisfiesEngineRange("11.8.0", "^11.0.0")).toBe(true);
+    expect(satisfiesEngineRange("12.0.0", "^11.0.0")).toBe(false);
+  });
+});
+
+describe("serviceDoctorStatus", () => {
+  test("requires both a running process and healthy service response", () => {
+    expect(
+      serviceDoctorStatus({
+        health: "unreachable (connection refused)",
+        process: "running",
+      }),
+    ).toBe("warn");
+    expect(
+      serviceDoctorStatus({
+        health: "ok (http://127.0.0.1:4766/health)",
+        process: "running",
+      }),
+    ).toBe("ok");
   });
 });

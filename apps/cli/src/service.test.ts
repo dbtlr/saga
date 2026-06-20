@@ -9,6 +9,7 @@ import {
   renderServiceStatus,
   runServiceCommand,
   serviceStatus,
+  launchdPrintProcess,
   waitForServiceHealth,
   type ServiceLifecycleReport,
   type ServiceSupervisor,
@@ -48,6 +49,23 @@ describe("renderServiceStatus", () => {
       ),
     ).toContain("process     running");
   });
+
+  test("renders observed log paths", () => {
+    expect(
+      renderServiceStatus(
+        {
+          config: "127.0.0.1:4766",
+          health: "unreachable (connection refused)",
+          healthUrl: "http://127.0.0.1:4766/health",
+          logs: "stdout=/tmp/saga.out (present); stderr=/tmp/saga.err (missing)",
+          process: "not running",
+          supervisor: "stopped",
+          supervisorDetail: "launchd agent is installed but not loaded",
+        },
+        renderOptions,
+      ),
+    ).toContain("stdout=/tmp/saga.out (present)");
+  });
 });
 
 describe("runServiceCommand", () => {
@@ -85,6 +103,9 @@ describe("runServiceCommand", () => {
 
     expect(output).toContain("supervisor  stopped");
     expect(output).toContain("detail      fake supervisor stopped");
+    expect(output).toContain(
+      "logs        stdout=/tmp/saga.out (present); stderr=/tmp/saga.err (missing)",
+    );
   });
 });
 
@@ -147,6 +168,13 @@ describe("renderLaunchdPlist", () => {
   });
 });
 
+describe("launchdPrintProcess", () => {
+  test("reports running only when launchctl output includes a pid", () => {
+    expect(launchdPrintProcess("state = running\n\tpid = 12345\n")).toBe("running");
+    expect(launchdPrintProcess("state = waiting\n\tlast exit code = 0\n")).toBe("not running");
+  });
+});
+
 describe("createLaunchdSupervisor", () => {
   test("does not mutate launchd state on non-macOS", async () => {
     if (process.platform === "darwin") return;
@@ -169,7 +197,12 @@ function fakeSupervisor(state: "running" | "stopped" = "running"): ServiceSuperv
     state: action === "uninstall" ? "not installed" : state,
   });
   return {
-    inspect: async () => ({ detail: `fake supervisor ${state}`, state }),
+    inspect: async () => ({
+      detail: `fake supervisor ${state}`,
+      logs: "stdout=/tmp/saga.out (present); stderr=/tmp/saga.err (missing)",
+      process: state === "running" ? "running" : "not running",
+      state,
+    }),
     install: async () => report("install"),
     restart: async () => report("restart"),
     start: async () => report("start"),

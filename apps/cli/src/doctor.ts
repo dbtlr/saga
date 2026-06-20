@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
@@ -31,12 +33,8 @@ export async function runDoctor(_args: readonly string[], options: RenderOptions
 export async function doctorProject(input: { cwd?: string } = {}): Promise<DoctorCheck[]> {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const checks: DoctorCheck[] = [
-    {
-      detail: process.versions.node,
-      label: "node",
-      status: "ok",
-    },
-    checkPnpm(),
+    checkNodeVersion(projectRoot),
+    checkPnpm(projectRoot),
     checkBinding(projectRoot),
   ];
 
@@ -45,7 +43,7 @@ export async function doctorProject(input: { cwd?: string } = {}): Promise<Docto
   checks.push({
     detail: `${service.process}; ${service.health}`,
     label: "service",
-    status: service.process === "running" ? "ok" : "warn",
+    status: serviceDoctorStatus(service),
   });
   checks.push(...checkHarnesses(projectRoot));
 
@@ -63,15 +61,40 @@ export function renderDoctor(checks: readonly DoctorCheck[], options: RenderOpti
   );
 }
 
-function checkPnpm(): DoctorCheck {
-  try {
+export function checkNodeVersion(
+  projectRoot: string,
+  version = process.versions.node,
+): DoctorCheck {
+  const engine = readPackageEngines(projectRoot).node;
+  if (engine === undefined) {
     return {
-      detail: execFileSync("pnpm", ["--version"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim(),
+      detail: `${version}; no package.json engine declared`,
+      label: "node",
+      status: "warn",
+    };
+  }
+
+  return {
+    detail: `${version}; requires ${engine}`,
+    label: "node",
+    status: satisfiesEngineRange(version, engine) ? "ok" : "fail",
+  };
+}
+
+function checkPnpm(projectRoot: string): DoctorCheck {
+  const engine = readPackageEngines(projectRoot).pnpm;
+  try {
+    const version = execFileSync("pnpm", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return {
+      detail:
+        engine === undefined
+          ? `${version}; no package.json engine declared`
+          : `${version}; requires ${engine}`,
       label: "pnpm",
-      status: "ok",
+      status: engine === undefined || satisfiesEngineRange(version, engine) ? "ok" : "fail",
     };
   } catch {
     return {
@@ -80,6 +103,69 @@ function checkPnpm(): DoctorCheck {
       status: "fail",
     };
   }
+}
+
+function readPackageEngines(projectRoot: string): {
+  node?: string | undefined;
+  pnpm?: string | undefined;
+} {
+  try {
+    const packageJson = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as {
+      engines?: {
+        node?: unknown;
+        pnpm?: unknown;
+      };
+    };
+    return {
+      node: typeof packageJson.engines?.node === "string" ? packageJson.engines.node : undefined,
+      pnpm: typeof packageJson.engines?.pnpm === "string" ? packageJson.engines.pnpm : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export function satisfiesEngineRange(version: string, range: string): boolean {
+  return range
+    .split(/\s+/u)
+    .map((constraint) => constraint.trim())
+    .filter((constraint) => constraint !== "")
+    .every((constraint) => satisfiesVersionConstraint(version, constraint));
+}
+
+function satisfiesVersionConstraint(version: string, constraint: string): boolean {
+  if (constraint.startsWith("^")) {
+    const base = parseVersion(constraint.slice(1));
+    const actual = parseVersion(version);
+    return compareVersion(actual, base) >= 0 && actual.major === base.major;
+  }
+
+  const match = /^(>=|>|<=|<|=)?(.+)$/u.exec(constraint);
+  if (match === null) return false;
+  const operator = match[1] ?? "=";
+  const comparison = compareVersion(parseVersion(version), parseVersion(match[2] ?? ""));
+  if (operator === ">=") return comparison >= 0;
+  if (operator === ">") return comparison > 0;
+  if (operator === "<=") return comparison <= 0;
+  if (operator === "<") return comparison < 0;
+  return comparison === 0;
+}
+
+function parseVersion(value: string): { major: number; minor: number; patch: number } {
+  const match = /^v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?/u.exec(value.trim());
+  if (match === null) return { major: 0, minor: 0, patch: 0 };
+  return {
+    major: Number.parseInt(match[1] ?? "0", 10),
+    minor: Number.parseInt(match[2] ?? "0", 10),
+    patch: Number.parseInt(match[3] ?? "0", 10),
+  };
+}
+
+function compareVersion(
+  left: { major: number; minor: number; patch: number },
+  right: { major: number; minor: number; patch: number },
+): number {
+  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
 }
 
 function checkBinding(projectRoot: string): DoctorCheck {
@@ -207,6 +293,13 @@ function checkHarnesses(projectRoot: string): DoctorCheck[] {
       },
     ];
   }
+}
+
+export function serviceDoctorStatus(service: {
+  health: string;
+  process: "running" | "not running";
+}): DoctorStatus {
+  return service.process === "running" && service.health.startsWith("ok ") ? "ok" : "warn";
 }
 
 function harnessDoctorStatus(state: HarnessIntegrationState): DoctorStatus {

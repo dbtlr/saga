@@ -38,8 +38,15 @@ export interface ServiceLifecycleReport {
   state: ServiceSupervisorState;
 }
 
+export interface ServiceSupervisorInspection {
+  detail: string;
+  logs: string;
+  process: "not running" | "running";
+  state: ServiceSupervisorState;
+}
+
 export interface ServiceSupervisor {
-  inspect: () => Promise<{ detail: string; state: ServiceSupervisorState }>;
+  inspect: () => Promise<ServiceSupervisorInspection>;
   install: () => Promise<ServiceLifecycleReport>;
   restart: () => Promise<ServiceLifecycleReport>;
   start: () => Promise<ServiceLifecycleReport>;
@@ -136,8 +143,9 @@ export async function inspectServiceStatus(
     config: `${config.service.host}:${config.service.port}`,
     health,
     healthUrl,
-    logs: "stdout/stderr",
-    process: health.startsWith("ok ") ? "running" : "not running",
+    logs: supervisor.logs,
+    process:
+      supervisor.process === "running" || health.startsWith("ok ") ? "running" : "not running",
     supervisor: supervisor.state,
     supervisorDetail: supervisor.detail,
   };
@@ -372,26 +380,67 @@ function ensureLaunchdDirectories(paths: ReturnType<typeof launchdPaths>): void 
 
 async function inspectLaunchd(
   paths: ReturnType<typeof launchdPaths>,
-): Promise<{ detail: string; state: ServiceSupervisorState }> {
+): Promise<ServiceSupervisorInspection> {
+  const logs = launchdLogStatus(paths);
   if (process.platform !== "darwin") {
-    return { detail: "launchd is only available on macOS", state: "unavailable" };
+    return {
+      detail: "launchd is only available on macOS",
+      logs,
+      process: "not running",
+      state: "unavailable",
+    };
   }
   if (!existsSync(paths.plistPath)) {
-    return { detail: "launchd agent is not installed", state: "not installed" };
+    return {
+      detail: "launchd agent is not installed",
+      logs,
+      process: "not running",
+      state: "not installed",
+    };
   }
   try {
     const plist = readFileSync(paths.plistPath, "utf8");
     if (!plist.includes(`<string>${LAUNCHD_LABEL}</string>`)) {
-      return { detail: "launchd plist label does not match Saga service", state: "stopped" };
+      return {
+        detail: "launchd plist label does not match Saga service",
+        logs,
+        process: "not running",
+        state: "stopped",
+      };
     }
-    await execFileAsync("launchctl", [
+    const { stdout } = await execFileAsync("launchctl", [
       "print",
       `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`,
     ]);
-    return { detail: "launchd agent is loaded", state: "running" };
+    const serviceProcess = launchdPrintProcess(stdout);
+    return {
+      detail:
+        serviceProcess === "running"
+          ? "launchd agent is loaded and running"
+          : "launchd agent is loaded but process is not running",
+      logs,
+      process: serviceProcess,
+      state: serviceProcess === "running" ? "running" : "stopped",
+    };
   } catch {
-    return { detail: "launchd agent is installed but not loaded", state: "stopped" };
+    return {
+      detail: "launchd agent is installed but not loaded",
+      logs,
+      process: "not running",
+      state: "stopped",
+    };
   }
+}
+
+export function launchdPrintProcess(output: string): "not running" | "running" {
+  return /^\s*pid\s*=\s*[1-9][0-9]*\s*$/mu.test(output) ? "running" : "not running";
+}
+
+function launchdLogStatus(paths: ReturnType<typeof launchdPaths>): string {
+  return [
+    `stdout=${paths.stdoutPath} (${existsSync(paths.stdoutPath) ? "present" : "missing"})`,
+    `stderr=${paths.stderrPath} (${existsSync(paths.stderrPath) ? "present" : "missing"})`,
+  ].join("; ");
 }
 
 function escapePlist(value: string): string {
