@@ -7,6 +7,7 @@ import {
   installHarness,
   inspectHarness,
   listHarnessAdapters,
+  runHarnessCommand,
   uninstallHarness,
 } from "./harness.js";
 import { readBindingFile, writeBindingFile } from "./init.js";
@@ -340,6 +341,61 @@ describe("installHarness", () => {
 });
 
 describe("inspectHarness", () => {
+  test("reports missing harness state when binding and hooks are absent", () => {
+    const projectRoot = boundProject();
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("missing");
+    expect(status.stateDetail).toBe("binding and hooks are not installed");
+  });
+
+  test("reports divergent harness state when binding exists without hooks", () => {
+    const projectRoot = boundProject();
+    writeBindingFile(projectRoot, {
+      ...readBindingFile(projectRoot)!,
+      harnesses: {
+        codex: {
+          hookCommand: `'${join(projectRoot, ".codex", "saga-codex-hook.sh")}'`,
+          hookTrust: "requires-review",
+          hooksPath: join(projectRoot, ".codex", "hooks.json"),
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "codex-source-id",
+          sourceUri: "codex://local",
+          target: "codex",
+        },
+      },
+    });
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("divergent");
+    expect(status.stateDetail).toBe("local binding exists but hooks are missing");
+  });
+
+  test("reports stale harness state when binding metadata no longer matches the adapter", () => {
+    const projectRoot = boundProject();
+    writeBindingFile(projectRoot, {
+      ...readBindingFile(projectRoot)!,
+      harnesses: {
+        claude: {
+          hookCommand: `'${join(projectRoot, ".claude", "saga-claude-hook.sh")}'`,
+          hookTrust: "requires-review",
+          hooksPath: join(projectRoot, ".claude", "settings.json"),
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "claude-source-id",
+          sourceUri: "claude://local",
+          target: "claude",
+        },
+      },
+    });
+
+    const status = inspectHarness({ cwd: projectRoot, target: "claude" });
+
+    expect(status.state).toBe("stale");
+    expect(status.stateDetail).toContain("binding hooks path does not match the current adapter");
+  });
+
   test("reports malformed Codex hooks config", () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
@@ -365,6 +421,24 @@ describe("inspectHarness", () => {
     expect(status.hooksError).toBe(
       `invalid Codex hooks file ${hooksPath}: expected hooks.Stop to be an array`,
     );
+  });
+});
+
+describe("runHarnessCommand", () => {
+  test("reports all harness targets when status target is omitted", async () => {
+    const projectRoot = boundProject();
+    const output = await withCwd(projectRoot, () =>
+      runHarnessCommand(["status"], {
+        ascii: true,
+        color: "never",
+        format: "json",
+        isTty: false,
+      }),
+    );
+
+    const statuses = JSON.parse(output) as Array<{ state: string; target: string }>;
+    expect(statuses.map((status) => status.target)).toEqual(["codex", "claude"]);
+    expect(statuses.map((status) => status.state)).toEqual(["missing", "missing"]);
   });
 });
 
@@ -405,3 +479,13 @@ describe("uninstallHarness", () => {
     expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toEqual(["prompt"]);
   });
 });
+
+function withCwd<T>(cwd: string, callback: () => T): T {
+  const previous = process.cwd();
+  process.chdir(cwd);
+  try {
+    return callback();
+  } finally {
+    process.chdir(previous);
+  }
+}

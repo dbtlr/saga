@@ -22,6 +22,7 @@ import {
 } from "./init.js";
 
 export type HarnessTarget = "codex" | "claude";
+export type HarnessIntegrationState = "configured" | "divergent" | "invalid" | "missing" | "stale";
 
 export interface HarnessStatus {
   binding: "installed" | "missing";
@@ -31,6 +32,8 @@ export interface HarnessStatus {
   hooks: "installed" | "invalid" | "missing";
   hooksError?: string;
   hooksPath: string;
+  state: HarnessIntegrationState;
+  stateDetail: string;
   mcp: "deferred";
   skills: "deferred";
   target: HarnessTarget;
@@ -51,6 +54,13 @@ export interface HarnessAdapter {
   sourceType: HarnessTarget;
   sourceUri: HarnessSourceUri;
   target: HarnessTarget;
+}
+
+interface HarnessBindingSnapshot {
+  hookCommand: string;
+  hooksPath: string;
+  sourceUri: string;
+  target: string;
 }
 
 interface HookCommand {
@@ -119,21 +129,23 @@ export async function runHarnessCommand(
   options: RenderOptions,
 ): Promise<string> {
   const subcommand = args[0];
-  const target = parseTarget(args[1]);
 
   if (subcommand === "install") {
+    const target = parseTarget(args[1]);
     const result = await installHarness({ target });
-    return formatHarnessResult("Harness installed", result, options);
+    return formatHarnessResults("Harness installed", [result], options);
   }
 
   if (subcommand === "uninstall") {
+    const target = parseTarget(args[1]);
     const result = uninstallHarness({ target });
-    return formatHarnessResult("Harness uninstalled", result, options);
+    return formatHarnessResults("Harness uninstalled", [result], options);
   }
 
   if (subcommand === "status") {
-    const result = inspectHarness({ target });
-    return formatHarnessResult("Harness status", result, options);
+    const target = args[1] === undefined ? undefined : parseTarget(args[1]);
+    const result = target === undefined ? inspectHarnesses() : [inspectHarness({ target })];
+    return formatHarnessResults("Harness status", result, options);
   }
 
   throw new Error(`harness ${subcommand ?? ""} is not implemented yet`.trim());
@@ -232,12 +244,13 @@ export function inspectHarnesses(input: { cwd?: string } = {}): HarnessStatus[] 
 function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): HarnessStatus {
   const hooksPath = adapter.hooksPath(projectRoot);
   const binding = readBindingFile(projectRoot);
-  const hookCommand =
-    binding?.harnesses?.[adapter.target]?.hookCommand ?? hookShimCommand(projectRoot, adapter);
+  const harnessBinding = binding?.harnesses?.[adapter.target];
+  const expectedHookCommand = hookShimCommand(projectRoot, adapter);
+  const hookCommand = harnessBinding?.hookCommand ?? expectedHookCommand;
   const hooksFile = tryReadHooksSettingsFile(hooksPath, adapter);
   if (!hooksFile.ok) {
     return {
-      binding: binding?.harnesses?.[adapter.target] === undefined ? "missing" : "installed",
+      binding: harnessBinding === undefined ? "missing" : "installed",
       displayName: adapter.displayName,
       hookCommand,
       hooks: "invalid",
@@ -246,13 +259,23 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hooksPath,
       mcp: "deferred",
       skills: "deferred",
+      state: "invalid",
+      stateDetail: formatHooksSettingsParseError(hooksFile.error),
       target: adapter.target,
     };
   }
 
-  const hooksInstalled = hasSagaHooks(hooksFile.file, hookCommand);
+  const hooksInstalled =
+    hasSagaHooks(hooksFile.file, hookCommand) || hasSagaHooks(hooksFile.file, expectedHookCommand);
+  const state = classifyHarnessState({
+    adapter,
+    expectedHookCommand,
+    expectedHooksPath: hooksPath,
+    harnessBinding,
+    hooksInstalled,
+  });
   return {
-    binding: binding?.harnesses?.[adapter.target] === undefined ? "missing" : "installed",
+    binding: harnessBinding === undefined ? "missing" : "installed",
     displayName: adapter.displayName,
     hookCommand,
     hookTrust: hooksInstalled ? "requires review" : "not installed",
@@ -260,35 +283,104 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     hooksPath,
     mcp: "deferred",
     skills: "deferred",
+    state: state.state,
+    stateDetail: state.detail,
     target: adapter.target,
   };
 }
 
-function formatHarnessResult(title: string, status: HarnessStatus, options: RenderOptions): string {
+function classifyHarnessState(input: {
+  adapter: HarnessAdapter;
+  expectedHookCommand: string;
+  expectedHooksPath: string;
+  harnessBinding: HarnessBindingSnapshot | undefined;
+  hooksInstalled: boolean;
+}): { detail: string; state: HarnessIntegrationState } {
+  const bindingInstalled = input.harnessBinding !== undefined;
+  if (!bindingInstalled && !input.hooksInstalled) {
+    return { detail: "binding and hooks are not installed", state: "missing" };
+  }
+
+  if (!bindingInstalled) {
+    return { detail: "hooks are installed but local binding is missing", state: "divergent" };
+  }
+
+  const staleReasons = staleHarnessBindingReasons(input);
+  if (staleReasons.length > 0) {
+    return { detail: staleReasons.join("; "), state: "stale" };
+  }
+
+  if (!input.hooksInstalled) {
+    return { detail: "local binding exists but hooks are missing", state: "divergent" };
+  }
+
+  return { detail: "binding and hooks match the current adapter", state: "configured" };
+}
+
+function staleHarnessBindingReasons(input: {
+  adapter: HarnessAdapter;
+  expectedHookCommand: string;
+  expectedHooksPath: string;
+  harnessBinding: HarnessBindingSnapshot | undefined;
+}): string[] {
+  const binding = input.harnessBinding;
+  if (binding === undefined) return [];
+
+  const reasons: string[] = [];
+  if (binding.target !== input.adapter.target) {
+    reasons.push(`binding target is ${binding.target}, expected ${input.adapter.target}`);
+  }
+  if (binding.sourceUri !== input.adapter.sourceUri) {
+    reasons.push(`binding source URI is ${binding.sourceUri}, expected ${input.adapter.sourceUri}`);
+  }
+  if (binding.hooksPath !== input.expectedHooksPath) {
+    reasons.push("binding hooks path does not match the current adapter");
+  }
+  if (binding.hookCommand !== input.expectedHookCommand) {
+    reasons.push("binding hook command does not match the current shim");
+  }
+  return reasons;
+}
+
+function formatHarnessResults(
+  title: string,
+  statuses: readonly HarnessStatus[],
+  options: RenderOptions,
+): string {
   return formatCommandOutput(
     {
-      id: status.target,
-      records: recordBlock(
-        title,
-        [
-          { label: "target", value: status.target },
-          { label: "binding", value: status.binding },
-          { label: "hooks", value: status.hooks },
-          ...(status.hooksError === undefined
-            ? []
-            : [{ label: "hooks error", value: status.hooksError }]),
-          { label: "hook trust", value: status.hookTrust },
-          { label: "hooks path", value: status.hooksPath },
-          { label: "hook command", value: status.hookCommand },
-          { label: "mcp", value: "deferred until saga mcp is implemented" },
-          { label: "skills", value: "deferred until Saga skills are packaged" },
-        ],
-        options,
-      ),
-      value: status,
+      id: statuses.map((status) => status.target).join("\n"),
+      records: statuses.map((status) => formatHarnessRecord(title, status, options)).join("\n\n"),
+      value: statuses.length === 1 ? statuses[0] : statuses,
     },
     options.format,
   );
+}
+
+function formatHarnessRecord(title: string, status: HarnessStatus, options: RenderOptions): string {
+  return recordBlock(
+    statusesTitle(title, status),
+    [
+      { label: "target", value: status.target },
+      { label: "state", value: status.state },
+      { label: "detail", value: status.stateDetail },
+      { label: "binding", value: status.binding },
+      { label: "hooks", value: status.hooks },
+      ...(status.hooksError === undefined
+        ? []
+        : [{ label: "hooks error", value: status.hooksError }]),
+      { label: "hook trust", value: status.hookTrust },
+      { label: "hooks path", value: status.hooksPath },
+      { label: "hook command", value: status.hookCommand },
+      { label: "mcp", value: "deferred until saga mcp is implemented" },
+      { label: "skills", value: "deferred until Saga skills are packaged" },
+    ],
+    options,
+  );
+}
+
+function statusesTitle(title: string, status: HarnessStatus): string {
+  return `${title}: ${status.displayName}`;
 }
 
 function parseTarget(value: string | undefined): HarnessTarget {

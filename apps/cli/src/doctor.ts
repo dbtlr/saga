@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { getMigrationStatus, makeDatabase, type DatabaseService } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
+import { inspectHarnesses, type HarnessIntegrationState } from "./harness.js";
 import { bindingPathFor, findProjectRoot, readBindingFile } from "./init.js";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
@@ -46,11 +47,7 @@ export async function doctorProject(input: { cwd?: string } = {}): Promise<Docto
     label: "service",
     status: service.process === "running" ? "ok" : "warn",
   });
-  checks.push({
-    detail: "codex/claude harness checks are placeholders",
-    label: "harness",
-    status: "warn",
-  });
+  checks.push(...checkHarnesses(projectRoot));
 
   return checks;
 }
@@ -198,6 +195,32 @@ async function inspectService(): Promise<{
       process: "not running",
     };
   }
+}
+
+function checkHarnesses(projectRoot: string): DoctorCheck[] {
+  try {
+    return inspectHarnesses({ cwd: projectRoot }).map((harness) => ({
+      detail: `${harness.state}; ${harness.stateDetail}`,
+      label: `harness:${harness.target}`,
+      status: harnessDoctorStatus(harness.state),
+    }));
+  } catch (error) {
+    return [
+      {
+        detail: `skipped because harness state could not be read: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        label: "harness",
+        status: "fail",
+      },
+    ];
+  }
+}
+
+function harnessDoctorStatus(state: HarnessIntegrationState): DoctorStatus {
+  if (state === "configured") return "ok";
+  if (state === "divergent" || state === "invalid") return "fail";
+  return "warn";
 }
 
 function statusToken(status: DoctorStatus, options: RenderOptions): string {

@@ -27,12 +27,23 @@ Saga installs the same command hook for each event. `SessionStart` is scoped to 
 ## Shared Adapter Primitives
 
 - `HarnessTarget`: install/status/uninstall target.
+- `HarnessAdapter`: target definition for hook settings, local shim, source binding, deferred MCP, and deferred skills surfaces.
 - `HarnessSource`: raw-event source namespace.
 - `HarnessHookInput`: common hook JSON envelope.
 - Source-specific raw events: `<source>.<hook_event_name>`.
 - Source-specific ids: `<source>:local`.
 - Source-specific source bindings, with common workspace scoping.
 - Shared prompt extraction for any `*.UserPromptSubmit` event with a string `payload.prompt`.
+
+## Status States
+
+`saga harness status` and `saga doctor` use the same state model:
+
+- `configured`: local binding and installed hooks match the current adapter.
+- `missing`: neither local binding nor Saga hooks are installed for the target.
+- `stale`: local binding metadata points at an older adapter path, command, target, or source URI.
+- `divergent`: local binding and hook activation disagree, such as binding without hooks or hooks without binding.
+- `invalid`: the target settings file exists but cannot be parsed as a supported hook settings shape.
 
 ## Edge Cases
 

@@ -50,6 +50,27 @@ describe("runDoctor", () => {
 });
 
 describe("doctorProject", () => {
+  test("reports harness target states", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+
+    const checks = await doctorProject({ cwd });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: "missing; binding and hooks are not installed",
+        label: "harness:codex",
+        status: "warn",
+      }),
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: "missing; binding and hooks are not installed",
+        label: "harness:claude",
+        status: "warn",
+      }),
+    );
+  });
+
   test("reports invalid binding files as binding failures", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
     writeFileSync(join(cwd, ".saga.local.json"), "not json");
@@ -59,6 +80,12 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         label: "binding",
+        status: "fail",
+      }),
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "harness",
         status: "fail",
       }),
     );
