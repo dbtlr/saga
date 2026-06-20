@@ -90,11 +90,12 @@ describe("runMcpCommand", () => {
 });
 
 describe("rewriteResolvedSagaLinkReferences", () => {
-  test("rewrites resolved connector references through workspace Context Index entries", () => {
-    const rewritten = rewriteResolvedSagaLinkReferences(
+  test("rewrites resolved connector references through workspace Context Index entries", async () => {
+    const rewritten = await rewriteResolvedSagaLinkReferences(
       {
         externalId: "notes/architecture.md",
         metadata: {
+          content: "Architecture note",
           references: [
             {
               externalId: "notes/adr.md",

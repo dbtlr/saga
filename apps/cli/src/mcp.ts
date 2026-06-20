@@ -248,7 +248,7 @@ export async function resolveProjectSagaLink(
         }),
       ),
     ]);
-    const rewritten = rewriteResolvedSagaLinkReferences(resolved.entry, contextIndex);
+    const rewritten = await rewriteResolvedSagaLinkReferences(resolved.entry, contextIndex);
     return {
       markdown: renderResolvedSagaLinkMarkdown(resolved, rewritten),
       resolved: {
@@ -261,7 +261,7 @@ export async function resolveProjectSagaLink(
   }
 }
 
-export function rewriteResolvedSagaLinkReferences(
+export async function rewriteResolvedSagaLinkReferences(
   entry: {
     externalId: string;
     metadata: Record<string, unknown>;
@@ -283,7 +283,7 @@ export function rewriteResolvedSagaLinkReferences(
   }>,
 ) {
   return rewriteConnectorResultToSagaLinks(
-    resolveConnector({
+    await resolveConnector({
       externalId: entry.externalId,
       metadata: entry.metadata,
       sourceBinding: entry.sourceBinding,
@@ -383,11 +383,19 @@ function renderResolvedSagaLinkMarkdown(
     };
   },
   retrieval: {
+    content?: string | undefined;
+    provenance?: Record<string, unknown> | undefined;
     references: ReadonlyArray<{
       externalId: string;
       sagaLink?: string | undefined;
       title?: string | undefined;
     }>;
+    target?:
+      | {
+          apiUrl?: string | undefined;
+          url?: string | undefined;
+        }
+      | undefined;
   },
 ): string {
   const referenceLines =
@@ -397,6 +405,16 @@ function renderResolvedSagaLinkMarkdown(
           (reference) =>
             `- Reference: ${reference.title ?? reference.externalId} ${reference.sagaLink ?? reference.externalId}`,
         );
+  const targetLines = [
+    retrieval.target?.url === undefined ? undefined : `- Target URL: ${retrieval.target.url}`,
+    retrieval.target?.apiUrl === undefined
+      ? undefined
+      : `- Target API URL: ${retrieval.target.apiUrl}`,
+  ].filter((line): line is string => line !== undefined);
+  const contentLines =
+    retrieval.content === undefined || retrieval.content.trim() === ""
+      ? []
+      : ["", "## Retrieved Content", "", retrieval.content];
 
   return [
     "# Saga Link",
@@ -407,7 +425,9 @@ function renderResolvedSagaLinkMarkdown(
     `- External ID: ${resolved.entry.externalId}`,
     `- Source URI: ${resolved.entry.sourceBinding.sourceUri}`,
     `- Provenance: sourceBinding=${resolved.provenance.sourceBindingId}`,
+    ...targetLines,
     ...referenceLines,
+    ...contentLines,
   ].join("\n");
 }
 

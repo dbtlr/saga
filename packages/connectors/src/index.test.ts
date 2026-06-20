@@ -2,21 +2,41 @@ import { describe, expect, test } from "vitest";
 import { resolveConnector, rewriteConnectorReferencesToSagaLinks } from "./index.js";
 
 describe("resolveConnector", () => {
-  test("resolves GitHub pull requests through a configured repository", () => {
-    const result = resolveConnector({
-      externalId: "pr:12",
-      sourceBinding: {
-        config: {
-          repositoryFullName: "dbtlr/saga",
+  test("retrieves GitHub pull requests through a configured repository", async () => {
+    const result = await resolveConnector(
+      {
+        externalId: "pr:12",
+        sourceBinding: {
+          config: {
+            repositoryFullName: "dbtlr/saga",
+          },
+          id: "github-source",
+          sourceType: "github",
+          sourceUri: "github://dbtlr/saga",
         },
-        id: "github-source",
-        sourceType: "github",
-        sourceUri: "github://dbtlr/saga",
       },
-    });
+      {
+        clients: {
+          github: {
+            retrieve: async (input) => ({
+              content: "# Add connector adapters\n\nPull request body",
+              evidence: {
+                apiUrl: input.target.apiUrl,
+                number: 12,
+              },
+              references: [],
+            }),
+          },
+        },
+      },
+    );
 
     expect(result).toMatchObject({
-      content: "GitHub pull request #12 in dbtlr/saga",
+      content: "# Add connector adapters\n\nPull request body",
+      evidence: {
+        apiUrl: "https://api.github.com/repos/dbtlr/saga/pulls/12",
+        number: 12,
+      },
       provenance: {
         connector: "github",
         repository: "dbtlr/saga",
@@ -29,44 +49,56 @@ describe("resolveConnector", () => {
     });
   });
 
-  test("resolves Mimir and Norn sources without owning their domains", () => {
-    expect(
+  test("retrieves Mimir and Norn sources without owning their domains", async () => {
+    await expect(
       resolveConnector({
         externalId: "SGA-72",
+        metadata: {
+          content: "Add GitHub connector",
+        },
         sourceBinding: {
           id: "mimir-source",
           sourceType: "mimir",
           sourceUri: "mimir://SGA",
         },
       }),
-    ).toMatchObject({
-      content: "Mimir work item: SGA-72",
+    ).resolves.toMatchObject({
+      content: "Add GitHub connector",
+      evidence: {
+        source: "metadata",
+      },
       target: {
         url: "mimir:SGA-72",
       },
     });
 
-    expect(
+    await expect(
       resolveConnector({
         externalId: "cli-output-spec",
+        metadata: {
+          content: "Norn CLI output standard",
+        },
         sourceBinding: {
           id: "norn-source",
           sourceType: "norn",
           sourceUri: "norn://workspace",
         },
       }),
-    ).toMatchObject({
-      content: "Norn document: cli-output-spec",
+    ).resolves.toMatchObject({
+      content: "Norn CLI output standard",
       target: {
         url: "norn:cli-output-spec",
       },
     });
   });
 
-  test("resolves generic document-store sources", () => {
-    expect(
+  test("retrieves generic document-store sources", async () => {
+    await expect(
       resolveConnector({
         externalId: "ENG-CI-CD-QUALITY-GATES",
+        metadata: {
+          content: "Quality gate policy",
+        },
         sourceBinding: {
           id: "confluence-source",
           sourceType: "confluence",
@@ -74,33 +106,36 @@ describe("resolveConnector", () => {
         },
         title: "Quality Gates",
       }),
-    ).toMatchObject({
-      content: "Quality Gates from confluence",
+    ).resolves.toMatchObject({
+      content: "Quality gate policy",
       target: {
         kind: "document",
         url: "https://confluence.example/wiki/ENG-CI-CD-QUALITY-GATES",
       },
     });
 
-    expect(
+    await expect(
       resolveConnector({
         externalId: "notes/saga-v2-architecture-seed.md",
+        metadata: {
+          content: "Architecture seed",
+        },
         sourceBinding: {
           id: "vault-source",
           sourceType: "vault",
           sourceUri: "file:///Users/drew/vaults/atlas",
         },
       }),
-    ).toMatchObject({
-      content: "notes/saga-v2-architecture-seed.md from vault",
+    ).resolves.toMatchObject({
+      content: "Architecture seed",
       target: {
-        url: "file:///Users/drew/vaults/atlas/notes%2Fsaga-v2-architecture-seed.md",
+        url: "file:///Users/drew/vaults/atlas/notes/saga-v2-architecture-seed.md",
       },
     });
   });
 
-  test("rejects invalid GitHub repositories and external ids", () => {
-    expect(() =>
+  test("rejects invalid GitHub repositories and external ids", async () => {
+    await expect(
       resolveConnector({
         externalId: "pr:../../settings",
         sourceBinding: {
@@ -109,9 +144,9 @@ describe("resolveConnector", () => {
           sourceUri: "github://dbtlr/saga",
         },
       }),
-    ).toThrow("unsupported GitHub external id");
+    ).rejects.toThrow("unsupported GitHub external id");
 
-    expect(() =>
+    await expect(
       resolveConnector({
         externalId: "pr:1",
         sourceBinding: {
@@ -123,7 +158,7 @@ describe("resolveConnector", () => {
           sourceUri: "github://dbtlr/saga",
         },
       }),
-    ).toThrow("invalid GitHub repository");
+    ).rejects.toThrow("invalid GitHub repository");
   });
 
   test("rejects unsupported source types", () => {

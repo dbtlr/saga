@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
 export const packageName = "@saga/connectors";
 
 export interface ConnectorSourceBinding {
@@ -24,6 +27,7 @@ export interface SagaLinkIndexReference {
 
 export interface ConnectorRetrievalResult {
   content?: string | undefined;
+  evidence?: Record<string, unknown> | undefined;
   provenance?: Record<string, unknown> | undefined;
   references: readonly ConnectorReference[];
   target?: {
@@ -54,8 +58,36 @@ export interface ResolveConnectorInput {
   title?: string | undefined;
 }
 
+export interface ConnectorRetrieveInput extends ResolveConnectorInput {
+  target: NonNullable<ConnectorRetrievalResult["target"]>;
+}
+
+export interface ConnectorRetrievedRecord {
+  content: string;
+  evidence?: Record<string, unknown> | undefined;
+  references?: readonly ConnectorReference[] | undefined;
+}
+
+export interface ConnectorClient {
+  retrieve: (input: ConnectorRetrieveInput) => Promise<ConnectorRetrievedRecord>;
+}
+
+export interface ConnectorClients {
+  document?: ConnectorClient | undefined;
+  github?: ConnectorClient | undefined;
+  mimir?: ConnectorClient | undefined;
+  norn?: ConnectorClient | undefined;
+}
+
+export interface ResolveConnectorContext {
+  clients?: ConnectorClients | undefined;
+}
+
 export interface ConnectorAdapter {
-  resolve: (input: ResolveConnectorInput) => ConnectorRetrievalResult;
+  resolve: (
+    input: ResolveConnectorInput,
+    context: ResolveConnectorContext,
+  ) => Promise<ConnectorRetrievalResult>;
   sourceTypes: readonly string[];
 }
 
@@ -68,8 +100,9 @@ export const CONNECTOR_ADAPTERS = [
 
 export function resolveConnector(
   input: ResolveConnectorInput,
+  context: ResolveConnectorContext = {},
   adapters: readonly ConnectorAdapter[] = CONNECTOR_ADAPTERS,
-): ConnectorRetrievalResult {
+): Promise<ConnectorRetrievalResult> {
   const sourceType = normalizeSourceType(input.sourceBinding.sourceType);
   const adapter = adapters.find((candidate) =>
     candidate.sourceTypes.some((supported) => normalizeSourceType(supported) === sourceType),
@@ -78,7 +111,7 @@ export function resolveConnector(
     throw new Error(`unsupported connector source type: ${input.sourceBinding.sourceType}`);
   }
 
-  return adapter.resolve(input);
+  return adapter.resolve(input, context);
 }
 
 export function rewriteConnectorReferencesToSagaLinks(
@@ -123,33 +156,38 @@ export function connectorReferenceKey(sourceBindingId: string, externalId: strin
 
 function createGitHubConnector(): ConnectorAdapter {
   return {
-    resolve: (input) => {
+    resolve: async (input, context) => {
       const repository = readRepository(input.sourceBinding);
       const target = parseGitHubExternalId(input.externalId);
       const url = githubWebUrl(repository, target);
+      const connectorTarget = {
+        apiUrl: githubApiUrl(repository, target),
+        externalId: input.externalId,
+        kind: target.kind,
+        sourceBindingId: input.sourceBinding.id,
+        sourceType: input.sourceBinding.sourceType,
+        sourceUri: input.sourceBinding.sourceUri,
+        url,
+      };
+      const record = await (context.clients?.github ?? createDefaultGitHubClient()).retrieve({
+        ...input,
+        target: connectorTarget,
+      });
 
       return {
-        content: `${githubLabel(target)} in ${repository}`,
+        content: record.content,
+        evidence: record.evidence,
         provenance: {
           connector: "github",
           repository,
         },
-        references: readMetadataReferences(input).map((reference) => ({
-          connector: "github",
-          externalId: reference.externalId,
-          sourceBindingId: reference.sourceBindingId ?? input.sourceBinding.id,
-          title: reference.title,
-          url: reference.url,
-        })),
-        target: {
-          apiUrl: githubApiUrl(repository, target),
-          externalId: input.externalId,
-          kind: target.kind,
-          sourceBindingId: input.sourceBinding.id,
-          sourceType: input.sourceBinding.sourceType,
-          sourceUri: input.sourceBinding.sourceUri,
-          url,
-        },
+        references: mergeReferences(
+          input,
+          "github",
+          record.references,
+          readMetadataReferences(input),
+        ),
+        target: connectorTarget,
       };
     },
     sourceTypes: ["github"],
@@ -176,30 +214,36 @@ function createNornConnector(): ConnectorAdapter {
 
 function createDocumentStoreConnector(): ConnectorAdapter {
   return {
-    resolve: (input) => {
+    resolve: async (input, context) => {
       const connector = normalizeSourceType(input.sourceBinding.sourceType);
       const baseUrl = input.sourceBinding.sourceUri.replace(/\/$/u, "");
-      const url = `${baseUrl}/${encodeURIComponent(input.externalId)}`;
+      const url = joinDocumentUrl(baseUrl, input.externalId);
+      const connectorTarget = {
+        externalId: input.externalId,
+        kind: "document",
+        sourceBindingId: input.sourceBinding.id,
+        sourceType: input.sourceBinding.sourceType,
+        sourceUri: input.sourceBinding.sourceUri,
+        url,
+      };
+      const record = await (context.clients?.document ?? createDefaultDocumentClient()).retrieve({
+        ...input,
+        target: connectorTarget,
+      });
+
       return {
-        content: `${input.title ?? input.externalId} from ${connector}`,
+        content: record.content,
+        evidence: record.evidence,
         provenance: {
           connector,
         },
-        references: readMetadataReferences(input).map((reference) => ({
-          connector: reference.connector ?? connector,
-          externalId: reference.externalId,
-          sourceBindingId: reference.sourceBindingId ?? input.sourceBinding.id,
-          title: reference.title,
-          url: reference.url,
-        })),
-        target: {
-          externalId: input.externalId,
-          kind: "document",
-          sourceBindingId: input.sourceBinding.id,
-          sourceType: input.sourceBinding.sourceType,
-          sourceUri: input.sourceBinding.sourceUri,
-          url,
-        },
+        references: mergeReferences(
+          input,
+          connector,
+          record.references,
+          readMetadataReferences(input),
+        ),
+        target: connectorTarget,
       };
     },
     sourceTypes: ["confluence", "document", "docs", "notion", "vault"],
@@ -213,27 +257,36 @@ function simpleConnector(input: {
   urlPrefix: string;
 }): ConnectorAdapter {
   return {
-    resolve: (request) => ({
-      content: `${input.label}: ${request.externalId}`,
-      provenance: {
-        connector: input.connector,
-      },
-      references: readMetadataReferences(request).map((reference) => ({
-        connector: reference.connector ?? input.connector,
-        externalId: reference.externalId,
-        sourceBindingId: reference.sourceBindingId ?? request.sourceBinding.id,
-        title: reference.title,
-        url: reference.url,
-      })),
-      target: {
+    resolve: async (request, context) => {
+      const target = {
         externalId: request.externalId,
         kind: "document",
         sourceBindingId: request.sourceBinding.id,
         sourceType: request.sourceBinding.sourceType,
         sourceUri: request.sourceBinding.sourceUri,
         url: `${input.urlPrefix}${request.externalId}`,
-      },
-    }),
+      };
+      const client = input.connector === "mimir" ? context.clients?.mimir : context.clients?.norn;
+      const record = await (client ?? createDefaultMetadataClient(input.label)).retrieve({
+        ...request,
+        target,
+      });
+
+      return {
+        content: record.content,
+        evidence: record.evidence,
+        provenance: {
+          connector: input.connector,
+        },
+        references: mergeReferences(
+          request,
+          input.connector,
+          record.references,
+          readMetadataReferences(request),
+        ),
+        target,
+      };
+    },
     sourceTypes: input.sourceTypes,
   };
 }
@@ -276,13 +329,6 @@ function parseGitHubExternalId(externalId: string): { id: string; kind: string }
   throw new Error(`unsupported GitHub external id: ${externalId}`);
 }
 
-function githubLabel(target: { id: string; kind: string }): string {
-  if (target.kind === "pr") return `GitHub pull request #${target.id}`;
-  if (target.kind === "issue") return `GitHub issue #${target.id}`;
-  if (target.kind === "commit") return `GitHub commit ${target.id}`;
-  return `GitHub resource ${target.id}`;
-}
-
 function githubWebUrl(repository: string, target: { id: string; kind: string }): string {
   const base = `https://github.com/${repository}`;
   if (target.kind === "pr") return `${base}/pull/${target.id}`;
@@ -297,6 +343,150 @@ function githubApiUrl(repository: string, target: { id: string; kind: string }):
   if (target.kind === "issue") return `${base}/issues/${target.id}`;
   if (target.kind === "commit") return `${base}/commits/${target.id}`;
   return base;
+}
+
+function createDefaultGitHubClient(): ConnectorClient {
+  return {
+    retrieve: async (input) => {
+      if (input.target.apiUrl === undefined) {
+        throw new Error("GitHub connector target is missing apiUrl");
+      }
+
+      const response = await fetch(input.target.apiUrl, {
+        headers: githubHeaders(input.sourceBinding),
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub connector request failed: ${response.status.toString()}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      if (!isRecord(payload)) {
+        throw new Error("GitHub connector returned a non-object response");
+      }
+
+      return {
+        content: renderGitHubContent(input.target.kind, payload),
+        evidence: {
+          connector: "github",
+          payload,
+        },
+        references: [],
+      };
+    },
+  };
+}
+
+function createDefaultDocumentClient(): ConnectorClient {
+  return {
+    retrieve: async (input) => {
+      const metadataContent = readString(input.metadata?.content);
+      if (metadataContent !== undefined) {
+        return {
+          content: metadataContent,
+          evidence: { source: "metadata" },
+          references: [],
+        };
+      }
+
+      if (input.target.url?.startsWith("file://") === true) {
+        return {
+          content: await readFile(fileURLToPath(input.target.url), "utf8"),
+          evidence: { source: input.target.url },
+          references: [],
+        };
+      }
+
+      if (
+        input.target.url?.startsWith("http://") === true ||
+        input.target.url?.startsWith("https://") === true
+      ) {
+        const response = await fetch(input.target.url);
+        if (!response.ok) {
+          throw new Error(`document connector request failed: ${response.status.toString()}`);
+        }
+        return {
+          content: await response.text(),
+          evidence: { source: input.target.url },
+          references: [],
+        };
+      }
+
+      throw new Error("document connector requires metadata.content, file URL, or HTTP URL");
+    },
+  };
+}
+
+function createDefaultMetadataClient(label: string): ConnectorClient {
+  return {
+    retrieve: async (input) => {
+      const metadataContent = readString(input.metadata?.content);
+      if (metadataContent === undefined) {
+        throw new Error(`${label} connector requires metadata.content or an injected client`);
+      }
+
+      return {
+        content: metadataContent,
+        evidence: { source: "metadata" },
+        references: [],
+      };
+    },
+  };
+}
+
+function githubHeaders(sourceBinding: ConnectorSourceBinding): Headers {
+  const headers = new Headers({
+    accept: "application/vnd.github+json",
+    "user-agent": "saga",
+  });
+  const token = readString(sourceBinding.config?.token ?? sourceBinding.config?.authToken);
+  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+  return headers;
+}
+
+function renderGitHubContent(kind: string | undefined, payload: Record<string, unknown>): string {
+  if (kind === "pr" || kind === "issue") {
+    return [`# ${readString(payload.title) ?? "Untitled"}`, "", readString(payload.body) ?? ""]
+      .join("\n")
+      .trim();
+  }
+
+  if (kind === "commit") {
+    const commit = isRecord(payload.commit) ? payload.commit : {};
+    return readString(commit.message) ?? readString(payload.sha) ?? "GitHub commit";
+  }
+
+  return JSON.stringify(payload);
+}
+
+function mergeReferences(
+  input: ResolveConnectorInput,
+  defaultConnector: string,
+  retrieved: readonly ConnectorReference[] | undefined,
+  metadata: ReturnType<typeof readMetadataReferences>,
+): ConnectorReference[] {
+  return [
+    ...(retrieved ?? []),
+    ...metadata.map((reference) => ({
+      connector: reference.connector ?? defaultConnector,
+      externalId: reference.externalId,
+      sourceBindingId: reference.sourceBindingId ?? input.sourceBinding.id,
+      title: reference.title,
+      url: reference.url,
+    })),
+  ];
+}
+
+function joinDocumentUrl(baseUrl: string, externalId: string): string {
+  const path = encodeDocumentPath(externalId);
+  return `${baseUrl}/${path}`;
+}
+
+function encodeDocumentPath(externalId: string): string {
+  const segments = externalId.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(`invalid document external id: ${externalId}`);
+  }
+  return segments.map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 function readMetadataReferences(
