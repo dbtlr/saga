@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  redactResolvedSagaLink,
   rewriteResolvedSagaLinkReferences,
   runMcpCommand,
   searchMemoryEntries,
@@ -141,6 +142,101 @@ describe("rewriteResolvedSagaLinkReferences", () => {
       title: "Other ADR",
       url: "file:///other-vault/notes/adr.md",
     });
+  });
+
+  test("uses metadata-only retrieval by default for MCP link resolution", async () => {
+    const rewritten = await rewriteResolvedSagaLinkReferences(
+      {
+        externalId: "pr:12",
+        metadata: {},
+        sourceBinding: {
+          config: {
+            repositoryFullName: "dbtlr/saga",
+            token: "secret-token",
+          },
+          id: "github-source",
+          sourceType: "github",
+          sourceUri: "github://dbtlr/saga",
+        },
+      },
+      [],
+    );
+
+    expect(rewritten).toMatchObject({
+      content: "",
+      evidence: {
+        contentAvailable: false,
+        maxContentBytes: 65536,
+        source: "metadata",
+      },
+      target: {
+        apiUrl: "https://api.github.com/repos/dbtlr/saga/pulls/12",
+        url: "https://github.com/dbtlr/saga/pull/12",
+      },
+    });
+    expect(JSON.stringify(rewritten)).not.toContain("secret-token");
+  });
+
+  test("caps metadata content returned through MCP link resolution", async () => {
+    const rewritten = await rewriteResolvedSagaLinkReferences(
+      {
+        externalId: "notes/large.md",
+        metadata: {
+          content: `${"a".repeat(65535)}éextra`,
+        },
+        sourceBinding: {
+          id: "vault-source",
+          sourceType: "vault",
+          sourceUri: "file:///vault",
+        },
+      },
+      [],
+    );
+
+    expect(Buffer.byteLength(rewritten.content ?? "", "utf8")).toBeLessThanOrEqual(65536);
+    expect(rewritten.content).not.toContain("extra");
+    expect(rewritten.evidence).toMatchObject({
+      contentAvailable: true,
+      maxContentBytes: 65536,
+      source: "metadata",
+      truncated: true,
+    });
+  });
+});
+
+describe("redactResolvedSagaLink", () => {
+  test("omits source binding config from MCP structured results", () => {
+    const redacted = redactResolvedSagaLink({
+      entry: {
+        externalId: "pr:12",
+        key: "review-pr",
+        sagaLink: "saga:context/review-pr",
+        sourceBinding: {
+          config: {
+            authToken: "secret-token",
+          },
+          displayName: "GitHub",
+          enabled: true,
+          id: "github-source",
+          sourceType: "github",
+          sourceUri: "github://dbtlr/saga",
+        },
+        title: "Review PR",
+      },
+      provenance: {
+        sourceBindingId: "github-source",
+      },
+    });
+
+    expect(redacted.entry.sourceBinding).toEqual({
+      displayName: "GitHub",
+      enabled: true,
+      id: "github-source",
+      sourceType: "github",
+      sourceUri: "github://dbtlr/saga",
+    });
+    expect(JSON.stringify(redacted)).not.toContain("config");
+    expect(JSON.stringify(redacted)).not.toContain("secret-token");
   });
 });
 

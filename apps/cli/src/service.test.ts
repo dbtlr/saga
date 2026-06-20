@@ -9,6 +9,7 @@ import {
   renderServiceStatus,
   runServiceCommand,
   serviceStatus,
+  waitForServiceHealth,
   type ServiceLifecycleReport,
   type ServiceSupervisor,
 } from "./service.js";
@@ -53,19 +54,54 @@ describe("runServiceCommand", () => {
   test("dispatches lifecycle subcommands through the supervisor", async () => {
     const supervisor = fakeSupervisor();
 
-    const output = await runServiceCommand(["restart"], renderOptions, { supervisor });
+    const output = await runServiceCommand(["restart"], renderOptions, {
+      healthCheck: async (url) => `ok (${url})`,
+      healthProbe: { attempts: 1, intervalMs: 0 },
+      supervisor,
+    });
 
     expect(output).toContain("Saga service restart");
     expect(output).toContain("state   running");
+    expect(output).toContain("health ok");
+  });
+
+  test("reports stopped when launchd starts but health never becomes ready", async () => {
+    const output = await runServiceCommand(["start"], renderOptions, {
+      healthCheck: async () => "unreachable (connection refused)",
+      healthProbe: { attempts: 1, intervalMs: 0 },
+      supervisor: fakeSupervisor(),
+    });
+
+    expect(output).toContain("Saga service start");
+    expect(output).toContain("state   stopped");
+    expect(output).toContain("health check failed");
   });
 
   test("includes supervisor state in status output", async () => {
     const output = await runServiceCommand(["status"], renderOptions, {
+      healthCheck: async () => "unreachable (connection refused)",
       supervisor: fakeSupervisor("stopped"),
     });
 
     expect(output).toContain("supervisor  stopped");
     expect(output).toContain("detail      fake supervisor stopped");
+  });
+});
+
+describe("waitForServiceHealth", () => {
+  test("polls until health is ready", async () => {
+    let attempts = 0;
+    const health = await waitForServiceHealth(
+      "http://127.0.0.1:4766/health",
+      async (url) => {
+        attempts += 1;
+        return attempts === 2 ? `ok (${url})` : "unreachable (connection refused)";
+      },
+      { attempts: 3, intervalMs: 0 },
+    );
+
+    expect(health).toBe("ok (http://127.0.0.1:4766/health)");
+    expect(attempts).toBe(2);
   });
 });
 

@@ -47,7 +47,14 @@ export interface ServiceSupervisor {
   uninstall: () => Promise<ServiceLifecycleReport>;
 }
 
+export interface ServiceHealthProbeOptions {
+  attempts?: number | undefined;
+  intervalMs?: number | undefined;
+}
+
 export interface ServiceCommandDependencies {
+  healthCheck?: ((url: string) => Promise<string>) | undefined;
+  healthProbe?: ServiceHealthProbeOptions | undefined;
   supervisor?: ServiceSupervisor | undefined;
 }
 
@@ -123,7 +130,7 @@ export async function inspectServiceStatus(
 ): Promise<ServiceStatusReport> {
   const config = await Effect.runPromise(loadRuntimeConfig());
   const healthUrl = `http://${config.service.host}:${config.service.port}/health`;
-  const health = await checkHealth(healthUrl);
+  const health = await (dependencies.healthCheck ?? checkHealth)(healthUrl);
   const supervisor = await (dependencies.supervisor ?? createLaunchdSupervisor()).inspect();
   return {
     config: `${config.service.host}:${config.service.port}`,
@@ -157,7 +164,8 @@ async function runServiceLifecycle(
   dependencies: ServiceCommandDependencies,
 ): Promise<string> {
   const supervisor = dependencies.supervisor ?? createLaunchdSupervisor();
-  const report = await supervisor[action]();
+  const supervisorReport = await supervisor[action]();
+  const report = await observeLifecycleHealth(supervisorReport, dependencies);
   return formatCommandOutput(
     {
       id: "service",
@@ -165,6 +173,42 @@ async function runServiceLifecycle(
       value: report,
     },
     options.format,
+  );
+}
+
+async function observeLifecycleHealth(
+  report: ServiceLifecycleReport,
+  dependencies: ServiceCommandDependencies,
+): Promise<ServiceLifecycleReport> {
+  if (!shouldVerifyHealth(report)) return report;
+
+  const config = await Effect.runPromise(loadRuntimeConfig());
+  const healthUrl = `http://${config.service.host}:${config.service.port}/health`;
+  const health = await waitForServiceHealth(
+    healthUrl,
+    dependencies.healthCheck ?? checkHealth,
+    dependencies.healthProbe,
+  );
+
+  if (health.startsWith("ok ")) {
+    return {
+      ...report,
+      detail: `${report.detail}; health ${health}`,
+      state: "running",
+    };
+  }
+
+  return {
+    ...report,
+    detail: `${report.detail}; health check failed: ${health}`,
+    state: "stopped",
+  };
+}
+
+function shouldVerifyHealth(report: ServiceLifecycleReport): boolean {
+  return (
+    (report.action === "install" || report.action === "restart" || report.action === "start") &&
+    (report.state === "installed" || report.state === "running")
   );
 }
 
@@ -369,4 +413,24 @@ export async function checkHealth(url: string): Promise<string> {
     const message = error instanceof Error ? error.message : String(error);
     return `unreachable (${message})`;
   }
+}
+
+export async function waitForServiceHealth(
+  url: string,
+  healthCheck: (url: string) => Promise<string> = checkHealth,
+  options: ServiceHealthProbeOptions = {},
+): Promise<string> {
+  const attempts = options.attempts ?? 20;
+  const intervalMs = options.intervalMs ?? 250;
+  let last = "unreachable";
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    last = await healthCheck(url);
+    if (last.startsWith("ok ")) return last;
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  return last;
 }

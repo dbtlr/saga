@@ -2,7 +2,7 @@ import type { RawEventEnvelope } from "@saga/contracts";
 import { and, desc, eq } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
-import { rawEvents, type RawEvent } from "./schema.js";
+import { rawEvents, sourceBindings, type RawEvent } from "./schema.js";
 
 export class RawEventInsertError extends Data.TaggedError("RawEventInsertError")<{
   readonly message: string;
@@ -14,6 +14,11 @@ export function insertRawEvent(
 ): Effect.Effect<RawEvent, DatabaseError | RawEventInsertError> {
   return Effect.tryPromise({
     try: async () => {
+      await assertSourceBindingInWorkspace(service, {
+        sourceBindingId: event.sourceBindingId,
+        workspaceId: event.workspaceId,
+      });
+
       const [row] = await service.db
         .insert(rawEvents)
         .values({
@@ -88,6 +93,28 @@ export function listRecentRawEvents(
         .limit(input.limit ?? 10),
     catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
   });
+}
+
+async function assertSourceBindingInWorkspace(
+  service: DatabaseService,
+  input: { sourceBindingId: string; workspaceId: string },
+): Promise<void> {
+  const [sourceBinding] = await service.db
+    .select({ id: sourceBindings.id })
+    .from(sourceBindings)
+    .where(
+      and(
+        eq(sourceBindings.id, input.sourceBindingId),
+        eq(sourceBindings.workspaceId, input.workspaceId),
+      ),
+    )
+    .limit(1);
+
+  if (sourceBinding === undefined) {
+    throw new RawEventInsertError({
+      message: "raw event source binding must belong to the same workspace",
+    });
+  }
 }
 
 function parseDate(value: string, field: string): Date {

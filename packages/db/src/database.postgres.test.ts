@@ -378,6 +378,32 @@ describePostgres("postgres integration", () => {
     expect(recent[0]?.id).toBe(event.id);
   });
 
+  test("rejects raw events that reference another workspace source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const first = await createWorkspaceWithCodexSource("raw-source-first");
+    const second = await createWorkspaceWithCodexSource("raw-source-second");
+
+    await expect(
+      Effect.runPromise(
+        insertRawEvent(service, {
+          actorId: "codex",
+          eventType: "codex.Stop",
+          externalEventId: `codex:cross-source:${Date.now().toString()}`,
+          occurredAt: "2026-06-19T20:00:00.000Z",
+          payload: { hook_event_name: "Stop" },
+          provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+          sessionId: "session-id",
+          sourceBindingId: first.sourceBinding.id,
+          sourceId: "codex:local",
+          sourceType: "codex",
+          traceId: "turn-id",
+          trustLevel: "raw",
+          workspaceId: second.workspace.id,
+        }),
+      ),
+    ).rejects.toThrow("raw event source binding must belong to the same workspace");
+  });
+
   test("scopes raw event idempotency to workspace", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 

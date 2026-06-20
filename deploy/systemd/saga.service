@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/saga
 EnvironmentFile=/etc/saga/saga.env
-ExecStartPre=/usr/bin/env pnpm --dir /opt/saga --filter @saga/service migrate
 ExecStart=/usr/bin/env pnpm --dir /opt/saga --filter @saga/service start
 Restart=on-failure
 RestartSec=5

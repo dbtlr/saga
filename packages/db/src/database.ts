@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RuntimeConfigTag, type RuntimeConfig } from "@saga/runtime";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -17,7 +20,16 @@ export interface DatabaseService {
 
 export interface MigrationStatus {
   applied: number;
+  compatible: boolean;
   expected: number;
+  mismatch?:
+    | {
+        appliedHash: string;
+        expectedHash: string;
+        index: number;
+        tag: string;
+      }
+    | undefined;
 }
 
 export class DatabaseError extends Data.TaggedError("DatabaseError")<{
@@ -28,7 +40,8 @@ export class DatabaseError extends Data.TaggedError("DatabaseError")<{
 export const DatabaseTag = Context.GenericTag<DatabaseService>("@saga/db/Database");
 
 export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
-export const EXPECTED_MIGRATION_COUNT = 5;
+export const EXPECTED_MIGRATION_COUNT =
+  readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).length;
 
 export interface MakeDatabaseOptions {
   postgres?: Options<Record<string, PostgresType>>;
@@ -86,14 +99,17 @@ export function runMigrationsSafely(
   service: DatabaseService,
   migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
-  return getMigrationStatus(service).pipe(
+  return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) => {
       if (status.applied > status.expected) {
         return Effect.fail(newerMigrationError(status));
       }
+      if (!status.compatible) {
+        return Effect.fail(incompatibleMigrationError(status));
+      }
       if (status.applied === status.expected) return Effect.succeed(status);
       return runMigrations(service, migrationsFolder).pipe(
-        Effect.flatMap(() => getMigrationStatus(service)),
+        Effect.flatMap(() => getMigrationStatus(service, migrationsFolder)),
       );
     }),
   );
@@ -101,25 +117,46 @@ export function runMigrationsSafely(
 
 export function getMigrationStatus(
   service: DatabaseService,
+  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return Effect.tryPromise({
     try: async () => {
+      const expectedMigrations = readExpectedMigrationHashes(migrationsFolder);
       const table = await service.sql.unsafe(
         "select to_regclass('drizzle.__drizzle_migrations')::text as table_name",
       );
       if (table[0]?.table_name === null || table[0]?.table_name === undefined) {
         return {
           applied: 0,
-          expected: EXPECTED_MIGRATION_COUNT,
+          compatible: true,
+          expected: expectedMigrations.length,
         };
       }
 
       const migrations = await service.sql.unsafe(
-        "select count(*)::text as count from drizzle.__drizzle_migrations",
+        "select hash from drizzle.__drizzle_migrations order by created_at asc, id asc",
       );
+      const appliedHashes = migrations.flatMap((row) =>
+        typeof row.hash === "string" ? [row.hash] : [],
+      );
+      const mismatchIndex = appliedHashes.findIndex((hash, index) => {
+        const expected = expectedMigrations[index];
+        return expected !== undefined && hash !== expected.hash;
+      });
+      const mismatch =
+        mismatchIndex < 0 || expectedMigrations[mismatchIndex] === undefined
+          ? undefined
+          : {
+              appliedHash: appliedHashes[mismatchIndex] ?? "",
+              expectedHash: expectedMigrations[mismatchIndex].hash,
+              index: mismatchIndex,
+              tag: expectedMigrations[mismatchIndex].tag,
+            };
       return {
-        applied: Number.parseInt(String(migrations[0]?.count ?? "0"), 10),
-        expected: EXPECTED_MIGRATION_COUNT,
+        applied: appliedHashes.length,
+        compatible: mismatch === undefined && appliedHashes.length <= expectedMigrations.length,
+        expected: expectedMigrations.length,
+        mismatch,
       };
     },
     catch: (cause) =>
@@ -132,18 +169,21 @@ export function getMigrationStatus(
 
 export function assertMigrationsCurrent(
   service: DatabaseService,
+  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
-  return getMigrationStatus(service).pipe(
+  return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) =>
       status.applied > status.expected
         ? Effect.fail(newerMigrationError(status))
-        : status.applied < status.expected
-          ? Effect.fail(
-              new DatabaseError({
-                message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
-              }),
-            )
-          : Effect.succeed(status),
+        : !status.compatible
+          ? Effect.fail(incompatibleMigrationError(status))
+          : status.applied < status.expected
+            ? Effect.fail(
+                new DatabaseError({
+                  message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
+                }),
+              )
+            : Effect.succeed(status),
     ),
   );
 }
@@ -152,6 +192,47 @@ function newerMigrationError(status: MigrationStatus): DatabaseError {
   return new DatabaseError({
     message: `database has newer migrations than this Saga build understands: ${String(status.applied)} applied; expected ${String(status.expected)}. Upgrade Saga or restore a compatible backup before continuing.`,
   });
+}
+
+function incompatibleMigrationError(status: MigrationStatus): DatabaseError {
+  const mismatch = status.mismatch;
+  return new DatabaseError({
+    message:
+      mismatch === undefined
+        ? "database migrations do not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing."
+        : `database migration ${String(mismatch.index)} (${mismatch.tag}) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.`,
+  });
+}
+
+export function readExpectedMigrationHashes(
+  migrationsFolder: string,
+): Array<{ hash: string; tag: string }> {
+  const journal = JSON.parse(readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"));
+  if (!isMigrationJournal(journal)) {
+    throw new Error(`invalid Drizzle migration journal: ${migrationsFolder}`);
+  }
+
+  return journal.entries.map((entry) => {
+    const sql = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), "utf8");
+    return {
+      hash: createHash("sha256").update(sql).digest("hex"),
+      tag: entry.tag,
+    };
+  });
+}
+
+function isMigrationJournal(value: unknown): value is { entries: Array<{ tag: string }> } {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Array.isArray((value as { entries?: unknown }).entries) &&
+    (value as { entries: unknown[] }).entries.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        typeof (entry as { tag?: unknown }).tag === "string",
+    )
+  );
 }
 
 function makeDatabaseService(sql: SagaSql): DatabaseService {

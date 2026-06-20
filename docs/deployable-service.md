@@ -50,11 +50,12 @@ A starting systemd unit lives at `deploy/systemd/saga.service`. It assumes:
 - runtime config is injected through `/etc/saga/saga.env`
 - a `saga` user/group owns the service process
 
-The unit runs `@saga/service migrate` in `ExecStartPre` so systemd starts only after migrations are current.
+Run migrations explicitly before first start and before each upgrade. The unit only starts the long-running service process; it does not mutate database schema during service startup.
 
 Install shape:
 
 ```sh
+sudo -u saga pnpm --dir /opt/saga --filter @saga/service migrate
 sudo install -D -m 0644 deploy/systemd/saga.service /etc/systemd/system/saga.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now saga.service

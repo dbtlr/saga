@@ -5,26 +5,42 @@ import {
   assertMigrationsCurrent,
   DatabaseLive,
   DatabaseTag,
+  DEFAULT_MIGRATIONS_FOLDER,
   EXPECTED_MIGRATION_COUNT,
   getMigrationStatus,
   makeDatabase,
+  readExpectedMigrationHashes,
   runMigrationsSafely,
   type DatabaseService,
 } from "./database.js";
 
+const expectedHashes = readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).map(
+  (migration) => migration.hash,
+);
+
 function serviceWithMigrationCount(
   count: number,
-  options: { tableExists?: boolean } = {},
+  options: { tableExists?: boolean; wrongHashAt?: number } = {},
 ): DatabaseService {
   const tableExists = options.tableExists ?? true;
   return {
     close: () => Effect.void,
     db: undefined as never,
     sql: {
-      unsafe: async (query: string) =>
-        query.includes("to_regclass")
-          ? [{ table_name: tableExists ? "drizzle.__drizzle_migrations" : null }]
-          : [{ count: String(count) }],
+      unsafe: async (query: string) => {
+        if (query.includes("to_regclass")) {
+          return [{ table_name: tableExists ? "drizzle.__drizzle_migrations" : null }];
+        }
+
+        return Array.from({ length: count }, (_, index) => ({
+          hash:
+            options.wrongHashAt === index
+              ? "wrong-hash"
+              : index < expectedHashes.length
+                ? expectedHashes[index]
+                : `newer-hash-${String(index)}`,
+        }));
+      },
     } as never,
   };
 }
@@ -91,7 +107,22 @@ describe("assertMigrationsCurrent", () => {
       ),
     ).resolves.toEqual({
       applied: EXPECTED_MIGRATION_COUNT,
+      compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
+      mismatch: undefined,
+    });
+  });
+
+  test("fails when an applied migration hash differs from this build", async () => {
+    await expect(
+      Effect.runPromise(
+        assertMigrationsCurrent(
+          serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT, { wrongHashAt: 1 }),
+        ),
+      ),
+    ).rejects.toMatchObject({
+      message:
+        "database migration 1 (0001_graceful_sebastian_shaw) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.",
     });
   });
 
@@ -112,6 +143,7 @@ describe("getMigrationStatus", () => {
       Effect.runPromise(getMigrationStatus(serviceWithMigrationCount(99, { tableExists: false }))),
     ).resolves.toEqual({
       applied: 0,
+      compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
     });
   });
@@ -123,7 +155,9 @@ describe("runMigrationsSafely", () => {
       Effect.runPromise(runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT))),
     ).resolves.toEqual({
       applied: EXPECTED_MIGRATION_COUNT,
+      compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
+      mismatch: undefined,
     });
   });
 });

@@ -2,6 +2,8 @@ import { renderActiveContextMarkdown } from "@saga/active-context";
 import {
   resolveConnector,
   rewriteConnectorResultToSagaLinks,
+  type ConnectorClient,
+  type ResolveConnectorContext,
   type SagaLinkIndexReference,
 } from "@saga/connectors";
 import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
@@ -18,6 +20,8 @@ import { Effect } from "effect";
 import { compileActiveContextFromDatabase, compileProjectActiveContext } from "./context.js";
 import { findProjectRoot, readBindingFile } from "./init.js";
 import { type RenderOptions } from "./render.js";
+
+const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
 
 export interface MemorySearchEntry {
   confidence: number;
@@ -248,11 +252,16 @@ export async function resolveProjectSagaLink(
         }),
       ),
     ]);
-    const rewritten = await rewriteResolvedSagaLinkReferences(resolved.entry, contextIndex);
+    const rewritten = await rewriteResolvedSagaLinkReferences(
+      resolved.entry,
+      contextIndex,
+      metadataOnlyConnectorContext(),
+    );
+    const publicResolved = redactResolvedSagaLink(resolved);
     return {
-      markdown: renderResolvedSagaLinkMarkdown(resolved, rewritten),
+      markdown: renderResolvedSagaLinkMarkdown(publicResolved, rewritten),
       resolved: {
-        ...resolved,
+        ...publicResolved,
         retrieval: rewritten,
       },
     };
@@ -281,14 +290,18 @@ export async function rewriteResolvedSagaLinkReferences(
       sourceType: string;
     };
   }>,
+  connectorContext: ResolveConnectorContext = metadataOnlyConnectorContext(),
 ) {
   return rewriteConnectorResultToSagaLinks(
-    await resolveConnector({
-      externalId: entry.externalId,
-      metadata: entry.metadata,
-      sourceBinding: entry.sourceBinding,
-      title: entry.title,
-    }),
+    await resolveConnector(
+      {
+        externalId: entry.externalId,
+        metadata: entry.metadata,
+        sourceBinding: entry.sourceBinding,
+        title: entry.title,
+      },
+      connectorContext,
+    ),
     contextIndex.map(
       (indexEntry): SagaLinkIndexReference => ({
         connector: indexEntry.sourceBinding.sourceType,
@@ -298,6 +311,114 @@ export async function rewriteResolvedSagaLinkReferences(
       }),
     ),
   );
+}
+
+export function redactResolvedSagaLink<
+  Resolved extends {
+    entry: {
+      sourceBinding: {
+        config?: unknown;
+        displayName: string | null;
+        enabled: boolean;
+        id: string;
+        sourceType: string;
+        sourceUri: string;
+      };
+    };
+  },
+>(
+  resolved: Resolved,
+): Omit<Resolved, "entry"> & {
+  entry: Omit<Resolved["entry"], "sourceBinding"> & {
+    sourceBinding: {
+      displayName: string | null;
+      enabled: boolean;
+      id: string;
+      sourceType: string;
+      sourceUri: string;
+    };
+  };
+} {
+  const { sourceBinding: _sourceBinding, ...entry } = resolved.entry;
+  const redacted = {
+    ...resolved,
+    entry: {
+      ...entry,
+      sourceBinding: {
+        displayName: resolved.entry.sourceBinding.displayName,
+        enabled: resolved.entry.sourceBinding.enabled,
+        id: resolved.entry.sourceBinding.id,
+        sourceType: resolved.entry.sourceBinding.sourceType,
+        sourceUri: resolved.entry.sourceBinding.sourceUri,
+      },
+    },
+  };
+  return redacted as Omit<Resolved, "entry"> & {
+    entry: Omit<Resolved["entry"], "sourceBinding"> & {
+      sourceBinding: {
+        displayName: string | null;
+        enabled: boolean;
+        id: string;
+        sourceType: string;
+        sourceUri: string;
+      };
+    };
+  };
+}
+
+function metadataOnlyConnectorContext(): ResolveConnectorContext {
+  const client = createMetadataOnlyConnectorClient();
+  return {
+    clients: {
+      document: client,
+      github: client,
+      mimir: client,
+      norn: client,
+    },
+  };
+}
+
+function createMetadataOnlyConnectorClient(): ConnectorClient {
+  return {
+    retrieve: async (input) => {
+      const content = typeof input.metadata?.content === "string" ? input.metadata.content : "";
+      const capped = capUtf8Content(content, MCP_RETRIEVAL_MAX_CONTENT_BYTES);
+      return {
+        content: capped.content,
+        evidence: {
+          contentAvailable: content !== "",
+          contentBytes: capped.originalBytes,
+          maxContentBytes: MCP_RETRIEVAL_MAX_CONTENT_BYTES,
+          source: "metadata",
+          truncated: capped.truncated,
+        },
+        references: [],
+      };
+    },
+  };
+}
+
+function capUtf8Content(
+  value: string,
+  maxBytes: number,
+): { content: string; originalBytes: number; truncated: boolean } {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) {
+    return {
+      content: value,
+      originalBytes: buffer.length,
+      truncated: false,
+    };
+  }
+
+  return {
+    content: buffer
+      .subarray(0, maxBytes)
+      .toString("utf8")
+      .replace(/\uFFFD$/u, ""),
+    originalBytes: buffer.length,
+    truncated: true,
+  };
 }
 
 export function searchMemoryEntries(
