@@ -6,7 +6,7 @@ import {
   type ClaimKind,
   type ClaimEvidence,
 } from "@saga/claims";
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, notInArray, sql, type SQL } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { insertRawEvent } from "./raw-event.js";
@@ -149,7 +149,7 @@ export function insertClaimEventAndProject(
           message: "claim evidence occurredAt must be an ISO timestamp",
         });
       }
-      const rawEvent = await findRawEventForEvidence(service, input.evidence.rawEventId);
+      const rawEvent = await findRawEventForEvidence(service, input);
       const confidenceStats = await readClaimConfidenceStats(service, input);
       const confidence = scoreClaimConfidence({
         actorId: rawEvent.actorId,
@@ -547,6 +547,30 @@ export function listCurrentClaims(
   });
 }
 
+export function listActiveContextClaims(
+  service: DatabaseService,
+  input: {
+    limit?: number | undefined;
+    workspaceId: string;
+  },
+): Effect.Effect<CurrentClaim[], ClaimProjectionError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db
+        .select()
+        .from(currentClaims)
+        .where(
+          and(
+            eq(currentClaims.workspaceId, input.workspaceId),
+            notInArray(currentClaims.state, ["rejected", "superseded"]),
+          ),
+        )
+        .orderBy(desc(currentClaims.confidence), desc(currentClaims.observedAt))
+        .limit(input.limit ?? 20),
+    catch: (cause) => new ClaimProjectionError({ message: errorMessage(cause) }),
+  });
+}
+
 async function findExistingClaimEvent(
   service: DatabaseService,
   input: InsertClaimEventInput,
@@ -604,16 +628,30 @@ async function findOptionalCurrentClaim(
 
 async function findRawEventForEvidence(
   service: DatabaseService,
-  rawEventId: string,
+  input: InsertClaimEventInput,
 ): Promise<RawEvent> {
   const [rawEvent] = await service.db
     .select()
     .from(rawEvents)
-    .where(eq(rawEvents.id, rawEventId))
+    .where(eq(rawEvents.id, input.evidence.rawEventId))
     .limit(1);
 
   if (rawEvent === undefined) {
     throw new ClaimProjectionError({ message: "claim evidence rawEventId does not exist" });
+  }
+  if (rawEvent.workspaceId !== input.workspaceId) {
+    throw new ClaimProjectionError({
+      message: "claim evidence rawEventId belongs to a different workspace",
+    });
+  }
+  if (
+    rawEvent.sourceId !== input.evidence.sourceId ||
+    rawEvent.sourceType !== input.evidence.sourceType ||
+    rawEvent.externalEventId !== input.evidence.externalEventId
+  ) {
+    throw new ClaimProjectionError({
+      message: "claim evidence does not match the referenced raw event",
+    });
   }
 
   return rawEvent;
@@ -628,7 +666,9 @@ async function readClaimConfidenceStats(
       priorContradictions: sql<number>`count(*) filter (
         where ${claimEvents.eventType} in ('contradicted', 'rejected')
       )::int`,
-      priorEvents: sql<number>`count(*)::int`,
+      priorEvents: sql<number>`count(distinct ${claimEvents.rawEventId}) filter (
+        where ${claimEvents.eventType} in ('extracted', 'supported')
+      )::int`,
     })
     .from(claimEvents)
     .where(

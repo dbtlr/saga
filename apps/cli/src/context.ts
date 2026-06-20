@@ -1,6 +1,6 @@
 import { compileActiveContext, renderActiveContextMarkdown } from "@saga/active-context";
 import {
-  listCurrentClaims,
+  listActiveContextClaims,
   listRecentRawEvents,
   makeDatabase,
   workspaceProfiles,
@@ -54,7 +54,7 @@ export async function compileActiveContextFromDatabase(
     .where(eq(workspaceProfiles.workspaceId, workspace.id))
     .limit(1);
   const claims = await Effect.runPromise(
-    listCurrentClaims(service, {
+    listActiveContextClaims(service, {
       workspaceId: workspace.id,
     }),
   );

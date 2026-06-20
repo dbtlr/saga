@@ -5,6 +5,7 @@ import { compileActiveContext, type ActiveContextDocument } from "@saga/active-c
 import {
   currentClaims,
   insertClaimReviewEventAndProject,
+  listActiveContextClaims,
   listCurrentClaims,
   listRecentRawEvents,
   makeDatabase,
@@ -214,11 +215,14 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
     const claims = await Effect.runPromise(
       listCurrentClaims(service, { limit: 8, workspaceId: binding.workspace.id }),
     );
+    const activeContextClaims = await Effect.runPromise(
+      listActiveContextClaims(service, { limit: 8, workspaceId: binding.workspace.id }),
+    );
     const recentEvents = await Effect.runPromise(
       listRecentRawEvents(service, { limit: 5, workspaceId: binding.workspace.id }),
     );
     const activeContext = compileActiveContext({
-      claims,
+      claims: activeContextClaims,
       generatedAt,
       recentEvents,
       workspace: {
