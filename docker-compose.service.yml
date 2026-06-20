@@ -1,0 +1,33 @@
+services:
+  saga-service:
+    build:
+      context: .
+      dockerfile: apps/service/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://saga:saga@postgres:5432/saga
+      SAGA_ENV: production
+      SAGA_LOG_LEVEL: info
+      SAGA_SERVICE_HOST: 0.0.0.0
+      SAGA_SERVICE_PORT: "4766"
+    ports:
+      - "4766:4766"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: saga
+      POSTGRES_PASSWORD: saga
+      POSTGRES_USER: saga
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saga -d saga"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - saga-service-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  saga-service-postgres-data:

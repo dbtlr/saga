@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/main.ts",
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {

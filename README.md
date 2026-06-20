@@ -34,7 +34,14 @@ Stop dependencies when finished:
 pnpm deps:down
 ```
 
+Build the deployable service container target:
+
+```sh
+docker compose -f docker-compose.service.yml build saga-service
+```
+
 ## Notes
 
 - [Database operations](docs/database-operations.md)
+- [Deployable service](docs/deployable-service.md)
 - [Harness targets](docs/harnesses.md)

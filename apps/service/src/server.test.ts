@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { startSagaService } from "./server.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 describe("startSagaService", () => {
   test("serves health", async () => {
@@ -25,5 +27,15 @@ describe("startSagaService", () => {
     } finally {
       await service.close();
     }
+  });
+});
+
+describe("service entrypoint", () => {
+  test("loads runtime config and starts the foreground service", () => {
+    const entrypoint = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+    expect(entrypoint).toContain("loadRuntimeConfig");
+    expect(entrypoint).toContain("startSagaService");
+    expect(entrypoint).toContain("SIGTERM");
   });
 });
