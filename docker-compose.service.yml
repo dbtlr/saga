@@ -1,9 +1,25 @@
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/service/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://saga:saga@postgres:5432/saga
+      SAGA_ENV: production
+      SAGA_LOG_LEVEL: info
+    command: ["pnpm", "--filter", "@saga/service", "migrate"]
+    restart: "no"
+
   saga-service:
     build:
       context: .
       dockerfile: apps/service/Dockerfile
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:

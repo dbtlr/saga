@@ -80,7 +80,7 @@ describe("assertMigrationsCurrent", () => {
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT - 1)),
       ),
     ).rejects.toMatchObject({
-      message: `database migrations are not current: ${String(EXPECTED_MIGRATION_COUNT - 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Run saga init to apply migrations.`,
+      message: `database migrations are not current: ${String(EXPECTED_MIGRATION_COUNT - 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Apply migrations before starting Saga.`,
     });
   });
 

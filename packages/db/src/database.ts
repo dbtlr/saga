@@ -140,7 +140,7 @@ export function assertMigrationsCurrent(
         : status.applied < status.expected
           ? Effect.fail(
               new DatabaseError({
-                message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Run saga init to apply migrations.`,
+                message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
               }),
             )
           : Effect.succeed(status),

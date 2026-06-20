@@ -63,6 +63,17 @@ describe("service entrypoint", () => {
     expect(entrypoint).toContain("startSagaService");
     expect(entrypoint).toContain("SIGTERM");
   });
+
+  test("exposes an explicit migration entrypoint", () => {
+    const entrypoint = readFileSync(
+      fileURLToPath(new URL("./migrate.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(entrypoint).toContain("loadRuntimeConfig");
+    expect(entrypoint).toContain("runMigrationsSafely");
+    expect(entrypoint).toContain("Saga database migrations current");
+  });
 });
 
 describe("deploy targets", () => {
@@ -70,6 +81,7 @@ describe("deploy targets", () => {
     const unit = readFileSync(join(workspaceRoot, "deploy", "systemd", "saga.service"), "utf8");
 
     expect(unit).toContain("EnvironmentFile=/etc/saga/saga.env");
+    expect(unit).toContain("pnpm --dir /opt/saga --filter @saga/service migrate");
     expect(unit).toContain("pnpm --dir /opt/saga --filter @saga/service start");
   });
 

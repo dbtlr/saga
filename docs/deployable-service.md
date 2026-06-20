@@ -14,6 +14,12 @@ This runs `apps/service/src/main.ts`, loads typed runtime config, starts the HTT
 
 Startup validates database connectivity and migration compatibility before the health endpoint is exposed.
 
+Apply migrations before starting or upgrading the service:
+
+```sh
+pnpm --filter @saga/service migrate
+```
+
 ## Container
 
 Build the service image:
@@ -28,7 +34,13 @@ Run the service with a colocated Postgres dependency:
 docker compose -f docker-compose.service.yml up saga-service
 ```
 
-The container binds the service to `0.0.0.0:4766` and expects secrets/configuration through environment variables.
+The compose target includes a one-shot `migrate` service and requires it to complete before `saga-service` starts. Run it explicitly before upgrades so an already-created compose project does not reuse an older completed migration container:
+
+```sh
+docker compose -f docker-compose.service.yml run --rm migrate
+```
+
+The service container binds to `0.0.0.0:4766` and expects secrets/configuration through environment variables.
 
 ## Systemd
 
@@ -37,6 +49,8 @@ A starting systemd unit lives at `deploy/systemd/saga.service`. It assumes:
 - the repo is installed at `/opt/saga`
 - runtime config is injected through `/etc/saga/saga.env`
 - a `saga` user/group owns the service process
+
+The unit runs `@saga/service migrate` in `ExecStartPre` so systemd starts only after migrations are current.
 
 Install shape:
 
