@@ -81,6 +81,49 @@ describe("resolveConnector", () => {
         url: "https://confluence.example/wiki/ENG-CI-CD-QUALITY-GATES",
       },
     });
+
+    expect(
+      resolveConnector({
+        externalId: "notes/saga-v2-architecture-seed.md",
+        sourceBinding: {
+          id: "vault-source",
+          sourceType: "vault",
+          sourceUri: "file:///Users/drew/vaults/atlas",
+        },
+      }),
+    ).toMatchObject({
+      content: "notes/saga-v2-architecture-seed.md from vault",
+      target: {
+        url: "file:///Users/drew/vaults/atlas/notes%2Fsaga-v2-architecture-seed.md",
+      },
+    });
+  });
+
+  test("rejects invalid GitHub repositories and external ids", () => {
+    expect(() =>
+      resolveConnector({
+        externalId: "pr:../../settings",
+        sourceBinding: {
+          id: "github-source",
+          sourceType: "github",
+          sourceUri: "github://dbtlr/saga",
+        },
+      }),
+    ).toThrow("unsupported GitHub external id");
+
+    expect(() =>
+      resolveConnector({
+        externalId: "pr:1",
+        sourceBinding: {
+          config: {
+            repositoryFullName: "dbtlr/saga/extra",
+          },
+          id: "github-source",
+          sourceType: "github",
+          sourceUri: "github://dbtlr/saga",
+        },
+      }),
+    ).toThrow("invalid GitHub repository");
   });
 
   test("rejects unsupported source types", () => {

@@ -202,7 +202,7 @@ function createDocumentStoreConnector(): ConnectorAdapter {
         },
       };
     },
-    sourceTypes: ["confluence", "document", "docs", "notion"],
+    sourceTypes: ["confluence", "document", "docs", "notion", "vault"],
   };
 }
 
@@ -242,28 +242,38 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
   const configured = readString(
     sourceBinding.config?.repositoryFullName ?? sourceBinding.config?.repository,
   );
-  if (configured !== undefined) return configured;
+  if (configured !== undefined) return validateGitHubRepository(configured);
 
   if (sourceBinding.sourceUri.startsWith("github://")) {
-    return sourceBinding.sourceUri.slice("github://".length).replace(/^\/+/u, "");
+    return validateGitHubRepository(
+      sourceBinding.sourceUri.slice("github://".length).replace(/^\/+/u, ""),
+    );
   }
 
   const match = /^https:\/\/github\.com\/([^/]+\/[^/#?]+)/u.exec(sourceBinding.sourceUri);
-  if (match?.[1] !== undefined) return match[1];
+  if (match?.[1] !== undefined) return validateGitHubRepository(match[1]);
 
   throw new Error(
     "GitHub connector requires repositoryFullName, repository, or github://owner/repo sourceUri",
   );
 }
 
+function validateGitHubRepository(repository: string): string {
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) return repository;
+  throw new Error(`invalid GitHub repository: ${repository}`);
+}
+
 function parseGitHubExternalId(externalId: string): { id: string; kind: string } {
   const [kind, ...rest] = externalId.split(":");
   const id = rest.join(":");
-  if ((kind === "commit" || kind === "issue" || kind === "pr") && id.trim() !== "") {
+  if ((kind === "issue" || kind === "pr") && /^[1-9][0-9]*$/u.test(id)) {
+    return { id, kind };
+  }
+  if (kind === "commit" && /^[0-9a-f]{7,40}$/iu.test(id)) {
     return { id, kind };
   }
 
-  return { id: externalId, kind: "resource" };
+  throw new Error(`unsupported GitHub external id: ${externalId}`);
 }
 
 function githubLabel(target: { id: string; kind: string }): string {
