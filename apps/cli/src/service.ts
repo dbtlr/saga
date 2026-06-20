@@ -187,6 +187,8 @@ export function renderServiceLifecycle(
 export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSupervisor {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const paths = launchdPaths();
+  const unavailable = (action: ServiceLifecycleReport["action"]) =>
+    launchdUnavailableReport(paths, action);
   const launchctl = async (args: readonly string[]) => {
     await execFileAsync("launchctl", [...args]);
   };
@@ -194,6 +196,7 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
   return {
     inspect,
     install: async () => {
+      if (process.platform !== "darwin") return unavailable("install");
       ensureLaunchdDirectories(paths);
       writeFileSync(paths.plistPath, renderLaunchdPlist({ paths, projectRoot }), {
         mode: 0o600,
@@ -208,6 +211,7 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     restart: async () => {
+      if (process.platform !== "darwin") return unavailable("restart");
       await launchctl([
         "kickstart",
         "-k",
@@ -222,6 +226,7 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     start: async () => {
+      if (process.platform !== "darwin") return unavailable("start");
       await launchctl(["kickstart", `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`]);
       return {
         action: "start",
@@ -232,6 +237,7 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     stop: async () => {
+      if (process.platform !== "darwin") return unavailable("stop");
       await launchctl(["kill", "TERM", `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`]);
       return {
         action: "stop",
@@ -242,6 +248,7 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     uninstall: async () => {
+      if (process.platform !== "darwin") return unavailable("uninstall");
       await launchctl([
         "bootout",
         `gui/${String(process.getuid?.() ?? "")}`,
@@ -272,8 +279,7 @@ export function renderLaunchdPlist(input: {
   <key>ProgramArguments</key>
   <array>
     <string>${escapePlist(process.execPath)}</string>
-    <string>${escapePlist(join(input.projectRoot, "node_modules", "tsx", "dist", "cli.mjs"))}</string>
-    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "src", "main.ts"))}</string>
+    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "bin", "saga.js"))}</string>
     <string>service</string>
     <string>run</string>
   </array>
@@ -290,6 +296,19 @@ export function renderLaunchdPlist(input: {
 </dict>
 </plist>
 `;
+}
+
+function launchdUnavailableReport(
+  paths: ReturnType<typeof launchdPaths>,
+  action: ServiceLifecycleReport["action"],
+): ServiceLifecycleReport {
+  return {
+    action,
+    detail: "launchd is only available on macOS",
+    label: LAUNCHD_LABEL,
+    plistPath: paths.plistPath,
+    state: "unavailable",
+  };
 }
 
 function launchdPaths() {

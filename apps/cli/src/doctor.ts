@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { getMigrationStatus, makeDatabase, type DatabaseService } from "@saga/db";
+import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { inspectHarnesses, type HarnessIntegrationState } from "./harness.js";
@@ -160,15 +160,7 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
 
 async function checkMigrations(service: DatabaseService): Promise<DoctorCheck> {
   try {
-    const migrationStatus = await Effect.runPromise(getMigrationStatus(service));
-    if (migrationStatus.applied < migrationStatus.expected) {
-      return {
-        detail: `${String(migrationStatus.applied)} applied; expected ${String(migrationStatus.expected)}`,
-        label: "migrations",
-        status: "fail",
-      };
-    }
-
+    const migrationStatus = await Effect.runPromise(assertMigrationsCurrent(service));
     return {
       detail: `${String(migrationStatus.applied)} applied`,
       label: "migrations",

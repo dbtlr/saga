@@ -34,6 +34,22 @@ describe("renderDoctor", () => {
       renderDoctor(checks, { ascii: true, color: "never", format: "records", isTty: false }),
     ).toContain("migrations  [fail] connection refused");
   });
+
+  test("renders newer migration compatibility failures", () => {
+    expect(
+      renderDoctor(
+        [
+          {
+            detail:
+              "database has newer migrations than this Saga build understands: 5 applied; expected 4. Upgrade Saga or restore a compatible backup before continuing.",
+            label: "migrations",
+            status: "fail",
+          },
+        ],
+        { ascii: true, color: "never", format: "records", isTty: false },
+      ),
+    ).toContain("newer migrations");
+  });
 });
 
 describe("runDoctor", () => {

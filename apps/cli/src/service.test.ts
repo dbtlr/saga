@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  createLaunchdSupervisor,
   renderLaunchdPlist,
   renderServiceLifecycle,
   renderServiceStatus,
@@ -15,6 +19,7 @@ const renderOptions = {
   format: "records" as const,
   isTty: false,
 };
+const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("serviceStatus", () => {
   test("reports unreachable service", async () => {
@@ -93,9 +98,26 @@ describe("renderLaunchdPlist", () => {
     });
 
     expect(plist).toContain("<string>com.saga.service</string>");
+    expect(plist).toContain("/Volumes/data/workspaces/saga/apps/cli/bin/saga.js");
     expect(plist).toContain("<string>service</string>");
     expect(plist).toContain("<string>run</string>");
-    expect(plist).toContain("/Volumes/data/workspaces/saga/apps/cli/src/main.ts");
+  });
+
+  test("uses the checked-in CLI bin wrapper", () => {
+    expect(existsSync(join(workspaceRoot, "apps", "cli", "bin", "saga.js"))).toBe(true);
+  });
+});
+
+describe("createLaunchdSupervisor", () => {
+  test("does not mutate launchd state on non-macOS", async () => {
+    if (process.platform === "darwin") return;
+    const report = await createLaunchdSupervisor({ cwd: process.cwd() }).install();
+
+    expect(report).toMatchObject({
+      action: "install",
+      detail: "launchd is only available on macOS",
+      state: "unavailable",
+    });
   });
 });
 
