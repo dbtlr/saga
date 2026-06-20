@@ -6,16 +6,25 @@ import {
   DatabaseLive,
   DatabaseTag,
   EXPECTED_MIGRATION_COUNT,
+  getMigrationStatus,
   makeDatabase,
+  runMigrationsSafely,
   type DatabaseService,
 } from "./database.js";
 
-function serviceWithMigrationCount(count: number): DatabaseService {
+function serviceWithMigrationCount(
+  count: number,
+  options: { tableExists?: boolean } = {},
+): DatabaseService {
+  const tableExists = options.tableExists ?? true;
   return {
     close: () => Effect.void,
     db: undefined as never,
     sql: {
-      unsafe: async () => [{ count: String(count) }],
+      unsafe: async (query: string) =>
+        query.includes("to_regclass")
+          ? [{ table_name: tableExists ? "drizzle.__drizzle_migrations" : null }]
+          : [{ count: String(count) }],
     } as never,
   };
 }
@@ -80,6 +89,38 @@ describe("assertMigrationsCurrent", () => {
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT)),
       ),
+    ).resolves.toEqual({
+      applied: EXPECTED_MIGRATION_COUNT,
+      expected: EXPECTED_MIGRATION_COUNT,
+    });
+  });
+
+  test("fails when the database has newer migrations than this build expects", async () => {
+    await expect(
+      Effect.runPromise(
+        assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT + 1)),
+      ),
+    ).rejects.toMatchObject({
+      message: `database has newer migrations than this Saga build understands: ${String(EXPECTED_MIGRATION_COUNT + 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Upgrade Saga or restore a compatible backup before continuing.`,
+    });
+  });
+});
+
+describe("getMigrationStatus", () => {
+  test("reports zero applied migrations when the drizzle table is missing", async () => {
+    await expect(
+      Effect.runPromise(getMigrationStatus(serviceWithMigrationCount(99, { tableExists: false }))),
+    ).resolves.toEqual({
+      applied: 0,
+      expected: EXPECTED_MIGRATION_COUNT,
+    });
+  });
+});
+
+describe("runMigrationsSafely", () => {
+  test("skips migration execution when migrations are already current", async () => {
+    await expect(
+      Effect.runPromise(runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT))),
     ).resolves.toEqual({
       applied: EXPECTED_MIGRATION_COUNT,
       expected: EXPECTED_MIGRATION_COUNT,

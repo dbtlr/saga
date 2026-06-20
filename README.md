@@ -36,4 +36,5 @@ pnpm deps:down
 
 ## Notes
 
+- [Database operations](docs/database-operations.md)
 - [Harness targets](docs/harnesses.md)

@@ -82,11 +82,38 @@ export function runMigrations(
   });
 }
 
+export function runMigrationsSafely(
+  service: DatabaseService,
+  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
+): Effect.Effect<MigrationStatus, DatabaseError> {
+  return getMigrationStatus(service).pipe(
+    Effect.flatMap((status) => {
+      if (status.applied > status.expected) {
+        return Effect.fail(newerMigrationError(status));
+      }
+      if (status.applied === status.expected) return Effect.succeed(status);
+      return runMigrations(service, migrationsFolder).pipe(
+        Effect.flatMap(() => getMigrationStatus(service)),
+      );
+    }),
+  );
+}
+
 export function getMigrationStatus(
   service: DatabaseService,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return Effect.tryPromise({
     try: async () => {
+      const table = await service.sql.unsafe(
+        "select to_regclass('drizzle.__drizzle_migrations')::text as table_name",
+      );
+      if (table[0]?.table_name === null || table[0]?.table_name === undefined) {
+        return {
+          applied: 0,
+          expected: EXPECTED_MIGRATION_COUNT,
+        };
+      }
+
       const migrations = await service.sql.unsafe(
         "select count(*)::text as count from drizzle.__drizzle_migrations",
       );
@@ -108,15 +135,23 @@ export function assertMigrationsCurrent(
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service).pipe(
     Effect.flatMap((status) =>
-      status.applied < status.expected
-        ? Effect.fail(
-            new DatabaseError({
-              message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Run saga init to apply migrations.`,
-            }),
-          )
-        : Effect.succeed(status),
+      status.applied > status.expected
+        ? Effect.fail(newerMigrationError(status))
+        : status.applied < status.expected
+          ? Effect.fail(
+              new DatabaseError({
+                message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Run saga init to apply migrations.`,
+              }),
+            )
+          : Effect.succeed(status),
     ),
   );
+}
+
+function newerMigrationError(status: MigrationStatus): DatabaseError {
+  return new DatabaseError({
+    message: `database has newer migrations than this Saga build understands: ${String(status.applied)} applied; expected ${String(status.expected)}. Upgrade Saga or restore a compatible backup before continuing.`,
+  });
 }
 
 function makeDatabaseService(sql: SagaSql): DatabaseService {

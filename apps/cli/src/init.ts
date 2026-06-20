@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import {
   makeDatabase,
   registerWorkspace,
-  runMigrations,
+  runMigrationsSafely,
   type RegisterWorkspaceResult,
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
@@ -93,7 +93,7 @@ export async function initProject(input: {
   const service = await Effect.runPromise(makeDatabase(config));
 
   try {
-    await Effect.runPromise(runMigrations(service));
+    await Effect.runPromise(runMigrationsSafely(service));
     const registration = await Effect.runPromise(
       registerWorkspace(service, {
         displayName: basename(projectRoot),
