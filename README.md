@@ -6,3 +6,7 @@
 Saga is intended to be a workspace memory system for agentic work. It ingests raw
 activity and source state, derives scoped claims with provenance, compiles active
 context, and exposes memory through MCP, CLI, hooks, and a web UI.
+
+## Notes
+
+- [Harness targets](docs/harnesses.md)

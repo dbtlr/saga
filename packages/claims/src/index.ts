@@ -81,7 +81,7 @@ export function extractCandidateClaimsFromRawEvent(
       {
         attributes: {
           extractor: "deterministic-v1",
-          source: "codex-hook-prompt",
+          source: "agent-hook-prompt",
         },
         confidence: classifier.confidence,
         evidence: {
