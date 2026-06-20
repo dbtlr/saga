@@ -50,6 +50,50 @@ describe("parseRuntimeConfig", () => {
     });
   });
 
+  test("loads secret-bearing values from file indirection", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-config-"));
+    const databaseUrlFile = join(cwd, "database-url");
+    const openAiKeyFile = join(cwd, "openai-key");
+    writeFileSync(databaseUrlFile, "postgres://file/saga\n");
+    writeFileSync(openAiKeyFile, "sk-file\n");
+
+    const { config, issues } = parseRuntimeConfig({
+      DATABASE_URL_FILE: databaseUrlFile,
+      OPENAI_API_KEY_FILE: openAiKeyFile,
+    });
+
+    expect(issues).toEqual([]);
+    expect(config.databaseUrl).toBe("postgres://file/saga");
+    expect(config.secrets.openaiApiKey).toBe("sk-file");
+  });
+
+  test("prefers direct secret-bearing env values over file indirection", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-config-"));
+    const databaseUrlFile = join(cwd, "database-url");
+    writeFileSync(databaseUrlFile, "postgres://file/saga\n");
+
+    const { config, issues } = parseRuntimeConfig({
+      DATABASE_URL: "postgres://direct/saga",
+      DATABASE_URL_FILE: databaseUrlFile,
+    });
+
+    expect(issues).toEqual([]);
+    expect(config.databaseUrl).toBe("postgres://direct/saga");
+  });
+
+  test("returns validation issues for unreadable secret files", () => {
+    const { config, issues } = parseRuntimeConfig({
+      OPENAI_API_KEY_FILE: "/tmp/saga-missing-secret-file",
+    });
+
+    expect(config.secrets.openaiApiKey).toBeUndefined();
+    expect(issues).toEqual([
+      expect.objectContaining({
+        key: "OPENAI_API_KEY_FILE",
+      }),
+    ]);
+  });
+
   test("returns validation issues for invalid enum values", () => {
     const { config, issues } = parseRuntimeConfig({
       SAGA_ENV: "local",

@@ -113,7 +113,7 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
   );
 
   const config: RuntimeConfig = {
-    databaseUrl: optionalString(env.DATABASE_URL),
+    databaseUrl: readSecretValue(env, "DATABASE_URL", issues),
     environment,
     logLevel,
     service: {
@@ -121,7 +121,7 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
       port: parsePort(env.SAGA_SERVICE_PORT, "SAGA_SERVICE_PORT", issues),
     },
     secrets: {
-      openaiApiKey: optionalString(env.OPENAI_API_KEY),
+      openaiApiKey: readSecretValue(env, "OPENAI_API_KEY", issues),
     },
   };
 
@@ -150,6 +150,30 @@ function mergeEnv(
 function optionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+function readSecretValue(
+  env: NodeJS.ProcessEnv,
+  key: "DATABASE_URL" | "OPENAI_API_KEY",
+  issues: ConfigIssue[],
+): string | undefined {
+  const directValue = optionalString(env[key]);
+  if (directValue !== undefined) return directValue;
+
+  const filePath = optionalString(env[`${key}_FILE`]);
+  if (filePath === undefined) return undefined;
+
+  try {
+    return optionalString(readFileSync(filePath, "utf8"));
+  } catch (error) {
+    issues.push({
+      key: `${key}_FILE`,
+      message: `could not read secret file ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    });
+    return undefined;
+  }
 }
 
 function parseEnum<const Value extends string>(

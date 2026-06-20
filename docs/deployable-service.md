@@ -42,3 +42,19 @@ Common runtime settings:
 - `SAGA_SERVICE_PORT=4766`
 
 Secrets must be injected by the deployment environment. Do not bake real secrets into the image or compose files.
+
+## Managed Secrets
+
+Secret-bearing config supports standard file indirection:
+
+- `DATABASE_URL_FILE`
+- `OPENAI_API_KEY_FILE`
+
+When both direct and file-backed values are set, the direct environment variable wins. This keeps local `.env.local` usage simple while allowing container platforms, Docker/Kubernetes secrets, and hosted secret managers to inject file-backed values.
+
+Example:
+
+```sh
+DATABASE_URL_FILE=/run/secrets/saga_database_url
+OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
+```
