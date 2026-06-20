@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   candidateClaimKey,
+  detectClaimContradiction,
   extractCandidateClaimsFromRawEvents,
   type ClaimExtractionRawEvent,
 } from "./index.js";
@@ -103,5 +104,27 @@ describe("extractCandidateClaimsFromRawEvents", () => {
         },
       }),
     ).toBe(candidateClaimKey(claim));
+  });
+});
+
+describe("detectClaimContradiction", () => {
+  test("detects negated variants of the same claim", () => {
+    expect(
+      detectClaimContradiction(
+        "Use SSR for the control plane.",
+        "Do not use SSR for the control plane.",
+      ),
+    ).toMatchObject({
+      score: 1,
+    });
+  });
+
+  test("ignores unrelated negated claims", () => {
+    expect(
+      detectClaimContradiction(
+        "Use SSR for the control plane.",
+        "Do not commit local secrets to the repository.",
+      ),
+    ).toBeUndefined();
   });
 });

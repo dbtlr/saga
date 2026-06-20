@@ -398,6 +398,126 @@ describePostgres("postgres integration", () => {
     );
   });
 
+  test("detects contradictory candidate evidence and marks existing claims contradicted", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `contradictions-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const firstRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:contradiction:${workspace.id}:turn-1`,
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "We should use SSR for the control plane.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-1",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    const firstProjection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, {
+        attributes: { extractor: "deterministic-v1" },
+        confidence: 0.66,
+        evidence: {
+          eventType: firstRawEvent.eventType,
+          externalEventId: firstRawEvent.externalEventId,
+          occurredAt: firstRawEvent.occurredAt.toISOString(),
+          quote: "We should use SSR for the control plane.",
+          rawEventId: firstRawEvent.id,
+          sessionId: firstRawEvent.sessionId ?? undefined,
+          sourceId: firstRawEvent.sourceId,
+          sourceType: firstRawEvent.sourceType,
+          traceId: firstRawEvent.traceId ?? undefined,
+        },
+        kind: "follow_up",
+        text: "We should use SSR for the control plane.",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const secondRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:contradiction:${workspace.id}:turn-2`,
+        occurredAt: "2026-06-19T20:05:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "We should not use SSR for the control plane.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "turn-2",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    await Effect.runPromise(
+      insertExtractedCandidateClaim(service, {
+        attributes: { extractor: "deterministic-v1" },
+        confidence: 0.66,
+        evidence: {
+          eventType: secondRawEvent.eventType,
+          externalEventId: secondRawEvent.externalEventId,
+          occurredAt: secondRawEvent.occurredAt.toISOString(),
+          quote: "We should not use SSR for the control plane.",
+          rawEventId: secondRawEvent.id,
+          sessionId: secondRawEvent.sessionId ?? undefined,
+          sourceId: secondRawEvent.sourceId,
+          sourceType: secondRawEvent.sourceType,
+          traceId: secondRawEvent.traceId ?? undefined,
+        },
+        kind: "follow_up",
+        text: "We should not use SSR for the control plane.",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const current = await Effect.runPromise(
+      listCurrentClaims(service, {
+        workspaceId: workspace.id,
+      }),
+    );
+    const contradictedClaim = current.find(
+      (claim) => claim.claimKey === firstProjection.currentClaim.claimKey,
+    );
+
+    expect(contradictedClaim?.state).toBe("contradicted");
+    expect(contradictedClaim?.attributes).toMatchObject({
+      contradiction: {
+        detectedByClaimText: "We should not use SSR for the control plane.",
+      },
+    });
+  });
+
   test("projects claim review actions from append-only events", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 

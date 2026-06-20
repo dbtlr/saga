@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   candidateClaimKey,
+  detectClaimContradiction,
   type CandidateClaim,
   type ClaimKind,
   type ClaimEvidence,
@@ -90,15 +91,19 @@ export function insertExtractedCandidateClaim(
   service: DatabaseService,
   candidate: CandidateClaim,
 ): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
-  return insertClaimEventAndProject(service, {
-    attributes: candidate.attributes,
-    claimKey: candidateClaimKey(candidate),
-    confidence: candidate.confidence,
-    evidence: candidate.evidence,
-    eventType: "extracted",
-    kind: candidate.kind,
-    text: candidate.text,
-    workspaceId: candidate.workspaceId,
+  return Effect.gen(function* () {
+    const result = yield* insertClaimEventAndProject(service, {
+      attributes: candidate.attributes,
+      claimKey: candidateClaimKey(candidate),
+      confidence: candidate.confidence,
+      evidence: candidate.evidence,
+      eventType: "extracted",
+      kind: candidate.kind,
+      text: candidate.text,
+      workspaceId: candidate.workspaceId,
+    });
+    yield* projectContradictionsForCandidate(service, candidate, result.currentClaim.claimKey);
+    return result;
   });
 }
 
@@ -266,6 +271,44 @@ export function scoreClaimConfidence(input: ClaimConfidenceInput): ClaimConfiden
     inputs,
     score,
   };
+}
+
+function projectContradictionsForCandidate(
+  service: DatabaseService,
+  candidate: CandidateClaim,
+  candidateKey: string,
+): Effect.Effect<void, ClaimProjectionError | DatabaseError> {
+  return Effect.gen(function* () {
+    const existingClaims = yield* listCurrentClaims(service, {
+      limit: 100,
+      workspaceId: candidate.workspaceId,
+    });
+    for (const claim of existingClaims) {
+      if (claim.claimKey === candidateKey) continue;
+      if (claim.state === "rejected" || claim.state === "contradicted") continue;
+
+      const contradiction = detectClaimContradiction(claim.claimText, candidate.text);
+      if (contradiction === undefined) continue;
+
+      yield* insertClaimEventAndProject(service, {
+        attributes: {
+          ...candidate.attributes,
+          contradiction: {
+            detectedByClaimKey: candidateKey,
+            detectedByClaimText: candidate.text,
+            score: contradiction.score,
+          },
+        },
+        claimKey: claim.claimKey,
+        confidence: candidate.confidence,
+        evidence: candidate.evidence,
+        eventType: "contradicted",
+        kind: readClaimKind(claim.claimKind),
+        text: claim.claimText,
+        workspaceId: candidate.workspaceId,
+      });
+    }
+  });
 }
 
 export function insertClaimReviewEventAndProject(

@@ -116,6 +116,18 @@ export function candidateClaimKey(claim: CandidateClaim): string {
     .digest("hex");
 }
 
+export function detectClaimContradiction(
+  left: string,
+  right: string,
+): { score: number } | undefined {
+  const leftStatement = normalizeContradictionStatement(left);
+  const rightStatement = normalizeContradictionStatement(right);
+  if (leftStatement.negated === rightStatement.negated) return undefined;
+
+  const overlap = jaccard(leftStatement.tokens, rightStatement.tokens);
+  return overlap >= 0.55 ? { score: overlap } : undefined;
+}
+
 function promptFromRawEvent(event: ClaimExtractionRawEvent): string | undefined {
   if (!event.eventType.endsWith(".UserPromptSubmit")) return undefined;
   const prompt = event.payload.prompt;
@@ -145,6 +157,53 @@ function normalizeClaimText(statement: string): string {
     .replace(/\s+/g, " ")
     .replace(/^(agreed[,.:;\s-]*)/i, "")
     .trim();
+}
+
+function normalizeContradictionStatement(statement: string): {
+  negated: boolean;
+  tokens: Set<string>;
+} {
+  const lower = statement.toLowerCase();
+  const negated =
+    /\b(no longer|do not|don't|does not|doesn't|should not|shouldn't|must not|avoid|instead of)\b/.test(
+      lower,
+    );
+  const tokens = new Set(
+    lower
+      .replace(
+        /\b(no longer|do not|don't|does not|doesn't|should not|shouldn't|must not|avoid|instead of)\b/g,
+        " ",
+      )
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .split(/\s+/)
+      .filter((token) => token.length > 2)
+      .filter((token) => !CONTRADICTION_STOP_WORDS.has(token)),
+  );
+  return { negated, tokens };
+}
+
+const CONTRADICTION_STOP_WORDS = new Set([
+  "and",
+  "are",
+  "but",
+  "for",
+  "from",
+  "into",
+  "not",
+  "our",
+  "that",
+  "the",
+  "this",
+  "use",
+  "using",
+  "with",
+]);
+
+function jaccard(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  const union = new Set([...left, ...right]).size;
+  return intersection / union;
 }
 
 function stableJson(value: unknown): string {
