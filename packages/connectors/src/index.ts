@@ -98,7 +98,7 @@ export const CONNECTOR_ADAPTERS = [
   createDocumentStoreConnector(),
 ] as const satisfies readonly ConnectorAdapter[];
 
-export function resolveConnector(
+export async function resolveConnector(
   input: ResolveConnectorInput,
   context: ResolveConnectorContext = {},
   adapters: readonly ConnectorAdapter[] = CONNECTOR_ADAPTERS,

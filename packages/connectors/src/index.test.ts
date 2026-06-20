@@ -161,8 +161,8 @@ describe("resolveConnector", () => {
     ).rejects.toThrow("invalid GitHub repository");
   });
 
-  test("rejects unsupported source types", () => {
-    expect(() =>
+  test("rejects unsupported source types", async () => {
+    await expect(
       resolveConnector({
         externalId: "x",
         sourceBinding: {
@@ -171,7 +171,7 @@ describe("resolveConnector", () => {
           sourceUri: "spreadsheet://local",
         },
       }),
-    ).toThrow("unsupported connector source type: spreadsheet");
+    ).rejects.toThrow("unsupported connector source type: spreadsheet");
   });
 });
 
