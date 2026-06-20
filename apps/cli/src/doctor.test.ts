@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -67,6 +67,29 @@ describe("doctorProject", () => {
         detail: "missing; binding and hooks are not installed",
         label: "harness:claude",
         status: "warn",
+      }),
+    );
+  });
+
+  test("fails active harness hooks without local binding", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    mkdirSync(join(cwd, ".codex"));
+    writeFileSync(
+      join(cwd, ".codex", "hooks.json"),
+      JSON.stringify({
+        hooks: {
+          Stop: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+        },
+      }),
+    );
+
+    const checks = await doctorProject({ cwd });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: "divergent; Saga hooks are partially installed but local binding is missing",
+        label: "harness:codex",
+        status: "fail",
       }),
     );
   });

@@ -348,6 +348,7 @@ describe("inspectHarness", () => {
 
     expect(status.state).toBe("missing");
     expect(status.stateDetail).toBe("binding and hooks are not installed");
+    expect(status.hooksCoverage).toBe("none");
   });
 
   test("reports divergent harness state when binding exists without hooks", () => {
@@ -371,6 +372,59 @@ describe("inspectHarness", () => {
 
     expect(status.state).toBe("divergent");
     expect(status.stateDetail).toBe("local binding exists but hooks are missing");
+  });
+
+  test("reports divergent harness state when partial hooks exist without binding", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  command: `'${join(projectRoot, ".codex", "saga-codex-hook.sh")}'`,
+                  type: "command",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("divergent");
+    expect(status.hooksCoverage).toBe("partial");
+    expect(status.stateDetail).toBe(
+      "Saga hooks are partially installed but local binding is missing",
+    );
+  });
+
+  test("reports divergent harness state when legacy direct hooks exist without binding", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          Stop: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: "saga ingest codex-hook", type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("divergent");
+    expect(status.hooksCoverage).toBe("complete");
+    expect(status.stateDetail).toBe("hooks are installed but local binding is missing");
   });
 
   test("reports stale harness state when binding metadata no longer matches the adapter", () => {

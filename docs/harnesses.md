@@ -45,6 +45,8 @@ Saga installs the same command hook for each event. `SessionStart` is scoped to 
 - `divergent`: local binding and hook activation disagree, such as binding without hooks or hooks without binding.
 - `invalid`: the target settings file exists but cannot be parsed as a supported hook settings shape.
 
+Status also reports `hooksCoverage`: `complete`, `partial`, or `none`. Coverage detects current shim commands, legacy direct `saga ingest <target>-hook` commands, and known Saga shim script paths so active hooks are not mistaken for a missing integration.
+
 ## Edge Cases
 
 - Settings JSON may already contain user hooks. Saga removes only its own shim commands and preserves unrelated hooks.

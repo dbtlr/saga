@@ -29,6 +29,7 @@ export interface HarnessStatus {
   displayName: string;
   hookCommand: string;
   hookTrust: "not installed" | "requires review";
+  hooksCoverage: "complete" | "partial" | "none";
   hooks: "installed" | "invalid" | "missing";
   hooksError?: string;
   hooksPath: string;
@@ -254,6 +255,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       displayName: adapter.displayName,
       hookCommand,
       hooks: "invalid",
+      hooksCoverage: "none",
       hooksError: formatHooksSettingsParseError(hooksFile.error),
       hookTrust: "not installed",
       hooksPath,
@@ -267,11 +269,16 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
 
   const hooksInstalled =
     hasSagaHooks(hooksFile.file, hookCommand) || hasSagaHooks(hooksFile.file, expectedHookCommand);
+  const sagaHookCoverage = inspectSagaHookCoverage(hooksFile.file, {
+    hookCommand,
+    target: adapter.target,
+  });
   const state = classifyHarnessState({
     adapter,
     expectedHookCommand,
     expectedHooksPath: hooksPath,
     harnessBinding,
+    sagaHookCoverage,
     hooksInstalled,
   });
   return {
@@ -279,6 +286,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     displayName: adapter.displayName,
     hookCommand,
     hookTrust: hooksInstalled ? "requires review" : "not installed",
+    hooksCoverage: sagaHookCoverage,
     hooks: hooksInstalled ? "installed" : "missing",
     hooksPath,
     mcp: "deferred",
@@ -294,15 +302,19 @@ function classifyHarnessState(input: {
   expectedHookCommand: string;
   expectedHooksPath: string;
   harnessBinding: HarnessBindingSnapshot | undefined;
+  sagaHookCoverage: "complete" | "partial" | "none";
   hooksInstalled: boolean;
 }): { detail: string; state: HarnessIntegrationState } {
   const bindingInstalled = input.harnessBinding !== undefined;
-  if (!bindingInstalled && !input.hooksInstalled) {
+  if (!bindingInstalled && input.sagaHookCoverage === "none") {
     return { detail: "binding and hooks are not installed", state: "missing" };
   }
 
   if (!bindingInstalled) {
-    return { detail: "hooks are installed but local binding is missing", state: "divergent" };
+    return {
+      detail: activeHooksWithoutBindingDetail(input.sagaHookCoverage),
+      state: "divergent",
+    };
   }
 
   const staleReasons = staleHarnessBindingReasons(input);
@@ -311,10 +323,21 @@ function classifyHarnessState(input: {
   }
 
   if (!input.hooksInstalled) {
-    return { detail: "local binding exists but hooks are missing", state: "divergent" };
+    return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: "divergent" };
   }
 
   return { detail: "binding and hooks match the current adapter", state: "configured" };
+}
+
+function activeHooksWithoutBindingDetail(coverage: "complete" | "partial" | "none"): string {
+  if (coverage === "complete") return "hooks are installed but local binding is missing";
+  return "Saga hooks are partially installed but local binding is missing";
+}
+
+function bindingHookDivergenceDetail(coverage: "complete" | "partial" | "none"): string {
+  if (coverage === "partial")
+    return "local binding exists but Saga hooks are only partially installed";
+  return "local binding exists but hooks are missing";
 }
 
 function staleHarnessBindingReasons(input: {
@@ -366,6 +389,7 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
       { label: "detail", value: status.stateDetail },
       { label: "binding", value: status.binding },
       { label: "hooks", value: status.hooks },
+      { label: "hooks coverage", value: status.hooksCoverage },
       ...(status.hooksError === undefined
         ? []
         : [{ label: "hooks error", value: status.hooksError }]),
@@ -598,6 +622,27 @@ function hasSagaHooks(file: HooksSettingsFile, hookCommand: string): boolean {
       (matcher.hooks ?? []).some((hook) => hook.command === hookCommand),
     ),
   );
+}
+
+function inspectSagaHookCoverage(
+  file: HooksSettingsFile,
+  input: {
+    hookCommand: string;
+    target: HarnessTarget;
+  },
+): "complete" | "partial" | "none" {
+  const legacyCommands = [LEGACY_HOOK_COMMANDS[input.target]];
+  const hookScripts = [getHarnessAdapter(input.target).shimScriptName];
+  const installedEvents = HARNESS_HOOK_EVENTS.filter((event) =>
+    (file.hooks?.[event] ?? []).some((matcher) =>
+      (matcher.hooks ?? []).some((hook) =>
+        isSagaHookCommand(hook, input.hookCommand, legacyCommands, hookScripts),
+      ),
+    ),
+  );
+
+  if (installedEvents.length === HARNESS_HOOK_EVENTS.length) return "complete";
+  return installedEvents.length > 0 ? "partial" : "none";
 }
 
 function withoutSagaHooks(
