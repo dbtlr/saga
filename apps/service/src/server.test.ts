@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { startSagaService } from "./server.js";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("startSagaService", () => {
   test("serves health", async () => {
@@ -37,5 +40,24 @@ describe("service entrypoint", () => {
     expect(entrypoint).toContain("loadRuntimeConfig");
     expect(entrypoint).toContain("startSagaService");
     expect(entrypoint).toContain("SIGTERM");
+  });
+});
+
+describe("deploy targets", () => {
+  test("systemd target runs the service package entrypoint", () => {
+    const unit = readFileSync(join(workspaceRoot, "deploy", "systemd", "saga.service"), "utf8");
+
+    expect(unit).toContain("EnvironmentFile=/etc/saga/saga.env");
+    expect(unit).toContain("pnpm --dir /opt/saga --filter @saga/service start");
+  });
+
+  test("hosted target documents file-backed secrets", () => {
+    const env = readFileSync(
+      join(workspaceRoot, "deploy", "hosted", "service.env.example"),
+      "utf8",
+    );
+
+    expect(env).toContain("DATABASE_URL_FILE=/run/secrets/saga_database_url");
+    expect(env).toContain("SAGA_SERVICE_HOST=0.0.0.0");
   });
 });

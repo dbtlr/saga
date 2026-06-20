@@ -28,6 +28,26 @@ docker compose -f docker-compose.service.yml up saga-service
 
 The container binds the service to `0.0.0.0:4766` and expects secrets/configuration through environment variables.
 
+## Systemd
+
+A starting systemd unit lives at `deploy/systemd/saga.service`. It assumes:
+
+- the repo is installed at `/opt/saga`
+- runtime config is injected through `/etc/saga/saga.env`
+- a `saga` user/group owns the service process
+
+Install shape:
+
+```sh
+sudo install -D -m 0644 deploy/systemd/saga.service /etc/systemd/system/saga.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now saga.service
+```
+
+## Hosted Container
+
+The hosted target is a provider-neutral container contract documented in `deploy/hosted/README.md`, with `deploy/hosted/service.env.example` showing the expected environment and managed secret file variables.
+
 ## Configuration
 
 Required:
