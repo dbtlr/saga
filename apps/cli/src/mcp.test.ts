@@ -123,6 +123,21 @@ describe("searchMemoryEntries", () => {
         state: "compiled",
         text: "Current Claims: Active Context should include promoted decisions.",
       },
+      {
+        confidence: 0.9,
+        fields: {
+          connector: "vault",
+          description: "Seed architecture note.",
+          externalId: "notes/saga-v2-architecture-seed.md",
+          sagaLink: "saga:context/architecture-seed",
+          title: "Architecture Seed",
+        },
+        key: "saga:context/architecture-seed",
+        kind: "context_index",
+        source: "context_index",
+        state: "always",
+        text: "Architecture Seed",
+      },
     ];
 
     expect(searchMemoryEntries({ query: "typed route" }, entries)[0]).toMatchObject({
@@ -141,5 +156,12 @@ describe("searchMemoryEntries", () => {
       matchedFields: ["line"],
       source: "active_context",
     });
+    const contextIndexMatch = searchMemoryEntries({ query: "architecture seed" }, entries)[0];
+    expect(contextIndexMatch).toMatchObject({
+      key: "saga:context/architecture-seed",
+      sagaLink: "saga:context/architecture-seed",
+      source: "context_index",
+    });
+    expect(contextIndexMatch?.matchedFields).toContain("title");
   });
 });

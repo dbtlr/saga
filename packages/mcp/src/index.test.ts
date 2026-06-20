@@ -6,6 +6,14 @@ const server = createSagaMcpServer({
     document: { summary: "Active Context for saga" },
     markdown: "# Active Context for saga",
   }),
+  resolveSagaLink: async (input) => ({
+    markdown: `# Link\n${input.link}`,
+    resolved: {
+      entry: {
+        sagaLink: input.link,
+      },
+    },
+  }),
   searchMemory: async (input) => ({
     markdown: `# Search\n${input.query}`,
     matches: [
@@ -35,6 +43,9 @@ describe("createSagaMcpServer", () => {
         },
         {
           name: "search_memory",
+        },
+        {
+          name: "resolve_saga_link",
         },
       ],
     });
@@ -77,6 +88,22 @@ describe("createSagaMcpServer", () => {
     });
 
     expect(JSON.stringify(response?.result)).toContain("Found Active Context");
+  });
+
+  test("calls resolve_saga_link", async () => {
+    const response = await server.handle({
+      id: "resolve",
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          link: "saga:context/architecture-seed",
+        },
+        name: "resolve_saga_link",
+      },
+    });
+
+    expect(JSON.stringify(response?.result)).toContain("saga:context/architecture-seed");
   });
 
   test("returns JSON-RPC errors", async () => {

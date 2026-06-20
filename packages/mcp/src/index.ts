@@ -41,8 +41,18 @@ export interface SearchMemoryToolResult {
   markdown: string;
 }
 
+export interface ResolveSagaLinkInput {
+  link: string;
+}
+
+export interface ResolveSagaLinkToolResult {
+  markdown: string;
+  resolved: unknown;
+}
+
 export interface SagaMcpHandlers {
   getActiveContext: () => Promise<ActiveContextToolResult>;
+  resolveSagaLink: (input: ResolveSagaLinkInput) => Promise<ResolveSagaLinkToolResult>;
   searchMemory: (input: SearchMemoryInput) => Promise<SearchMemoryToolResult>;
 }
 
@@ -74,6 +84,20 @@ export const SAGA_MCP_TOOLS = [
       type: "object",
     },
     name: "search_memory",
+  },
+  {
+    description: "Resolve a Saga Link into the configured connector target and provenance.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        link: {
+          type: "string",
+        },
+      },
+      required: ["link"],
+      type: "object",
+    },
+    name: "resolve_saga_link",
   },
 ] as const;
 
@@ -144,6 +168,11 @@ export async function callSagaMcpTool(
     return toolResult(result.markdown, { matches: result.matches });
   }
 
+  if (input.name === "resolve_saga_link") {
+    const result = await handlers.resolveSagaLink(parseResolveSagaLinkInput(input.arguments));
+    return toolResult(result.markdown, result.resolved);
+  }
+
   throw new Error(`unknown Saga MCP tool: ${input.name}`);
 }
 
@@ -187,6 +216,17 @@ function parseSearchMemoryInput(input: Record<string, unknown> | undefined): Sea
     limit,
     query,
   };
+}
+
+function parseResolveSagaLinkInput(
+  input: Record<string, unknown> | undefined,
+): ResolveSagaLinkInput {
+  const link = input?.link;
+  if (typeof link !== "string" || link.trim() === "") {
+    throw new Error("resolve_saga_link requires a non-empty link");
+  }
+
+  return { link };
 }
 
 function response(id: number | string | null, result: unknown): JsonRpcResponse {

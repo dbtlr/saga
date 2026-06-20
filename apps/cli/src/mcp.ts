@@ -2,9 +2,11 @@ import { renderActiveContextMarkdown } from "@saga/active-context";
 import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
 import {
   listActiveContextClaims,
+  listContextIndexEntries,
   listCurrentClaims,
   listRecentRawEvents,
   makeDatabase,
+  resolveSagaLink as resolveDatabaseSagaLink,
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
@@ -27,6 +29,7 @@ export interface RankedMemorySearchMatch {
   key: string;
   kind: string;
   matchedFields: string[];
+  sagaLink?: string | undefined;
   score: number;
   snippet: string;
   source: string;
@@ -63,6 +66,7 @@ export function createProjectMcpServer(input: { cwd?: string } = {}) {
       };
     },
     searchMemory: (search) => searchProjectMemory(search, cwd === undefined ? {} : { cwd }),
+    resolveSagaLink: (link) => resolveProjectSagaLink(link, cwd === undefined ? {} : { cwd }),
   });
 }
 
@@ -79,7 +83,7 @@ export async function searchProjectMemory(
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
-    const [claims, activeContextClaims, recentEvents] = await Promise.all([
+    const [claims, activeContextClaims, recentEvents, contextIndex] = await Promise.all([
       Effect.runPromise(
         listCurrentClaims(service, {
           limit: 100,
@@ -94,6 +98,13 @@ export async function searchProjectMemory(
       ),
       Effect.runPromise(
         listRecentRawEvents(service, {
+          limit: 50,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+      Effect.runPromise(
+        listContextIndexEntries(service, {
+          includePolicies: ["always", "when_relevant"],
           limit: 50,
           workspaceId: binding.workspace.id,
         }),
@@ -141,6 +152,25 @@ export async function searchProjectMemory(
           text: `${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, "")} ${event.externalEventId}`,
         }),
       ),
+      ...contextIndex.map(
+        (entry): MemorySearchEntry => ({
+          confidence: entry.importance,
+          fields: {
+            connector: entry.sourceBinding.sourceType,
+            description: entry.description ?? "",
+            externalId: entry.externalId,
+            key: entry.key,
+            sagaLink: entry.sagaLink,
+            sourceUri: entry.sourceBinding.sourceUri,
+            title: entry.title,
+          },
+          key: entry.sagaLink,
+          kind: "context_index",
+          source: "context_index",
+          state: entry.includePolicy,
+          text: entry.title,
+        }),
+      ),
       ...activeContext.sections.flatMap((section) =>
         section.lines.map(
           (line, index): MemorySearchEntry => ({
@@ -179,6 +209,34 @@ export async function searchProjectMemory(
     return {
       markdown: renderSearchMemoryMarkdown(input.query, matches),
       matches: matches.map(({ score: _score, ...match }) => match),
+    };
+  } finally {
+    await Effect.runPromise(service.close());
+  }
+}
+
+export async function resolveProjectSagaLink(
+  input: { link: string },
+  options: { cwd?: string } = {},
+) {
+  const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
+    throw new Error("workspace binding is missing; run saga init");
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    const resolved = await Effect.runPromise(
+      resolveDatabaseSagaLink(service, {
+        sagaLink: input.link,
+        workspaceId: binding.workspace.id,
+      }),
+    );
+    return {
+      markdown: renderResolvedSagaLinkMarkdown(resolved),
+      resolved,
     };
   } finally {
     await Effect.runPromise(service.close());
@@ -227,6 +285,7 @@ function rankMemoryEntry(
     key: entry.key,
     kind: entry.kind,
     matchedFields,
+    sagaLink: entry.fields.sagaLink,
     score: weightedHits + exactTextBonus + sourceWeight + entry.confidence,
     snippet: matchedSnippet(bestFieldMatch?.value ?? entry.text, tokens),
     source: entry.source,
@@ -246,8 +305,34 @@ function renderSearchMemoryMarkdown(
     "",
     ...matches.map(
       (match) =>
-        `- [${match.source}/${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${match.snippet}`,
+        `- [${match.source}/${match.state}/${match.kind}] ${match.text}${match.sagaLink === undefined ? "" : ` ${match.sagaLink}`} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${match.snippet}`,
     ),
+  ].join("\n");
+}
+
+function renderResolvedSagaLinkMarkdown(resolved: {
+  entry: {
+    externalId: string;
+    sagaLink: string;
+    sourceBinding: {
+      sourceType: string;
+      sourceUri: string;
+    };
+    title: string;
+  };
+  provenance: {
+    sourceBindingId: string;
+  };
+}): string {
+  return [
+    "# Saga Link",
+    "",
+    `- Link: ${resolved.entry.sagaLink}`,
+    `- Title: ${resolved.entry.title}`,
+    `- Connector: ${resolved.entry.sourceBinding.sourceType}`,
+    `- External ID: ${resolved.entry.externalId}`,
+    `- Source URI: ${resolved.entry.sourceBinding.sourceUri}`,
+    `- Provenance: sourceBinding=${resolved.provenance.sourceBindingId}`,
   ].join("\n");
 }
 
@@ -276,6 +361,7 @@ function truncateSnippet(value: string): string {
 function sourceSearchWeight(source: string): number {
   if (source === "current_claim") return 2;
   if (source === "active_context") return 1.5;
+  if (source === "context_index") return 1.25;
   if (source === "active_context_input") return 1;
   return 0;
 }
