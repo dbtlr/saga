@@ -7,6 +7,10 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "deps:down": "docker compose -f docker-compose.local.yml down",
+    "deps:logs": "docker compose -f docker-compose.local.yml logs -f",
+    "deps:reset": "docker compose -f docker-compose.local.yml down -v && docker compose -f docker-compose.local.yml up -d --wait",
+    "deps:up": "docker compose -f docker-compose.local.yml up -d --wait",
     "check": "vp check",
     "format": "vp format",
     "lint": "vp lint",
