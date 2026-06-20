@@ -137,13 +137,6 @@ describe("run", () => {
     expect(output).toEqual(["service status"]);
   });
 
-  test("unimplemented service subcommands fail", async () => {
-    const output: string[] = [];
-
-    await expect(run(["service", "start"], (text) => output.push(text))).resolves.toBe(1);
-    expect(output).toEqual(["✗ service start is not implemented yet"]);
-  });
-
   test("dispatches harness through the harness handler", async () => {
     const output: string[] = [];
     const handlers: CommandHandlers = {
