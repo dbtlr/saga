@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import postgres from "postgres";
 import {
   insertClaimEventAndProject,
+  insertClaimMaintenanceEventAndProject,
   insertClaimReviewEventAndProject,
   insertExtractedCandidateClaim,
   listCurrentClaims,
@@ -515,6 +516,108 @@ describePostgres("postgres integration", () => {
       contradiction: {
         detectedByClaimText: "We should not use SSR for the control plane.",
       },
+    });
+  });
+
+  test("projects claim maintenance actions for decay and supersede", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `maintenance-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType: "codex",
+        sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    const maintenanceWorkspaceId = workspace.id;
+    const maintenanceSourceBindingId = sourceBinding.id;
+
+    async function seedClaim(text: string, turn: string) {
+      if (service === undefined) throw new Error("database service was not initialized");
+      const rawEvent = await Effect.runPromise(
+        insertRawEvent(service, {
+          actorId: "codex",
+          eventType: "codex.UserPromptSubmit",
+          externalEventId: `codex:maintenance:${maintenanceWorkspaceId}:${turn}`,
+          occurredAt: "2026-06-19T20:00:00.000Z",
+          payload: {
+            hook_event_name: "UserPromptSubmit",
+            prompt: text,
+          },
+          provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+          sessionId: "session",
+          sourceBindingId: maintenanceSourceBindingId,
+          sourceId: "codex:local",
+          sourceType: "codex",
+          traceId: turn,
+          trustLevel: "raw",
+          workspaceId: maintenanceWorkspaceId,
+        }),
+      );
+      return Effect.runPromise(
+        insertExtractedCandidateClaim(service, {
+          attributes: { extractor: "deterministic-v1" },
+          confidence: 0.72,
+          evidence: {
+            eventType: rawEvent.eventType,
+            externalEventId: rawEvent.externalEventId,
+            occurredAt: rawEvent.occurredAt.toISOString(),
+            quote: text,
+            rawEventId: rawEvent.id,
+            sessionId: rawEvent.sessionId ?? undefined,
+            sourceId: rawEvent.sourceId,
+            sourceType: rawEvent.sourceType,
+            traceId: rawEvent.traceId ?? undefined,
+          },
+          kind: "decision",
+          text,
+          workspaceId: maintenanceWorkspaceId,
+        }),
+      );
+    }
+
+    const decayed = await seedClaim("Agreed. We should keep the old local cache.", "turn-1");
+    const superseded = await seedClaim("Agreed. We should keep the old CLI surface.", "turn-2");
+    const decayedProjection = await Effect.runPromise(
+      insertClaimMaintenanceEventAndProject(service, {
+        action: "decay",
+        claimKey: decayed.currentClaim.claimKey,
+        occurredAt: "2026-06-19T21:00:00.000Z",
+        reason: "stale evidence",
+        workspaceId: maintenanceWorkspaceId,
+      }),
+    );
+    const supersededProjection = await Effect.runPromise(
+      insertClaimMaintenanceEventAndProject(service, {
+        action: "supersede",
+        claimKey: superseded.currentClaim.claimKey,
+        occurredAt: "2026-06-19T21:05:00.000Z",
+        reason: "new CLI contract",
+        targetClaimKeys: [decayed.currentClaim.claimKey],
+        workspaceId: maintenanceWorkspaceId,
+      }),
+    );
+
+    expect(decayedProjection.currentClaim.state).toBe("decayed");
+    expect(decayedProjection.currentClaim.confidence).toBeLessThan(decayed.currentClaim.confidence);
+    expect(decayedProjection.currentClaim.attributes).toMatchObject({
+      maintenanceLastAction: "decayed",
+      maintenanceReason: "stale evidence",
+    });
+    expect(supersededProjection.currentClaim.state).toBe("superseded");
+    expect(supersededProjection.currentClaim.attributes).toMatchObject({
+      maintenanceLastAction: "superseded",
+      maintenanceTargetClaimKeys: [decayed.currentClaim.claimKey],
     });
   });
 

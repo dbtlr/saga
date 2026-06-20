@@ -22,14 +22,25 @@ import {
 
 export type ClaimEventType =
   | "contradicted"
+  | "decayed"
   | "extracted"
+  | "merged"
   | "pinned"
   | "rejected"
+  | "split"
   | "supported"
+  | "superseded"
   | "unpinned"
   | "unwatched"
   | "watched";
-export type ClaimState = "candidate" | "contradicted" | "rejected" | "supported";
+export type ClaimState =
+  | "candidate"
+  | "contradicted"
+  | "decayed"
+  | "rejected"
+  | "supported"
+  | "superseded";
+export type ClaimMaintenanceAction = "decay" | "merge" | "split" | "supersede";
 export type ClaimReviewAction = "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch";
 
 export interface InsertClaimEventInput {
@@ -80,6 +91,16 @@ export interface InsertClaimReviewEventInput {
   actorId?: string | undefined;
   claimKey: string;
   occurredAt?: Date | string | undefined;
+  workspaceId: string;
+}
+
+export interface InsertClaimMaintenanceEventInput {
+  action: ClaimMaintenanceAction;
+  actorId?: string | undefined;
+  claimKey: string;
+  occurredAt?: Date | string | undefined;
+  reason?: string | undefined;
+  targetClaimKeys?: readonly string[] | undefined;
   workspaceId: string;
 }
 
@@ -227,7 +248,11 @@ export function insertClaimEventAndProject(
             updatedAt: new Date(),
           },
           target: [currentClaims.workspaceId, currentClaims.claimKey],
-          where: projectionAdvanceSql(state, observedAt, isLifecycleReviewEvent(input)),
+          where: projectionAdvanceSql(
+            state,
+            observedAt,
+            isLifecycleReviewEvent(input) || isLifecycleMaintenanceEvent(input),
+          ),
         })
         .returning();
 
@@ -404,6 +429,105 @@ export function insertClaimReviewEventAndProject(
   });
 }
 
+export function insertClaimMaintenanceEventAndProject(
+  service: DatabaseService,
+  input: InsertClaimMaintenanceEventInput,
+): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const [claim] = await service.db
+        .select()
+        .from(currentClaims)
+        .where(
+          and(
+            eq(currentClaims.workspaceId, input.workspaceId),
+            eq(currentClaims.claimKey, input.claimKey),
+          ),
+        )
+        .limit(1);
+
+      if (claim === undefined) {
+        throw new ClaimProjectionError({ message: "claim is not available for maintenance" });
+      }
+
+      const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
+      if (Number.isNaN(occurredAt.getTime())) {
+        throw new ClaimProjectionError({
+          message: "claim maintenance occurredAt must be an ISO timestamp",
+        });
+      }
+
+      const sourceBinding = await ensureControlPlaneSourceBinding(service, input.workspaceId);
+      const maintenanceEventType = eventTypeForMaintenanceAction(input.action);
+      const externalEventId = [
+        "saga",
+        "claim-maintenance",
+        input.claimKey,
+        input.action,
+        occurredAt.toISOString(),
+        randomUUID(),
+      ].join(":");
+      const rawEvent = await Effect.runPromise(
+        insertRawEvent(service, {
+          actorId: input.actorId ?? "control-plane",
+          eventType: "saga.claim.maintenance",
+          externalEventId,
+          occurredAt: occurredAt.toISOString(),
+          payload: {
+            action: input.action,
+            claimKey: input.claimKey,
+            previousState: claim.state,
+            reason: input.reason,
+            targetClaimKeys: input.targetClaimKeys ?? [],
+          },
+          provenance: {
+            surface: "control-plane",
+          },
+          sourceBindingId: sourceBinding.id,
+          sourceId: "saga:control-plane",
+          sourceType: "saga",
+          trustLevel: "trusted",
+          workspaceId: input.workspaceId,
+        }),
+      );
+      const evidence: ClaimEvidence = {
+        eventType: rawEvent.eventType,
+        externalEventId: rawEvent.externalEventId,
+        occurredAt: rawEvent.occurredAt.toISOString(),
+        quote: `Control-plane maintenance action: ${input.action}`,
+        rawEventId: rawEvent.id,
+        sourceId: rawEvent.sourceId,
+        sourceType: rawEvent.sourceType,
+      };
+
+      return await Effect.runPromise(
+        insertClaimEventAndProject(service, {
+          attributes: maintenanceAttributesForEventType(
+            claim.attributes,
+            maintenanceEventType,
+            occurredAt.toISOString(),
+            {
+              reason: input.reason,
+              targetClaimKeys: input.targetClaimKeys,
+            },
+          ),
+          claimKey: claim.claimKey,
+          confidence: claim.confidence,
+          evidence,
+          eventType: maintenanceEventType,
+          kind: readClaimKind(claim.claimKind),
+          text: claim.claimText,
+          workspaceId: input.workspaceId,
+        }),
+      );
+    },
+    catch: (cause) =>
+      cause instanceof ClaimProjectionError
+        ? cause
+        : new ClaimProjectionError({ message: errorMessage(cause) }),
+  });
+}
+
 export function listCurrentClaims(
   service: DatabaseService,
   input: {
@@ -520,7 +644,11 @@ async function readClaimConfidenceStats(
 function stateForEventType(eventType: ClaimEventType): ClaimState {
   if (eventType === "supported") return "supported";
   if (eventType === "contradicted") return "contradicted";
+  if (eventType === "decayed") return "decayed";
   if (eventType === "rejected") return "rejected";
+  if (eventType === "merged" || eventType === "split" || eventType === "superseded") {
+    return "superseded";
+  }
   return "candidate";
 }
 
@@ -531,6 +659,13 @@ function eventTypeForReviewAction(action: ClaimReviewAction): ClaimEventType {
   if (action === "unpin") return "unpinned";
   if (action === "watch") return "watched";
   return "unwatched";
+}
+
+function eventTypeForMaintenanceAction(action: ClaimMaintenanceAction): ClaimEventType {
+  if (action === "decay") return "decayed";
+  if (action === "merge") return "merged";
+  if (action === "split") return "split";
+  return "superseded";
 }
 
 function isReviewAttributeEventType(eventType: ClaimEventType): boolean {
@@ -546,6 +681,16 @@ function isLifecycleReviewEvent(input: InsertClaimEventInput): boolean {
   return (
     (input.eventType === "supported" || input.eventType === "rejected") &&
     input.evidence.eventType === "saga.claim.review"
+  );
+}
+
+function isLifecycleMaintenanceEvent(input: InsertClaimEventInput): boolean {
+  return (
+    (input.eventType === "decayed" ||
+      input.eventType === "merged" ||
+      input.eventType === "split" ||
+      input.eventType === "superseded") &&
+    input.evidence.eventType === "saga.claim.maintenance"
   );
 }
 
@@ -579,6 +724,26 @@ function reviewAttributesForEventType(
   if (eventType === "watched") return { ...next, reviewWatched: true };
   if (eventType === "unwatched") return { ...next, reviewWatched: false };
   return next;
+}
+
+function maintenanceAttributesForEventType(
+  attributes: Record<string, unknown>,
+  eventType: ClaimEventType,
+  maintainedAt: string,
+  input: {
+    reason?: string | undefined;
+    targetClaimKeys?: readonly string[] | undefined;
+  },
+): Record<string, unknown> {
+  return {
+    ...attributes,
+    maintenanceLastAction: eventType,
+    maintenanceLastAt: maintainedAt,
+    ...(input.reason === undefined ? {} : { maintenanceReason: input.reason }),
+    ...((input.targetClaimKeys ?? []).length === 0
+      ? {}
+      : { maintenanceTargetClaimKeys: input.targetClaimKeys }),
+  };
 }
 
 async function ensureControlPlaneSourceBinding(
@@ -643,6 +808,14 @@ function actorAuthorityScore(actorId: string | null | undefined): number {
 function contradictionScore(input: ClaimConfidenceInput): number {
   const priorPenalty = -Math.min(0.16, input.priorContradictions * 0.08);
   if (input.eventType === "contradicted") return priorPenalty - 0.22;
+  if (input.eventType === "decayed") return priorPenalty - 0.45;
+  if (
+    input.eventType === "merged" ||
+    input.eventType === "split" ||
+    input.eventType === "superseded"
+  ) {
+    return priorPenalty - 0.5;
+  }
   if (input.eventType === "rejected") return priorPenalty - 0.35;
   return priorPenalty;
 }
@@ -705,7 +878,8 @@ function projectionAdvanceSql(
   }
 
   const existingPrecedence = sql<number>`case ${currentClaims.state}
-    when 'rejected' then 3
+    when 'rejected' then 4
+    when 'superseded' then 3
     when 'contradicted' then 2
     when 'supported' then 1
     else 0
@@ -720,7 +894,8 @@ function projectionAdvanceSql(
 }
 
 function statePrecedence(state: string): number {
-  if (state === "rejected") return 3;
+  if (state === "rejected") return 4;
+  if (state === "superseded") return 3;
   if (state === "contradicted") return 2;
   if (state === "supported") return 1;
   return 0;

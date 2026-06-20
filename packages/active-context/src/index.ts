@@ -50,7 +50,7 @@ export interface ActiveContextDocument {
 export function compileActiveContext(input: ActiveContextInput): ActiveContextDocument {
   const generatedAt = toIso(input.generatedAt ?? new Date());
   const claims = input.claims
-    .filter((claim) => claim.state !== "rejected")
+    .filter((claim) => claim.state !== "rejected" && claim.state !== "superseded")
     .slice()
     .sort(
       (left, right) =>
@@ -128,6 +128,7 @@ export function renderActiveContextMarkdown(document: ActiveContextDocument): st
 function claimLabel(claim: ActiveContextClaimInput): string {
   if (claim.state === "supported") return "[supported]";
   if (claim.state === "contradicted") return "[contradicted]";
+  if (claim.state === "decayed") return "[decayed]";
   return `[${claim.claimKind}]`;
 }
 

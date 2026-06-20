@@ -29,6 +29,22 @@ describe("compileActiveContext", () => {
           observedAt: "2026-06-19T20:02:00.000Z",
           state: "rejected",
         },
+        {
+          claimKey: "superseded",
+          claimKind: "decision",
+          claimText: "This was replaced.",
+          confidence: 0.98,
+          observedAt: "2026-06-19T20:02:30.000Z",
+          state: "superseded",
+        },
+        {
+          claimKey: "decayed",
+          claimKind: "observation",
+          claimText: "This may be stale.",
+          confidence: 0.5,
+          observedAt: "2026-06-19T20:02:45.000Z",
+          state: "decayed",
+        },
       ],
       generatedAt: "2026-06-19T21:00:00.000Z",
       recentEvents: [
@@ -52,6 +68,8 @@ describe("compileActiveContext", () => {
     expect(document.sections[0]?.lines).toEqual(["Postgres-backed workspace memory."]);
     expect(document.sections[1]?.lines[0]).toContain("[supported]");
     expect(document.sections[1]?.lines.join("\n")).not.toContain("Ignore this.");
+    expect(document.sections[1]?.lines.join("\n")).not.toContain("This was replaced.");
+    expect(document.sections[1]?.lines.join("\n")).toContain("[decayed]");
     expect(document.sections[2]?.lines[0]).toContain("codex.UserPromptSubmit");
   });
 
