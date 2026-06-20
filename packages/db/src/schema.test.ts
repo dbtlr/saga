@@ -3,6 +3,7 @@ import { getTableName } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import {
   claimEvents,
+  contextIndexEntries,
   currentClaims,
   rawEvents,
   sourceBindings,
@@ -18,6 +19,7 @@ describe("schema", () => {
     expect(getTableName(rawEvents)).toBe("raw_events");
     expect(getTableName(claimEvents)).toBe("claim_events");
     expect(getTableName(currentClaims)).toBe("current_claims");
+    expect(getTableName(contextIndexEntries)).toBe("context_index_entries");
   });
 
   test("keeps workspace profile one-to-one with workspace", () => {
@@ -58,5 +60,17 @@ describe("schema", () => {
     expect(eventColumns.eventType.notNull).toBe(true);
     expect(currentColumns.latestEventId.notNull).toBe(true);
     expect(currentColumns.state.notNull).toBe(true);
+  });
+
+  test("keeps Context Index entries tied to configured sources", () => {
+    const columns = getTableColumns(contextIndexEntries);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.sourceBindingId.notNull).toBe(true);
+    expect(columns.key.notNull).toBe(true);
+    expect(columns.externalId.notNull).toBe(true);
+    expect(columns.sagaLink.notNull).toBe(true);
+    expect(columns.includePolicy.notNull).toBe(true);
+    expect(columns.importance.notNull).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import { compileActiveContext, renderActiveContextMarkdown } from "@saga/active-context";
 import {
+  listActiveContextIndexEntries,
   listActiveContextClaims,
   listRecentRawEvents,
   makeDatabase,
@@ -64,9 +65,25 @@ export async function compileActiveContextFromDatabase(
       workspaceId: workspace.id,
     }),
   );
+  const contextIndex = await Effect.runPromise(
+    listActiveContextIndexEntries(service, {
+      limit: 6,
+      workspaceId: workspace.id,
+    }),
+  );
 
   return compileActiveContext({
     claims,
+    contextIndex: contextIndex.map((entry) => ({
+      connector: entry.sourceBinding.sourceType,
+      description: entry.description,
+      externalId: entry.externalId,
+      importance: entry.importance,
+      includePolicy: entry.includePolicy,
+      key: entry.key,
+      sagaLink: entry.sagaLink,
+      title: entry.title,
+    })),
     recentEvents,
     workspace: {
       handle: workspace.handle,

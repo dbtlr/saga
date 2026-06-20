@@ -46,6 +46,27 @@ describe("compileActiveContext", () => {
           state: "decayed",
         },
       ],
+      contextIndex: [
+        {
+          connector: "vault",
+          description: "Seed architecture note.",
+          externalId: "notes/saga-v2-architecture-seed.md",
+          importance: 0.9,
+          includePolicy: "always",
+          key: "architecture-seed",
+          sagaLink: "saga:context/architecture-seed",
+          title: "Architecture Seed",
+        },
+        {
+          connector: "vault",
+          externalId: "notes/rarely-needed.md",
+          importance: 1,
+          includePolicy: "when_relevant",
+          key: "rarely-needed",
+          sagaLink: "saga:context/rarely-needed",
+          title: "Rarely Needed",
+        },
+      ],
       generatedAt: "2026-06-19T21:00:00.000Z",
       recentEvents: [
         {
@@ -70,7 +91,9 @@ describe("compileActiveContext", () => {
     expect(document.sections[1]?.lines.join("\n")).not.toContain("Ignore this.");
     expect(document.sections[1]?.lines.join("\n")).not.toContain("This was replaced.");
     expect(document.sections[1]?.lines.join("\n")).toContain("[decayed]");
-    expect(document.sections[2]?.lines[0]).toContain("codex.UserPromptSubmit");
+    expect(document.sections[2]?.lines[0]).toContain("saga:context/architecture-seed");
+    expect(document.sections[2]?.lines.join("\n")).not.toContain("Rarely Needed");
+    expect(document.sections[3]?.lines[0]).toContain("codex.UserPromptSubmit");
   });
 
   test("renders markdown", () => {

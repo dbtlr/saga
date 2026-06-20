@@ -156,8 +156,49 @@ export const currentClaims = pgTable(
   ],
 );
 
+export const contextIndexEntries = pgTable(
+  "context_index_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceBindingId: uuid("source_binding_id")
+      .notNull()
+      .references(() => sourceBindings.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    externalId: text("external_id").notNull(),
+    sagaLink: text("saga_link").notNull(),
+    importance: doublePrecision("importance").notNull().default(0.5),
+    includePolicy: text("include_policy").notNull().default("when_relevant"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index("context_index_entries_workspace_include_idx").on(
+      table.workspaceId,
+      table.includePolicy,
+      table.importance,
+    ),
+    index("context_index_entries_source_idx").on(table.sourceBindingId, table.externalId),
+    uniqueIndex("context_index_entries_workspace_key_unique").on(table.workspaceId, table.key),
+    uniqueIndex("context_index_entries_workspace_link_unique").on(
+      table.workspaceId,
+      table.sagaLink,
+    ),
+    uniqueIndex("context_index_entries_workspace_source_external_unique").on(
+      table.workspaceId,
+      table.sourceBindingId,
+      table.externalId,
+    ),
+  ],
+);
+
 export const workspaceRelations = relations(workspaces, ({ many, one }) => ({
   claimEvents: many(claimEvents),
+  contextIndexEntries: many(contextIndexEntries),
   currentClaims: many(currentClaims),
   profile: one(workspaceProfiles),
   rawEvents: many(rawEvents),
@@ -211,9 +252,22 @@ export const currentClaimRelations = relations(currentClaims, ({ one }) => ({
   }),
 }));
 
+export const contextIndexEntryRelations = relations(contextIndexEntries, ({ one }) => ({
+  sourceBinding: one(sourceBindings, {
+    fields: [contextIndexEntries.sourceBindingId],
+    references: [sourceBindings.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [contextIndexEntries.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
 export const schema = {
   claimEventRelations,
   claimEvents,
+  contextIndexEntries,
+  contextIndexEntryRelations,
   currentClaimRelations,
   currentClaims,
   rawEventRelations,
@@ -240,3 +294,5 @@ export type ClaimEvent = typeof claimEvents.$inferSelect;
 export type NewClaimEvent = typeof claimEvents.$inferInsert;
 export type CurrentClaim = typeof currentClaims.$inferSelect;
 export type NewCurrentClaim = typeof currentClaims.$inferInsert;
+export type ContextIndexEntry = typeof contextIndexEntries.$inferSelect;
+export type NewContextIndexEntry = typeof contextIndexEntries.$inferInsert;

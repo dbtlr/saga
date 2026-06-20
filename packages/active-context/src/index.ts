@@ -16,6 +16,17 @@ export interface ActiveContextRecentEventInput {
   sourceType: string;
 }
 
+export interface ActiveContextIndexEntryInput {
+  connector: string;
+  description?: string | null | undefined;
+  externalId: string;
+  importance: number;
+  includePolicy: string;
+  key: string;
+  sagaLink: string;
+  title: string;
+}
+
 export interface ActiveContextWorkspaceInput {
   handle: string;
   id: string;
@@ -26,6 +37,7 @@ export interface ActiveContextWorkspaceInput {
 
 export interface ActiveContextInput {
   claims: readonly ActiveContextClaimInput[];
+  contextIndex?: readonly ActiveContextIndexEntryInput[] | undefined;
   generatedAt?: Date | string | undefined;
   recentEvents: readonly ActiveContextRecentEventInput[];
   workspace: ActiveContextWorkspaceInput;
@@ -58,6 +70,13 @@ export function compileActiveContext(input: ActiveContextInput): ActiveContextDo
     )
     .slice(0, 8);
   const recentEvents = input.recentEvents.slice(0, 5);
+  const contextIndex = (input.contextIndex ?? [])
+    .filter((entry) => entry.includePolicy === "always")
+    .slice()
+    .sort(
+      (left, right) => right.importance - left.importance || left.title.localeCompare(right.title),
+    )
+    .slice(0, 6);
 
   return {
     generatedAt,
@@ -81,6 +100,20 @@ export function compileActiveContext(input: ActiveContextInput): ActiveContextDo
               ),
         provenance: claims.map((claim) => `claim:${claim.claimKey}`),
         title: "Current Claims",
+      },
+      {
+        lines:
+          contextIndex.length === 0
+            ? ["No Context Index entries pinned yet."]
+            : contextIndex.map((entry) => {
+                const description =
+                  entry.description === undefined || entry.description === null
+                    ? ""
+                    : ` — ${entry.description}`;
+                return `${entry.title}: ${entry.sagaLink} (${entry.connector}:${entry.externalId})${description}`;
+              }),
+        provenance: contextIndex.map((entry) => `context_index:${entry.key}`),
+        title: "Context Index",
       },
       {
         lines:

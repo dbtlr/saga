@@ -14,7 +14,15 @@ import {
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { insertRawEvent, listRecentRawEvents } from "./raw-event.js";
 import {
+  listActiveContextIndexEntries,
+  listContextIndexEntries,
+  makeSagaContextLink,
+  resolveSagaLink,
+  upsertContextIndexEntry,
+} from "./context-index.js";
+import {
   claimEvents,
+  contextIndexEntries,
   currentClaims,
   rawEvents,
   sourceBindings,
@@ -155,6 +163,92 @@ describePostgres("postgres integration", () => {
     expect(profile?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.enabled).toBe(true);
+  });
+
+  test("persists Context Index entries and resolves Saga Links through source bindings", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("context-index");
+
+    const entry = await Effect.runPromise(
+      upsertContextIndexEntry(service, {
+        description: "Architecture seed note.",
+        externalId: "notes/saga-v2-architecture-seed.md",
+        importance: 0.9,
+        includePolicy: "always",
+        key: "architecture-seed",
+        metadata: { section: "design-notes" },
+        sourceBindingId: sourceBinding.id,
+        title: "Architecture Seed",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    expect(entry.sagaLink).toBe(makeSagaContextLink("architecture-seed"));
+
+    const activeEntries = await Effect.runPromise(
+      listActiveContextIndexEntries(service, {
+        workspaceId: workspace.id,
+      }),
+    );
+    expect(activeEntries).toHaveLength(1);
+    expect(activeEntries[0]).toMatchObject({
+      key: "architecture-seed",
+      sourceBinding: {
+        id: sourceBinding.id,
+        sourceType: "codex",
+        sourceUri: "codex://local",
+      },
+    });
+
+    const resolved = await Effect.runPromise(
+      resolveSagaLink(service, {
+        sagaLink: entry.sagaLink,
+        workspaceId: workspace.id,
+      }),
+    );
+    expect(resolved).toMatchObject({
+      entry: {
+        externalId: "notes/saga-v2-architecture-seed.md",
+        sourceBinding: {
+          id: sourceBinding.id,
+          sourceType: "codex",
+        },
+      },
+      provenance: {
+        sagaLink: entry.sagaLink,
+        sourceBindingId: sourceBinding.id,
+        workspaceId: workspace.id,
+      },
+    });
+
+    await Effect.runPromise(
+      upsertContextIndexEntry(service, {
+        externalId: "notes/saga-v2-architecture-seed.md",
+        includePolicy: "when_relevant",
+        key: "architecture-seed",
+        sourceBindingId: sourceBinding.id,
+        title: "Updated Architecture Seed",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const allEntries = await Effect.runPromise(
+      listContextIndexEntries(service, {
+        includePolicies: ["always", "when_relevant"],
+        workspaceId: workspace.id,
+      }),
+    );
+    expect(allEntries).toHaveLength(1);
+    expect(allEntries[0]).toMatchObject({
+      includePolicy: "when_relevant",
+      title: "Updated Architecture Seed",
+    });
+
+    const rows = await service.db
+      .select()
+      .from(contextIndexEntries)
+      .where(eq(contextIndexEntries.workspaceId, workspace.id));
+    expect(rows).toHaveLength(1);
   });
 
   test("persists raw events", async () => {
