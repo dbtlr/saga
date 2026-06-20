@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { ingestCodexHook } from "./ingest.js";
+import { ingestCodexHook, ingestHook, runIngestCommand } from "./ingest.js";
 
 describe("ingestCodexHook", () => {
   test("returns Codex hook-compatible JSON for record output", async () => {
@@ -109,6 +109,78 @@ describe("ingestCodexHook", () => {
       eventId: "event-id",
       mode: "captured",
       source: "codex",
+    });
+  });
+});
+
+describe("ingestHook", () => {
+  test("returns Claude hook-compatible JSON for record output", async () => {
+    await expect(
+      ingestHook(
+        "claude",
+        {
+          ascii: true,
+          color: "never",
+          format: "records",
+          isTty: false,
+        },
+        {
+          capture: async () => ({
+            accepted: true,
+            eventId: "event-id",
+            mode: "captured",
+            source: "claude",
+          }),
+          stdin: JSON.stringify({ hook_event_name: "Stop", session_id: "session-id" }),
+        },
+      ),
+    ).resolves.toBe(JSON.stringify({ continue: true }));
+  });
+
+  test("returns non-blocking Claude hook JSON when capture is skipped", async () => {
+    await expect(
+      ingestHook(
+        "claude",
+        {
+          ascii: true,
+          color: "never",
+          format: "records",
+          isTty: false,
+        },
+        {
+          capture: async () => ({
+            accepted: true,
+            error: "DATABASE_URL is required",
+            mode: "skipped",
+            source: "claude",
+          }),
+          stdin: "{}",
+        },
+      ),
+    ).resolves.toBe(
+      JSON.stringify({
+        continue: true,
+        systemMessage: "Saga Claude Code capture skipped: DATABASE_URL is required",
+      }),
+    );
+  });
+
+  test("dispatches claude-hook through the ingest command", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "saga-ingest-claude-"));
+    const inputPath = join(dir, "hook.json");
+    writeFileSync(inputPath, JSON.stringify({ cwd: dir, hook_event_name: "Stop" }));
+
+    const output = await runIngestCommand(["claude-hook", inputPath], {
+      ascii: true,
+      color: "never",
+      format: "json",
+      isTty: false,
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      accepted: true,
+      mode: "skipped",
+      source: "claude",
     });
   });
 });

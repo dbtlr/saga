@@ -23,7 +23,7 @@ import {
 
 export type HarnessTarget = "codex" | "claude";
 
-export interface CodexHarnessStatus {
+export interface HarnessStatus {
   binding: "installed" | "missing";
   hookCommand: string;
   hookTrust: "not installed" | "requires review";
@@ -31,8 +31,11 @@ export interface CodexHarnessStatus {
   hooksError?: string;
   hooksPath: string;
   mcp: "deferred";
-  target: "codex";
+  skills: "deferred";
+  target: HarnessTarget;
 }
+
+export type CodexHarnessStatus = HarnessStatus & { target: "codex" };
 
 interface HookCommand {
   command: string;
@@ -46,24 +49,39 @@ interface HookMatcher {
   matcher?: string;
 }
 
-interface CodexHooksFile {
+interface HooksSettingsFile {
   hooks?: Record<string, HookMatcher[]>;
 }
 
-interface CodexHooksParseError {
+interface HooksSettingsParseError {
   message: string;
   path: string;
+  target: HarnessTarget;
 }
 
-type CodexHooksReadResult =
-  | { file: CodexHooksFile; ok: true }
-  | { error: CodexHooksParseError; ok: false };
+type HooksSettingsReadResult =
+  | { file: HooksSettingsFile; ok: true }
+  | { error: HooksSettingsParseError; ok: false };
 
-const CODEX_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
+const HARNESS_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
+const LEGACY_HOOK_COMMANDS = {
+  claude: "saga ingest claude-hook",
+  codex: "saga ingest codex-hook",
+} as const;
 const LEGACY_CODEX_HOOK_COMMAND = "saga ingest codex-hook";
-const CODEX_HOOK_SCRIPT = "saga-codex-hook.sh";
-const CODEX_SOURCE_URI = "codex://local";
-const CODEX_HOOK_TIMEOUT_SECONDS = 30;
+const HOOK_SCRIPTS = {
+  claude: "saga-claude-hook.sh",
+  codex: "saga-codex-hook.sh",
+} as const;
+const SOURCE_URIS = {
+  claude: "claude://local",
+  codex: "codex://local",
+} as const;
+const SOURCE_DISPLAY_NAMES = {
+  claude: "Claude Code",
+  codex: "Codex",
+} as const;
+const HOOK_TIMEOUT_SECONDS = 30;
 
 export async function runHarnessCommand(
   args: readonly string[],
@@ -92,73 +110,69 @@ export async function runHarnessCommand(
 
 export async function installHarness(input: {
   cwd?: string;
+  registerClaudeSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
   registerCodexSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
   target: HarnessTarget;
-}): Promise<CodexHarnessStatus> {
-  assertCodexTarget(input.target);
+}): Promise<HarnessStatus> {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
     throw new Error(`run saga init before installing the ${input.target} harness`);
   }
 
-  const codexSourceBinding = await (input.registerCodexSource ?? registerCodexSourceBinding)(
+  const hooksPath = harnessHooksPath(projectRoot, input.target);
+  const hookCommand = hookShimCommand(projectRoot, input.target);
+  const hooksFile = readHooksSettingsFile(hooksPath, input.target);
+  const sourceBinding = await registerHarnessSourceBinding(input)(
     projectRoot,
     binding.workspace.id,
   );
-  const hooksPath = codexHooksPath(projectRoot);
-  const hookCommand = codexHookShimCommand(projectRoot);
-  const hooksFile = readCodexHooksFile(hooksPath);
 
   const installedAt = new Date().toISOString();
   const nextBinding: WorkspaceBindingFile = {
     ...binding,
     harnesses: {
       ...binding.harnesses,
-      codex: {
+      [input.target]: {
         hookCommand,
         hookTrust: "requires-review",
         hooksPath,
         installedAt,
-        sourceBindingId: codexSourceBinding.id,
-        sourceUri: CODEX_SOURCE_URI,
-        target: "codex",
+        sourceBindingId: sourceBinding.id,
+        sourceUri: SOURCE_URIS[input.target],
+        target: input.target,
       },
     },
   };
 
   writeBindingFile(projectRoot, nextBinding);
   try {
-    ensureGitignoreEntry(projectRoot, ".codex/");
-    installCodexHookShim(projectRoot);
-    writeJsonFile(hooksPath, installSagaCodexHooks(hooksFile, hookCommand));
+    ensureGitignoreEntry(projectRoot, gitignoreEntriesForTarget(input.target));
+    installHookShim(projectRoot, input.target);
+    writeJsonFile(hooksPath, installSagaHooks(hooksFile, hookCommand));
   } catch (error) {
     writeBindingFile(projectRoot, binding);
     throw error;
   }
 
-  return inspectCodexHarness(projectRoot);
+  return inspectHarness({ cwd: projectRoot, target: input.target });
 }
 
-export function uninstallHarness(input: {
-  cwd?: string;
-  target: HarnessTarget;
-}): CodexHarnessStatus {
-  assertCodexTarget(input.target);
+export function uninstallHarness(input: { cwd?: string; target: HarnessTarget }): HarnessStatus {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
-  const hooksPath = codexHooksPath(projectRoot);
+  const hooksPath = harnessHooksPath(projectRoot, input.target);
 
   if (existsSync(hooksPath)) {
-    const hooksFile = readCodexHooksFile(hooksPath);
+    const hooksFile = readHooksSettingsFile(hooksPath, input.target);
     writeJsonFile(
       hooksPath,
-      uninstallSagaCodexHooks(hooksFile, binding?.harnesses?.codex?.hookCommand),
+      uninstallSagaHooks(hooksFile, binding?.harnesses?.[input.target]?.hookCommand, input.target),
     );
   }
 
   if (binding !== undefined) {
-    const { codex: _codex, ...restHarnesses } = binding.harnesses ?? {};
+    const { [input.target]: _target, ...restHarnesses } = binding.harnesses ?? {};
     const { harnesses: _harnesses, ...bindingWithoutHarnesses } = binding;
     const nextBinding = {
       ...bindingWithoutHarnesses,
@@ -167,49 +181,47 @@ export function uninstallHarness(input: {
     writeBindingFile(projectRoot, nextBinding);
   }
 
-  return inspectCodexHarness(projectRoot);
+  return inspectHarness({ cwd: projectRoot, target: input.target });
 }
 
-export function inspectHarness(input: { cwd?: string; target: HarnessTarget }): CodexHarnessStatus {
-  assertCodexTarget(input.target);
-  return inspectCodexHarness(findProjectRoot(input.cwd ?? process.cwd()));
+export function inspectHarness(input: { cwd?: string; target: HarnessTarget }): HarnessStatus {
+  return inspectTargetHarness(findProjectRoot(input.cwd ?? process.cwd()), input.target);
 }
 
-function inspectCodexHarness(projectRoot: string): CodexHarnessStatus {
-  const hooksPath = codexHooksPath(projectRoot);
+function inspectTargetHarness(projectRoot: string, target: HarnessTarget): HarnessStatus {
+  const hooksPath = harnessHooksPath(projectRoot, target);
   const binding = readBindingFile(projectRoot);
-  const hookCommand = binding?.harnesses?.codex?.hookCommand ?? codexHookShimCommand(projectRoot);
-  const hooksFile = tryReadCodexHooksFile(hooksPath);
+  const hookCommand =
+    binding?.harnesses?.[target]?.hookCommand ?? hookShimCommand(projectRoot, target);
+  const hooksFile = tryReadHooksSettingsFile(hooksPath, target);
   if (!hooksFile.ok) {
     return {
-      binding: binding?.harnesses?.codex === undefined ? "missing" : "installed",
+      binding: binding?.harnesses?.[target] === undefined ? "missing" : "installed",
       hookCommand,
       hooks: "invalid",
-      hooksError: formatCodexHooksParseError(hooksFile.error),
+      hooksError: formatHooksSettingsParseError(hooksFile.error),
       hookTrust: "not installed",
       hooksPath,
       mcp: "deferred",
-      target: "codex",
+      skills: "deferred",
+      target,
     };
   }
 
-  const hooksInstalled = hasSagaCodexHooks(hooksFile.file, hookCommand);
+  const hooksInstalled = hasSagaHooks(hooksFile.file, hookCommand);
   return {
-    binding: binding?.harnesses?.codex === undefined ? "missing" : "installed",
+    binding: binding?.harnesses?.[target] === undefined ? "missing" : "installed",
     hookCommand,
     hookTrust: hooksInstalled ? "requires review" : "not installed",
     hooks: hooksInstalled ? "installed" : "missing",
     hooksPath,
     mcp: "deferred",
-    target: "codex",
+    skills: "deferred",
+    target,
   };
 }
 
-function formatHarnessResult(
-  title: string,
-  status: CodexHarnessStatus,
-  options: RenderOptions,
-): string {
+function formatHarnessResult(title: string, status: HarnessStatus, options: RenderOptions): string {
   return formatCommandOutput(
     {
       id: status.target,
@@ -226,6 +238,7 @@ function formatHarnessResult(
           { label: "hooks path", value: status.hooksPath },
           { label: "hook command", value: status.hookCommand },
           { label: "mcp", value: "deferred until saga mcp is implemented" },
+          { label: "skills", value: "deferred until Saga skills are packaged" },
         ],
         options,
       ),
@@ -241,37 +254,58 @@ function parseTarget(value: string | undefined): HarnessTarget {
   throw new Error(`unsupported harness target: ${value}`);
 }
 
-function assertCodexTarget(target: HarnessTarget): asserts target is "codex" {
-  if (target !== "codex") {
-    throw new Error(`harness ${target} is not implemented yet`);
-  }
-}
-
-function codexHooksPath(projectRoot: string): string {
+function harnessHooksPath(projectRoot: string, target: HarnessTarget): string {
+  if (target === "claude") return join(projectRoot, ".claude", "settings.local.json");
   return join(projectRoot, ".codex", "hooks.json");
 }
 
-function codexHookShimPath(projectRoot: string): string {
-  return join(projectRoot, ".codex", CODEX_HOOK_SCRIPT);
+function hookShimPath(projectRoot: string, target: HarnessTarget): string {
+  return join(projectRoot, target === "claude" ? ".claude" : ".codex", HOOK_SCRIPTS[target]);
 }
 
-function codexHookShimCommand(projectRoot: string): string {
-  return quoteShellArg(codexHookShimPath(projectRoot));
+function hookShimCommand(projectRoot: string, target: HarnessTarget): string {
+  return quoteShellArg(hookShimPath(projectRoot, target));
 }
 
-function installCodexHookShim(projectRoot: string): string {
-  const shimPath = codexHookShimPath(projectRoot);
+function installHookShim(projectRoot: string, target: HarnessTarget): string {
+  const shimPath = hookShimPath(projectRoot, target);
   const cliPath = fileURLToPath(new URL("../bin/saga.js", import.meta.url));
   mkdirSync(dirname(shimPath), { recursive: true });
   writeFileSync(
     shimPath,
-    ["#!/bin/sh", `exec ${quoteShellArg(cliPath)} ingest codex-hook "$@"`, ""].join("\n"),
+    ["#!/bin/sh", `exec ${quoteShellArg(cliPath)} ingest ${target}-hook "$@"`, ""].join("\n"),
   );
   chmodSync(shimPath, 0o755);
   return quoteShellArg(shimPath);
 }
 
+function gitignoreEntriesForTarget(target: HarnessTarget): string[] {
+  if (target === "claude") return [".claude/settings.local.json", ".claude/saga-claude-hook.sh"];
+  return [".codex/"];
+}
+
+function registerHarnessSourceBinding(input: {
+  registerClaudeSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
+  registerCodexSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
+  target: HarnessTarget;
+}): (projectRoot: string, workspaceId: string) => Promise<{ id: string }> {
+  if (input.target === "claude") return input.registerClaudeSource ?? registerClaudeSourceBinding;
+  return input.registerCodexSource ?? registerCodexSourceBinding;
+}
+
+async function registerClaudeSourceBinding(projectRoot: string, workspaceId: string) {
+  return registerAgentSourceBinding(projectRoot, workspaceId, "claude");
+}
+
 async function registerCodexSourceBinding(projectRoot: string, workspaceId: string) {
+  return registerAgentSourceBinding(projectRoot, workspaceId, "codex");
+}
+
+async function registerAgentSourceBinding(
+  projectRoot: string,
+  workspaceId: string,
+  target: HarnessTarget,
+) {
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
@@ -281,9 +315,9 @@ async function registerCodexSourceBinding(projectRoot: string, workspaceId: stri
         config: {
           projectRoot,
         },
-        displayName: "Codex",
-        sourceType: "codex",
-        sourceUri: CODEX_SOURCE_URI,
+        displayName: SOURCE_DISPLAY_NAMES[target],
+        sourceType: target,
+        sourceUri: SOURCE_URIS[target],
         workspaceId,
       }),
     );
@@ -292,37 +326,39 @@ async function registerCodexSourceBinding(projectRoot: string, workspaceId: stri
   }
 }
 
-function readCodexHooksFile(path: string): CodexHooksFile {
-  const result = tryReadCodexHooksFile(path);
+function readHooksSettingsFile(path: string, target: HarnessTarget): HooksSettingsFile {
+  const result = tryReadHooksSettingsFile(path, target);
   if (result.ok) return result.file;
-  throw new Error(formatCodexHooksParseError(result.error));
+  throw new Error(formatHooksSettingsParseError(result.error));
 }
 
-function tryReadCodexHooksFile(path: string): CodexHooksReadResult {
+function tryReadHooksSettingsFile(path: string, target: HarnessTarget): HooksSettingsReadResult {
   if (!existsSync(path)) return { file: {}, ok: true };
   try {
-    return { file: parseCodexHooksFile(JSON.parse(readFileSync(path, "utf8"))), ok: true };
+    return { file: parseHooksSettingsFile(JSON.parse(readFileSync(path, "utf8"))), ok: true };
   } catch (error) {
     return {
       error: {
         message: error instanceof Error ? error.message : String(error),
         path,
+        target,
       },
       ok: false,
     };
   }
 }
 
-function formatCodexHooksParseError(error: CodexHooksParseError): string {
-  return `invalid Codex hooks file ${error.path}: ${error.message}`;
+function formatHooksSettingsParseError(error: HooksSettingsParseError): string {
+  const label = error.target === "claude" ? "Claude settings file" : "Codex hooks file";
+  return `invalid ${label} ${error.path}: ${error.message}`;
 }
 
-function parseCodexHooksFile(value: unknown): CodexHooksFile {
+function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
   if (!isRecord(value)) {
     throw new Error("expected a JSON object");
   }
 
-  if (value.hooks === undefined) return value as CodexHooksFile;
+  if (value.hooks === undefined) return value as HooksSettingsFile;
   if (!isRecord(value.hooks)) {
     throw new Error("expected hooks to be an object");
   }
@@ -348,7 +384,7 @@ function parseCodexHooksFile(value: unknown): CodexHooksFile {
             `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}] to be an object`,
           );
         }
-        if (typeof hook.command !== "string") {
+        if (hook.command !== undefined && typeof hook.command !== "string") {
           throw new Error(
             `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}].command to be a string`,
           );
@@ -357,7 +393,7 @@ function parseCodexHooksFile(value: unknown): CodexHooksFile {
     }
   }
 
-  return value as CodexHooksFile;
+  return value as HooksSettingsFile;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -376,27 +412,28 @@ function writeJsonFile(path: string, value: unknown): void {
   }
 }
 
-function ensureGitignoreEntry(projectRoot: string, entry: string): void {
+function ensureGitignoreEntry(projectRoot: string, entries: readonly string[]): void {
   const gitignorePath = join(projectRoot, ".gitignore");
   const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
   const lines = existing.split(/\r?\n/).filter((line) => line.length > 0);
-  if (lines.includes(entry)) return;
+  const missingEntries = entries.filter((entry) => !lines.includes(entry));
+  if (missingEntries.length === 0) return;
 
   const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  writeFileSync(gitignorePath, `${existing}${prefix}${entry}\n`);
+  writeFileSync(gitignorePath, `${existing}${prefix}${missingEntries.join("\n")}\n`);
 }
 
-function installSagaCodexHooks(file: CodexHooksFile, hookCommand: string): CodexHooksFile {
+function installSagaHooks(file: HooksSettingsFile, hookCommand: string): HooksSettingsFile {
   const hooks = { ...file.hooks };
-  for (const event of CODEX_HOOK_EVENTS) {
-    const matchers = withoutSagaCodexHooks(hooks[event] ?? []);
+  for (const event of HARNESS_HOOK_EVENTS) {
+    const matchers = withoutSagaHooks(hooks[event] ?? []);
     matchers.push({
       ...(event === "SessionStart" ? { matcher: "startup|resume|clear|compact" } : {}),
       hooks: [
         {
           command: hookCommand,
           statusMessage: "Syncing Saga workspace memory",
-          timeout: CODEX_HOOK_TIMEOUT_SECONDS,
+          timeout: HOOK_TIMEOUT_SECONDS,
           type: "command",
         },
       ],
@@ -406,13 +443,14 @@ function installSagaCodexHooks(file: CodexHooksFile, hookCommand: string): Codex
   return { ...file, hooks };
 }
 
-function uninstallSagaCodexHooks(
-  file: CodexHooksFile,
+function uninstallSagaHooks(
+  file: HooksSettingsFile,
   hookCommand: string | undefined,
-): CodexHooksFile {
+  target: HarnessTarget,
+): HooksSettingsFile {
   const hooks = { ...file.hooks };
-  for (const event of CODEX_HOOK_EVENTS) {
-    const matchers = withoutSagaCodexHooks(hooks[event] ?? [], hookCommand);
+  for (const event of HARNESS_HOOK_EVENTS) {
+    const matchers = withoutSagaHooks(hooks[event] ?? [], hookCommand, target);
     if (matchers.length === 0) {
       delete hooks[event];
     } else {
@@ -422,31 +460,54 @@ function uninstallSagaCodexHooks(
   return { ...file, hooks };
 }
 
-function hasSagaCodexHooks(file: CodexHooksFile, hookCommand: string): boolean {
-  return CODEX_HOOK_EVENTS.every((event) =>
+function hasSagaHooks(file: HooksSettingsFile, hookCommand: string): boolean {
+  return HARNESS_HOOK_EVENTS.every((event) =>
     (file.hooks?.[event] ?? []).some((matcher) =>
       (matcher.hooks ?? []).some((hook) => hook.command === hookCommand),
     ),
   );
 }
 
-function withoutSagaCodexHooks(
+function withoutSagaHooks(
   matchers: readonly HookMatcher[],
   hookCommand?: string,
+  target?: HarnessTarget,
 ): HookMatcher[] {
+  const legacyCommands: readonly string[] =
+    target === undefined ? Object.values(LEGACY_HOOK_COMMANDS) : [LEGACY_HOOK_COMMANDS[target]];
+  const hookScripts: readonly string[] =
+    target === undefined ? Object.values(HOOK_SCRIPTS) : [HOOK_SCRIPTS[target]];
   return matchers
-    .map((matcher) => ({
-      ...matcher,
-      hooks: (matcher.hooks ?? []).filter(
-        (hook) =>
-          hook.command !== hookCommand &&
-          hook.command !== LEGACY_CODEX_HOOK_COMMAND &&
-          !hook.command.endsWith(`/.codex/${CODEX_HOOK_SCRIPT}`) &&
-          !hook.command.endsWith(`/.codex/${CODEX_HOOK_SCRIPT}'`) &&
-          !hook.command.endsWith(`/.codex/${CODEX_HOOK_SCRIPT}"`),
-      ),
-    }))
+    .map((matcher) => {
+      if (matcher.hooks === undefined) return matcher;
+      return {
+        ...matcher,
+        hooks: matcher.hooks.filter(
+          (hook) => !isSagaHookCommand(hook, hookCommand, legacyCommands, hookScripts),
+        ),
+      };
+    })
     .filter((matcher) => (matcher.hooks ?? []).length > 0);
+}
+
+function isSagaHookCommand(
+  hook: HookCommand,
+  hookCommand: string | undefined,
+  legacyCommands: readonly string[],
+  hookScripts: readonly string[],
+): boolean {
+  if (typeof hook.command !== "string") return false;
+  return (
+    hook.command === hookCommand ||
+    hook.command === LEGACY_CODEX_HOOK_COMMAND ||
+    legacyCommands.includes(hook.command) ||
+    hookScripts.some(
+      (script) =>
+        hook.command.endsWith(`/${script}`) ||
+        hook.command.endsWith(`/${script}'`) ||
+        hook.command.endsWith(`/${script}"`),
+    )
+  );
 }
 
 function quoteShellArg(value: string): string {

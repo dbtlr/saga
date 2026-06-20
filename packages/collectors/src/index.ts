@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import type { RawEventEnvelope } from "@saga/contracts";
 
 export const packageName = "@saga/collectors";
 
-export interface CodexHookInput {
+export type HarnessSource = "claude" | "codex";
+
+export interface HarnessHookInput {
   cwd?: string | undefined;
   hook_event_name?: string | undefined;
   model?: string | undefined;
@@ -14,8 +17,11 @@ export interface CodexHookInput {
   [key: string]: unknown;
 }
 
-export interface CodexWorkspaceBinding {
-  codexSourceBinding: {
+export type CodexHookInput = HarnessHookInput;
+export type ClaudeHookInput = HarnessHookInput;
+
+export interface HarnessWorkspaceBinding {
+  sourceBinding: {
     id: string;
   };
   workspace: {
@@ -25,14 +31,46 @@ export interface CodexWorkspaceBinding {
 
 export function rawEventFromCodexHook(
   input: CodexHookInput,
-  binding: CodexWorkspaceBinding,
+  binding: {
+    codexSourceBinding: {
+      id: string;
+    };
+    workspace: {
+      id: string;
+    };
+  },
+  now = new Date(),
+): RawEventEnvelope {
+  return rawEventFromHarnessHook(
+    input,
+    {
+      sourceBinding: binding.codexSourceBinding,
+      workspace: binding.workspace,
+    },
+    "codex",
+    now,
+  );
+}
+
+export function rawEventFromClaudeHook(
+  input: ClaudeHookInput,
+  binding: HarnessWorkspaceBinding,
+  now = new Date(),
+): RawEventEnvelope {
+  return rawEventFromHarnessHook(input, binding, "claude", now);
+}
+
+export function rawEventFromHarnessHook(
+  input: HarnessHookInput,
+  binding: HarnessWorkspaceBinding,
+  source: HarnessSource,
   now = new Date(),
 ): RawEventEnvelope {
   const hookEventName = normalizeHookEventName(input.hook_event_name);
   return {
-    actorId: "codex",
-    eventType: `codex.${hookEventName}`,
-    externalEventId: codexExternalEventId(input, hookEventName),
+    actorId: source,
+    eventType: `${source}.${hookEventName}`,
+    externalEventId: harnessExternalEventId(input, hookEventName, source),
     occurredAt: now.toISOString(),
     payload: { ...input },
     provenance: {
@@ -43,9 +81,9 @@ export function rawEventFromCodexHook(
       transcriptPath: input.transcript_path,
     },
     sessionId: input.session_id,
-    sourceBindingId: binding.codexSourceBinding.id,
-    sourceId: "codex:local",
-    sourceType: "codex",
+    sourceBindingId: binding.sourceBinding.id,
+    sourceId: `${source}:local`,
+    sourceType: source,
     traceId: input.turn_id,
     trustLevel: "raw",
     workspaceId: binding.workspace.id,
@@ -57,20 +95,67 @@ function normalizeHookEventName(value: string | undefined): string {
   return normalized === undefined || normalized === "" ? "unknown" : normalized;
 }
 
-function codexExternalEventId(input: CodexHookInput, hookEventName: string): string {
+function harnessExternalEventId(
+  input: HarnessHookInput,
+  hookEventName: string,
+  source: HarnessSource,
+): string {
   const stableParts = [
-    "codex",
+    source,
     hookEventName,
     input.session_id ?? "",
-    input.turn_id ?? "",
+    input.turn_id ?? transcriptOccurrenceKey(input, source),
     input.transcript_path ?? "",
     stablePayloadHash(input),
   ];
   return stableParts.join(":");
 }
 
-function stablePayloadHash(input: CodexHookInput): string {
+function transcriptOccurrenceKey(input: HarnessHookInput, source: HarnessSource): string {
+  if (source !== "claude" || typeof input.transcript_path !== "string") return "";
+  if (!existsSync(input.transcript_path)) return "";
+
+  const transcript = readFileSync(input.transcript_path, "utf8");
+  const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
+  const sessionId = input.session_id;
+  const occurrences = transcript
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .filter((line) => {
+      try {
+        const entry = JSON.parse(line) as unknown;
+        return (
+          isRecord(entry) &&
+          entry.session_id === sessionId &&
+          entry.type === "user" &&
+          (prompt === undefined || transcriptEntryText(entry) === prompt)
+        );
+      } catch {
+        return false;
+      }
+    }).length;
+
+  return occurrences === 0 ? "" : `transcript-${occurrences.toString()}`;
+}
+
+function transcriptEntryText(entry: Record<string, unknown>): string | undefined {
+  if (typeof entry.text === "string") return entry.text;
+  const message = entry.message;
+  if (!isRecord(message)) return undefined;
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  return content
+    .map((item) => (isRecord(item) && typeof item.text === "string" ? item.text : ""))
+    .join("");
+}
+
+function stablePayloadHash(input: HarnessHookInput): string {
   return createHash("sha256").update(stableJson(input)).digest("hex");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stableJson(value: unknown): string {

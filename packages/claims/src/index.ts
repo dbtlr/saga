@@ -117,7 +117,7 @@ export function candidateClaimKey(claim: CandidateClaim): string {
 }
 
 function promptFromRawEvent(event: ClaimExtractionRawEvent): string | undefined {
-  if (event.eventType !== "codex.UserPromptSubmit") return undefined;
+  if (!event.eventType.endsWith(".UserPromptSubmit")) return undefined;
   const prompt = event.payload.prompt;
   return typeof prompt === "string" && prompt.trim() !== "" ? prompt : undefined;
 }

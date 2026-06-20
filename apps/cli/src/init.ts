@@ -23,6 +23,15 @@ export interface InitResult {
 
 export interface WorkspaceBindingFile {
   harnesses?: {
+    claude?: {
+      hookCommand: string;
+      hookTrust: "requires-review";
+      hooksPath: string;
+      installedAt: string;
+      sourceBindingId: string;
+      sourceUri: "claude://local";
+      target: "claude";
+    };
     codex?: {
       hookCommand: string;
       hookTrust: "requires-review";

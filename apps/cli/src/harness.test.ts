@@ -61,6 +61,44 @@ describe("installHarness", () => {
     expect(commandCheck.status).toBe(0);
   });
 
+  test("installs Claude Code hooks and records local harness state", async () => {
+    const projectRoot = boundProject();
+
+    const status = await installHarness({
+      cwd: projectRoot,
+      registerClaudeSource: async () => ({ id: "claude-source-id" }),
+      target: "claude",
+    });
+
+    expect(status.binding).toBe("installed");
+    expect(status.hooks).toBe("installed");
+    expect(status.hookTrust).toBe("requires review");
+    expect(status.hooksPath).toBe(join(projectRoot, ".claude", "settings.local.json"));
+    expect(status.skills).toBe("deferred");
+    const binding = readBindingFile(projectRoot);
+    expect(binding?.harnesses?.claude?.sourceBindingId).toBe("claude-source-id");
+    expect(binding?.harnesses?.claude?.sourceUri).toBe("claude://local");
+    expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(
+      ".claude/settings.local.json\n",
+    );
+    expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(
+      ".claude/saga-claude-hook.sh\n",
+    );
+
+    const settings = JSON.parse(readFileSync(status.hooksPath, "utf8")) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+    expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(settings.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+
+    const commandCheck = spawnSync("/bin/sh", [
+      "-n",
+      join(projectRoot, ".claude", "saga-claude-hook.sh"),
+    ]);
+    expect(commandCheck.status).toBe(0);
+  });
+
   test("preserves non-Saga Codex hooks", async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
@@ -93,19 +131,83 @@ describe("installHarness", () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
+  test("preserves non-Saga Claude hooks", async () => {
+    const projectRoot = boundProject();
+    const settingsPath = join(projectRoot, ".claude", "settings.local.json");
+    mkdirSync(join(projectRoot, ".claude"));
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [{ command: "echo keep", type: "command" }],
+            },
+          ],
+        },
+      })}\n`,
+    );
+
+    await installHarness({
+      cwd: projectRoot,
+      registerClaudeSource: async () => ({ id: "claude-source-id" }),
+      target: "claude",
+    });
+    uninstallHarness({ cwd: projectRoot, target: "claude" });
+
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      hooks: { Stop?: Array<{ hooks: Array<{ command: string }> }> };
+    };
+    expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toBe("echo keep");
+    expect(inspectHarness({ cwd: projectRoot, target: "claude" }).hooks).toBe("missing");
+    expect(readBindingFile(projectRoot)?.harnesses?.claude).toBeUndefined();
+  });
+
+  test("preserves valid non-command Claude hooks", async () => {
+    const projectRoot = boundProject();
+    const settingsPath = join(projectRoot, ".claude", "settings.local.json");
+    mkdirSync(join(projectRoot, ".claude"));
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                { prompt: "Summarize the session", type: "prompt" },
+                { server: "memory", tool: "store", type: "mcp_tool" },
+                { prompt: "Inspect this event", type: "agent" },
+                { type: "http", url: "https://example.invalid/hook" },
+              ],
+            },
+          ],
+        },
+      })}\n`,
+    );
+
+    await installHarness({
+      cwd: projectRoot,
+      registerClaudeSource: async () => ({ id: "claude-source-id" }),
+      target: "claude",
+    });
+    uninstallHarness({ cwd: projectRoot, target: "claude" });
+
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      hooks: { Stop?: Array<{ hooks: Array<{ type: string }> }> };
+    };
+    expect(settings.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toEqual([
+      "prompt",
+      "mcp_tool",
+      "agent",
+      "http",
+    ]);
+  });
+
   test("requires saga init first", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "saga-harness-missing-"));
 
     await expect(installHarness({ cwd: projectRoot, target: "codex" })).rejects.toThrow(
       "run saga init before installing the codex harness",
-    );
-  });
-
-  test("rejects unsupported targets", async () => {
-    const projectRoot = boundProject();
-
-    await expect(installHarness({ cwd: projectRoot, target: "claude" })).rejects.toThrow(
-      "harness claude is not implemented yet",
     );
   });
 
@@ -178,6 +280,30 @@ describe("installHarness", () => {
 
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
+
+  test("validates hook settings before registering source bindings", async () => {
+    const projectRoot = boundProject();
+    const settingsPath = join(projectRoot, ".claude", "settings.local.json");
+    mkdirSync(join(projectRoot, ".claude"));
+    writeFileSync(settingsPath, JSON.stringify({ hooks: { Stop: {} } }));
+    let registered = false;
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerClaudeSource: async () => {
+          registered = true;
+          return { id: "claude-source-id" };
+        },
+        target: "claude",
+      }),
+    ).rejects.toThrow(
+      `invalid Claude settings file ${settingsPath}: expected hooks.Stop to be an array`,
+    );
+
+    expect(registered).toBe(false);
+    expect(readBindingFile(projectRoot)?.harnesses?.claude).toBeUndefined();
+  });
 });
 
 describe("inspectHarness", () => {
@@ -221,14 +347,28 @@ describe("uninstallHarness", () => {
     );
   });
 
-  test("reports shape-invalid Codex hooks config with path", () => {
+  test("preserves non-command Codex hooks", () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
     mkdirSync(join(projectRoot, ".codex"));
-    writeFileSync(hooksPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{}] }] } }));
-
-    expect(() => uninstallHarness({ cwd: projectRoot, target: "codex" })).toThrow(
-      `invalid Codex hooks file ${hooksPath}: expected hooks.Stop[0].hooks[0].command to be a string`,
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [{ prompt: "Summarize the session", type: "prompt" }],
+            },
+          ],
+        },
+      }),
     );
+
+    uninstallHarness({ cwd: projectRoot, target: "codex" });
+
+    const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
+      hooks: { Stop?: Array<{ hooks: Array<{ type: string }> }> };
+    };
+    expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toEqual(["prompt"]);
   });
 });

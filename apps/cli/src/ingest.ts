@@ -1,6 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extractCandidateClaimsFromRawEvents } from "@saga/claims";
-import { rawEventFromCodexHook, type CodexHookInput } from "@saga/collectors";
+import {
+  rawEventFromClaudeHook,
+  rawEventFromCodexHook,
+  type ClaudeHookInput,
+  type CodexHookInput,
+  type HarnessHookInput,
+  type HarnessSource,
+} from "@saga/collectors";
 import {
   insertExtractedCandidateClaims,
   insertRawEvent,
@@ -15,17 +22,20 @@ import { findProjectRoot, readBindingFile } from "./init.js";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
 
-export interface CodexHookIngestResult {
+export interface HookIngestResult {
   accepted: boolean;
   claimsProjected?: number | undefined;
   error?: string | undefined;
   eventId?: string | undefined;
   mode: "captured" | "skipped";
-  source: "codex";
+  source: HarnessSource;
 }
 
-export interface IngestCodexHookOptions {
-  capture?: ((input: CodexHookInput) => Promise<CodexHookIngestResult>) | undefined;
+export type CodexHookIngestResult = HookIngestResult & { source: "codex" };
+export type ClaudeHookIngestResult = HookIngestResult & { source: "claude" };
+
+export interface IngestHookOptions {
+  capture?: ((input: HarnessHookInput) => Promise<HookIngestResult>) | undefined;
   inputPath?: string | undefined;
   stdin?: string | undefined;
 }
@@ -41,8 +51,12 @@ export async function runIngestCommand(
   options: RenderOptions,
 ): Promise<string> {
   const subcommand = args[0];
+  if (subcommand === "claude-hook") {
+    return ingestHook("claude", options, { inputPath: args[1] });
+  }
+
   if (subcommand === "codex-hook") {
-    return ingestCodexHook(options, { inputPath: args[1] });
+    return ingestHook("codex", options, { inputPath: args[1] });
   }
 
   if (subcommand === "recent") {
@@ -58,25 +72,36 @@ export async function runIngestCommand(
 
 export async function ingestCodexHook(
   options: RenderOptions,
-  input: IngestCodexHookOptions = {},
+  input: IngestHookOptions = {},
 ): Promise<string> {
-  const hookInput = parseCodexHookInput(await readCodexHookInput(input));
-  const capture = input.capture ?? captureCodexHook;
+  return ingestHook("codex", options, input);
+}
+
+export async function ingestHook(
+  source: HarnessSource,
+  options: RenderOptions,
+  input: IngestHookOptions = {},
+): Promise<string> {
+  const hookInput = parseHookInput(await readHookInput(input));
+  const capture = input.capture ?? ((event) => captureHook(source, event));
   const result = await capture(hookInput);
 
   if (options.format === "records") {
     return JSON.stringify(
       result.error === undefined
         ? { continue: true }
-        : { continue: true, systemMessage: `Saga Codex capture skipped: ${result.error}` },
+        : {
+            continue: true,
+            systemMessage: `Saga ${sourceDisplayName(source)} capture skipped: ${result.error}`,
+          },
     );
   }
 
   return formatCommandOutput(
     {
-      id: "codex",
+      id: source,
       records: recordBlock(
-        "Codex hook ingest",
+        `${sourceDisplayName(source)} hook ingest`,
         [
           { label: "source", value: result.source },
           { label: "mode", value: result.mode },
@@ -171,26 +196,47 @@ export async function ingestClaims(
 }
 
 export async function captureCodexHook(input: CodexHookInput): Promise<CodexHookIngestResult> {
+  return captureHook("codex", input) as Promise<CodexHookIngestResult>;
+}
+
+export async function captureClaudeHook(input: ClaudeHookInput): Promise<ClaudeHookIngestResult> {
+  return captureHook("claude", input) as Promise<ClaudeHookIngestResult>;
+}
+
+export async function captureHook(
+  source: HarnessSource,
+  input: HarnessHookInput,
+): Promise<HookIngestResult> {
   try {
     const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
     const binding = readBindingFile(projectRoot);
     if (binding === undefined) {
       throw new Error("workspace binding is missing; run saga init");
     }
-    const codexSourceBinding = binding.harnesses?.codex;
-    if (codexSourceBinding === undefined) {
-      throw new Error("Codex harness is not installed; run saga harness install codex");
+    const sourceBinding = binding.harnesses?.[source];
+    if (sourceBinding === undefined) {
+      throw new Error(
+        `${sourceDisplayName(source)} harness is not installed; run saga harness install ${source}`,
+      );
     }
 
     const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
     const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
     try {
-      const event = rawEventFromCodexHook(input, {
-        codexSourceBinding: {
-          id: codexSourceBinding.sourceBindingId,
-        },
-        workspace: binding.workspace,
-      });
+      const event =
+        source === "claude"
+          ? rawEventFromClaudeHook(input, {
+              sourceBinding: {
+                id: sourceBinding.sourceBindingId,
+              },
+              workspace: binding.workspace,
+            })
+          : rawEventFromCodexHook(input, {
+              codexSourceBinding: {
+                id: sourceBinding.sourceBindingId,
+              },
+              workspace: binding.workspace,
+            });
       const row = await Effect.runPromise(insertRawEvent(service, event));
       const candidates = extractCandidateClaimsFromRawEvents([row]);
       const projections = await Effect.runPromise(
@@ -201,7 +247,7 @@ export async function captureCodexHook(input: CodexHookInput): Promise<CodexHook
         claimsProjected: projections.length,
         eventId: row.id,
         mode: "captured",
-        source: "codex",
+        source,
       };
     } finally {
       await Effect.runPromise(service.close());
@@ -211,7 +257,7 @@ export async function captureCodexHook(input: CodexHookInput): Promise<CodexHook
       accepted: true,
       error: error instanceof Error ? error.message : String(error),
       mode: "skipped",
-      source: "codex",
+      source,
     };
   }
 }
@@ -236,14 +282,14 @@ function renderClaimIngest(
   );
 }
 
-function parseCodexHookInput(stdin: string): CodexHookInput {
+function parseHookInput(stdin: string): HarnessHookInput {
   const trimmed = stdin.trim();
   if (trimmed === "") return {};
   const parsed = JSON.parse(trimmed) as unknown;
   return isRecord(parsed) ? parsed : { payload: parsed };
 }
 
-async function readCodexHookInput(input: IngestCodexHookOptions): Promise<string> {
+async function readHookInput(input: IngestHookOptions): Promise<string> {
   if (input.stdin !== undefined) return input.stdin;
   if (input.inputPath !== undefined && input.inputPath !== "-") {
     if (!existsSync(input.inputPath)) {
@@ -252,6 +298,11 @@ async function readCodexHookInput(input: IngestCodexHookOptions): Promise<string
     return readFileSync(input.inputPath, "utf8");
   }
   return readStdin();
+}
+
+function sourceDisplayName(source: HarnessSource): string {
+  if (source === "claude") return "Claude Code";
+  return "Codex";
 }
 
 function parseLimit(value: string | undefined): number | undefined {

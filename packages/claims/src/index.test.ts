@@ -56,7 +56,28 @@ describe("extractCandidateClaimsFromRawEvents", () => {
     expect(claims.map((claim) => claim.kind)).toEqual(["preference", "follow_up"]);
   });
 
-  test("ignores events without Codex user prompts", () => {
+  test("extracts deterministic candidates from Claude user prompts", () => {
+    const [claim] = extractCandidateClaimsFromRawEvents([
+      rawEvent({
+        eventType: "claude.UserPromptSubmit",
+        externalEventId: "claude:UserPromptSubmit:session::transcript:hash",
+        sourceId: "claude:local",
+        sourceType: "claude",
+        traceId: undefined,
+      }),
+    ]);
+
+    expect(claim).toMatchObject({
+      evidence: {
+        eventType: "claude.UserPromptSubmit",
+        sourceId: "claude:local",
+        sourceType: "claude",
+      },
+      text: "We should compile Active Context from claims before MCP exposes it.",
+    });
+  });
+
+  test("ignores events without user prompts", () => {
     expect(
       extractCandidateClaimsFromRawEvents([
         rawEvent({
