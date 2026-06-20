@@ -104,7 +104,9 @@ function ClaimReviewItem({
   const review = useServerFn(reviewClaim);
   const [isPending, startTransition] = useTransition();
 
-  function runReview(action: "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch") {
+  function runReview(
+    action: "accept" | "pin" | "promote" | "reject" | "unpin" | "unwatch" | "watch",
+  ) {
     if (!canEdit) return;
     startTransition(async () => {
       await review({
@@ -124,6 +126,9 @@ function ClaimReviewItem({
         <small>
           {claim.state} · {claim.kind} · {Math.round(claim.confidence * 100).toString()}%
         </small>
+        {claim.promoted ? (
+          <small>{claim.promotionTitle === undefined ? "Promoted" : claim.promotionTitle}</small>
+        ) : null}
       </div>
       <div className="claim-review-actions">
         <button
@@ -140,6 +145,13 @@ function ClaimReviewItem({
           type="button"
         >
           Reject
+        </button>
+        <button
+          disabled={!canEdit || isPending || claim.promoted || claim.state === "rejected"}
+          onClick={() => runReview("promote")}
+          type="button"
+        >
+          Promote
         </button>
       </div>
       <div className="claim-review-flags">

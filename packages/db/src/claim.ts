@@ -26,6 +26,7 @@ export type ClaimEventType =
   | "extracted"
   | "merged"
   | "pinned"
+  | "promoted"
   | "rejected"
   | "split"
   | "supported"
@@ -101,6 +102,14 @@ export interface InsertClaimMaintenanceEventInput {
   occurredAt?: Date | string | undefined;
   reason?: string | undefined;
   targetClaimKeys?: readonly string[] | undefined;
+  workspaceId: string;
+}
+
+export interface InsertClaimPromotionEventInput {
+  actorId?: string | undefined;
+  claimKey: string;
+  occurredAt?: Date | string | undefined;
+  title?: string | undefined;
   workspaceId: string;
 }
 
@@ -251,7 +260,9 @@ export function insertClaimEventAndProject(
           where: projectionAdvanceSql(
             state,
             observedAt,
-            isLifecycleReviewEvent(input) || isLifecycleMaintenanceEvent(input),
+            isLifecycleReviewEvent(input) ||
+              isLifecycleMaintenanceEvent(input) ||
+              isPromotionEvent(input),
           ),
         })
         .returning();
@@ -528,6 +539,97 @@ export function insertClaimMaintenanceEventAndProject(
   });
 }
 
+export function insertClaimPromotionEventAndProject(
+  service: DatabaseService,
+  input: InsertClaimPromotionEventInput,
+): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const [claim] = await service.db
+        .select()
+        .from(currentClaims)
+        .where(
+          and(
+            eq(currentClaims.workspaceId, input.workspaceId),
+            eq(currentClaims.claimKey, input.claimKey),
+          ),
+        )
+        .limit(1);
+
+      if (claim === undefined) {
+        throw new ClaimProjectionError({ message: "claim is not available for promotion" });
+      }
+
+      const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
+      if (Number.isNaN(occurredAt.getTime())) {
+        throw new ClaimProjectionError({
+          message: "claim promotion occurredAt must be an ISO timestamp",
+        });
+      }
+
+      const sourceBinding = await ensureControlPlaneSourceBinding(service, input.workspaceId);
+      const title = promotionTitle(input.title, claim.claimText);
+      const externalEventId = [
+        "saga",
+        "claim-promotion",
+        input.claimKey,
+        occurredAt.toISOString(),
+        randomUUID(),
+      ].join(":");
+      const rawEvent = await Effect.runPromise(
+        insertRawEvent(service, {
+          actorId: input.actorId ?? "control-plane",
+          eventType: "saga.claim.promotion",
+          externalEventId,
+          occurredAt: occurredAt.toISOString(),
+          payload: {
+            claimKey: input.claimKey,
+            previousState: claim.state,
+            title,
+          },
+          provenance: {
+            surface: "control-plane",
+          },
+          sourceBindingId: sourceBinding.id,
+          sourceId: "saga:control-plane",
+          sourceType: "saga",
+          trustLevel: "trusted",
+          workspaceId: input.workspaceId,
+        }),
+      );
+      const evidence: ClaimEvidence = {
+        eventType: rawEvent.eventType,
+        externalEventId: rawEvent.externalEventId,
+        occurredAt: rawEvent.occurredAt.toISOString(),
+        quote: `Promoted to decision record: ${title}`,
+        rawEventId: rawEvent.id,
+        sourceId: rawEvent.sourceId,
+        sourceType: rawEvent.sourceType,
+      };
+
+      return await Effect.runPromise(
+        insertClaimEventAndProject(service, {
+          attributes: promotionAttributes(claim.attributes, {
+            promotedAt: occurredAt.toISOString(),
+            title,
+          }),
+          claimKey: claim.claimKey,
+          confidence: claim.confidence,
+          evidence,
+          eventType: "promoted",
+          kind: "decision",
+          text: claim.claimText,
+          workspaceId: input.workspaceId,
+        }),
+      );
+    },
+    catch: (cause) =>
+      cause instanceof ClaimProjectionError
+        ? cause
+        : new ClaimProjectionError({ message: errorMessage(cause) }),
+  });
+}
+
 export function listCurrentClaims(
   service: DatabaseService,
   input: {
@@ -682,7 +784,7 @@ async function readClaimConfidenceStats(
 }
 
 function stateForEventType(eventType: ClaimEventType): ClaimState {
-  if (eventType === "supported") return "supported";
+  if (eventType === "supported" || eventType === "promoted") return "supported";
   if (eventType === "contradicted") return "contradicted";
   if (eventType === "decayed") return "decayed";
   if (eventType === "rejected") return "rejected";
@@ -722,6 +824,10 @@ function isLifecycleReviewEvent(input: InsertClaimEventInput): boolean {
     (input.eventType === "supported" || input.eventType === "rejected") &&
     input.evidence.eventType === "saga.claim.review"
   );
+}
+
+function isPromotionEvent(input: InsertClaimEventInput): boolean {
+  return input.eventType === "promoted" && input.evidence.eventType === "saga.claim.promotion";
 }
 
 function isLifecycleMaintenanceEvent(input: InsertClaimEventInput): boolean {
@@ -764,6 +870,27 @@ function reviewAttributesForEventType(
   if (eventType === "watched") return { ...next, reviewWatched: true };
   if (eventType === "unwatched") return { ...next, reviewWatched: false };
   return next;
+}
+
+function promotionAttributes(
+  attributes: Record<string, unknown>,
+  input: {
+    promotedAt: string;
+    title: string;
+  },
+): Record<string, unknown> {
+  return {
+    ...attributes,
+    adrPromoted: true,
+    adrPromotedAt: input.promotedAt,
+    adrTitle: input.title,
+  };
+}
+
+function promotionTitle(title: string | undefined, claimText: string): string {
+  const normalized = title?.trim();
+  if (normalized !== undefined && normalized !== "") return normalized;
+  return claimText.length <= 72 ? claimText : `${claimText.slice(0, 69)}...`;
 }
 
 function maintenanceAttributesForEventType(
@@ -861,6 +988,7 @@ function contradictionScore(input: ClaimConfidenceInput): number {
 }
 
 function explicitnessScore(input: ClaimConfidenceInput): number {
+  if (input.eventType === "promoted") return 0.12;
   if (input.eventType === "supported" && input.sourceType === "saga") return 0.08;
   if (input.eventType === "extracted" && input.claimKind === "decision") return 0.03;
   if (input.eventType === "extracted" && input.claimKind === "preference") return 0.02;
@@ -868,6 +996,7 @@ function explicitnessScore(input: ClaimConfidenceInput): number {
 }
 
 function humanPromotionScore(input: ClaimConfidenceInput): number {
+  if (input.eventType === "promoted" && input.sourceType === "saga") return 0.2;
   if (input.eventType === "supported" && input.sourceType === "saga") return 0.15;
   if (input.eventType === "rejected" && input.sourceType === "saga") return -0.35;
   return 0;

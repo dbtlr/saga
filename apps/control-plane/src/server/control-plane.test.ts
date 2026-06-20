@@ -61,9 +61,13 @@ describe("claim review attributes", () => {
       readClaimReviewAttributes({
         reviewPinned: true,
         reviewWatched: true,
+        adrPromoted: true,
+        adrTitle: "Use event-backed claim reviews",
       }),
     ).toEqual({
       pinned: true,
+      promoted: true,
+      promotionTitle: "Use event-backed claim reviews",
       watched: true,
     });
   });

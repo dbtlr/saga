@@ -26,4 +26,11 @@ describe("server function validators", () => {
       "action must be a supported claim review action",
     );
   });
+
+  it("accepts claim promotion actions", () => {
+    expect(validateClaimReviewInput({ action: "promote", claimKey: "claim-1" })).toEqual({
+      action: "promote",
+      claimKey: "claim-1",
+    });
+  });
 });

@@ -5,6 +5,7 @@ import postgres from "postgres";
 import {
   insertClaimEventAndProject,
   insertClaimMaintenanceEventAndProject,
+  insertClaimPromotionEventAndProject,
   insertClaimReviewEventAndProject,
   insertExtractedCandidateClaim,
   listActiveContextClaims,
@@ -1142,5 +1143,73 @@ describePostgres("postgres integration", () => {
         "watched",
       ]),
     );
+  });
+
+  test("promotes a current claim into an event-backed decision record", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("promotion");
+    const rawEvent = await insertCodexPromptEvent({
+      prompt: "Observation: Saga should expose claim promotion from the governance UI.",
+      sourceBindingId: sourceBinding.id,
+      turn: "promotion-1",
+      workspaceId: workspace.id,
+    });
+    const projection = await Effect.runPromise(
+      insertExtractedCandidateClaim(service, {
+        attributes: { extractor: "deterministic-v1" },
+        confidence: 0.62,
+        evidence: {
+          eventType: rawEvent.eventType,
+          externalEventId: rawEvent.externalEventId,
+          occurredAt: rawEvent.occurredAt.toISOString(),
+          quote: "Observation: Saga should expose claim promotion from the governance UI.",
+          rawEventId: rawEvent.id,
+          sessionId: rawEvent.sessionId ?? undefined,
+          sourceId: rawEvent.sourceId,
+          sourceType: rawEvent.sourceType,
+          traceId: rawEvent.traceId ?? undefined,
+        },
+        kind: "observation",
+        text: "Saga should expose claim promotion from the governance UI.",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    const promoted = await Effect.runPromise(
+      insertClaimPromotionEventAndProject(service, {
+        claimKey: projection.currentClaim.claimKey,
+        occurredAt: "2026-06-19T21:00:00.000Z",
+        title: "Expose Claim Promotion",
+        workspaceId: workspace.id,
+      }),
+    );
+    const [promotionRawEvent] = await service.db
+      .select()
+      .from(rawEvents)
+      .where(eq(rawEvents.id, promoted.event.rawEventId))
+      .limit(1);
+
+    expect(promoted.event.eventType).toBe("promoted");
+    expect(promoted.event.claimKind).toBe("decision");
+    expect(promoted.event.evidence).toMatchObject({
+      eventType: "saga.claim.promotion",
+      quote: "Promoted to decision record: Expose Claim Promotion",
+    });
+    expect(promoted.currentClaim).toMatchObject({
+      claimKind: "decision",
+      state: "supported",
+    });
+    expect(promoted.currentClaim.confidence).toBeGreaterThan(projection.currentClaim.confidence);
+    expect(promoted.currentClaim.attributes).toMatchObject({
+      adrPromoted: true,
+      adrPromotedAt: "2026-06-19T21:00:00.000Z",
+      adrTitle: "Expose Claim Promotion",
+    });
+    expect(promotionRawEvent).toMatchObject({
+      eventType: "saga.claim.promotion",
+      sourceId: "saga:control-plane",
+      sourceType: "saga",
+      workspaceId: workspace.id,
+    });
   });
 });

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { compileActiveContext, type ActiveContextDocument } from "@saga/active-context";
 import {
   currentClaims,
+  insertClaimPromotionEventAndProject,
   insertClaimReviewEventAndProject,
   listActiveContextClaims,
   listCurrentClaims,
@@ -66,18 +67,22 @@ export interface ControlPlaneClaim {
   key: string;
   kind: string;
   pinned: boolean;
+  promoted: boolean;
+  promotionTitle: string | undefined;
   state: string;
   text: string;
   watched: boolean;
 }
 
 export interface UpdateClaimReviewInput {
-  action: "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch";
+  action: "accept" | "pin" | "promote" | "reject" | "unpin" | "unwatch" | "watch";
   claimKey: string;
 }
 
 interface ClaimReviewAttributes {
   pinned?: boolean | undefined;
+  promoted?: boolean | undefined;
+  promotionTitle?: string | undefined;
   watched?: boolean | undefined;
 }
 
@@ -333,6 +338,16 @@ export async function updateClaimReview(input: UpdateClaimReviewInput): Promise<
       throw new Error("claim is not available for review");
     }
 
+    if (input.action === "promote") {
+      await Effect.runPromise(
+        insertClaimPromotionEventAndProject(service, {
+          claimKey: claim.claimKey,
+          workspaceId: binding.workspace.id,
+        }),
+      );
+      return;
+    }
+
     await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
         action: input.action,
@@ -438,6 +453,8 @@ function toControlPlaneClaim(claim: CurrentClaim): ControlPlaneClaim {
     key: claim.claimKey,
     kind: claim.claimKind,
     pinned: review.pinned ?? false,
+    promoted: review.promoted ?? false,
+    promotionTitle: review.promotionTitle,
     state: claim.state,
     text: claim.claimText,
     watched: review.watched ?? false,
@@ -486,6 +503,11 @@ export function readClaimReviewAttributes(
 ): ClaimReviewAttributes {
   return {
     pinned: attributes.reviewPinned === true,
+    promoted: attributes.adrPromoted === true,
+    promotionTitle:
+      typeof attributes.adrTitle === "string" && attributes.adrTitle.trim() !== ""
+        ? attributes.adrTitle
+        : undefined,
     watched: attributes.reviewWatched === true,
   };
 }

@@ -92,6 +92,7 @@ function isClaimReviewAction(value: string): value is UpdateClaimReviewInput["ac
   return (
     value === "accept" ||
     value === "pin" ||
+    value === "promote" ||
     value === "reject" ||
     value === "unpin" ||
     value === "unwatch" ||
