@@ -234,8 +234,10 @@ function run(command, args, options) {
 
 function assertActiveContextResponse(response) {
   const result = response?.result;
-  if (!toolText(result).includes("We should dogfood Saga capture before broad rollout.")) {
-    throw new Error(`get_active_context text did not include the projected claim: ${json(result)}`);
+  if (!toolText(result).includes("codex.UserPromptSubmit")) {
+    throw new Error(
+      `get_active_context text did not include recent hook activity: ${json(result)}`,
+    );
   }
 
   const sections = result?.structuredContent?.sections;

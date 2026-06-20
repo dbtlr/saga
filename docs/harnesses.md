@@ -5,7 +5,7 @@ Saga harness targets connect agent runtimes to the same local memory loop:
 1. Install local, project-scoped hooks.
 2. Capture hook JSON as raw events through `saga ingest <target>-hook`.
 3. Register a target-specific source binding.
-4. Project prompt-derived claims through the shared extraction path.
+4. Make captured events available for trailing consolidation.
 
 ## Shared Hook Events
 
@@ -33,7 +33,7 @@ Saga installs the same command hook for each event. `SessionStart` is scoped to 
 - Source-specific raw events: `<source>.<hook_event_name>`.
 - Source-specific ids: `<source>:local`.
 - Source-specific source bindings, with common workspace scoping.
-- Shared prompt extraction for any `*.UserPromptSubmit` event with a string `payload.prompt`.
+- Shared raw capture for user prompts, stops, and session starts. Claim extraction happens after a session settles, not inside the hook.
 
 ## Status States
 

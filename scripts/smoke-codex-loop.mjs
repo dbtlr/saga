@@ -78,7 +78,7 @@ try {
   );
   assertActiveContext(context);
 
-  console.log(`codex capture-to-context smoke passed: ${context.workspace.handle}`);
+  console.log(`codex hook capture smoke passed: ${context.workspace.handle}`);
   console.log(`raw events: ${recent.length.toString()}`);
   console.log(`current claims: ${currentClaimLines(context).length.toString()}`);
   failed = false;
@@ -192,13 +192,8 @@ function assertRecentEvents(value) {
 
 function assertActiveContext(value) {
   const currentClaims = currentClaimLines(value);
-  if (currentClaims.length === 0) {
-    throw new Error(`Active Context had no current claims: ${JSON.stringify(value, null, 2)}`);
-  }
-
-  const expectedClaim = "We should dogfood Saga capture before broad rollout.";
-  if (!currentClaims.some((line) => line.includes(expectedClaim))) {
-    throw new Error(`Active Context did not include projected claim: ${JSON.stringify(value)}`);
+  if (currentClaims.length !== 0) {
+    throw new Error(`Hook capture projected per-turn claims: ${JSON.stringify(value, null, 2)}`);
   }
 
   const recentActivity = sectionLines(value, "Recent Activity");

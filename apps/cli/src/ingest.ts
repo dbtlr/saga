@@ -24,7 +24,6 @@ import { recordBlock, type RenderOptions } from "./render.js";
 
 export interface HookIngestResult {
   accepted: boolean;
-  claimsProjected?: number | undefined;
   error?: string | undefined;
   eventId?: string | undefined;
   mode: "captured" | "skipped";
@@ -107,9 +106,6 @@ export async function ingestHook(
           { label: "mode", value: result.mode },
           { label: "accepted", value: String(result.accepted) },
           ...(result.eventId === undefined ? [] : [{ label: "event", value: result.eventId }]),
-          ...(result.claimsProjected === undefined
-            ? []
-            : [{ label: "claims", value: String(result.claimsProjected) }]),
           ...(result.error === undefined ? [] : [{ label: "error", value: result.error }]),
         ],
         options,
@@ -246,13 +242,8 @@ export async function captureHook(
               workspace: binding.workspace,
             });
       const row = await Effect.runPromise(insertRawEvent(service, event));
-      const candidates = extractCandidateClaimsFromRawEvents([row]);
-      const projections = await Effect.runPromise(
-        insertExtractedCandidateClaims(service, candidates),
-      );
       return {
         accepted: true,
-        claimsProjected: projections.length,
         eventId: row.id,
         mode: "captured",
         source,
