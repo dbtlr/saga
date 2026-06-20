@@ -98,13 +98,16 @@ describe("renderLaunchdPlist", () => {
     });
 
     expect(plist).toContain("<string>com.saga.service</string>");
-    expect(plist).toContain("/Volumes/data/workspaces/saga/apps/cli/bin/saga.js");
+    expect(plist).toContain("/Volumes/data/workspaces/saga/apps/cli/node_modules/tsx/dist/cli.mjs");
+    expect(plist).toContain("/Volumes/data/workspaces/saga/apps/cli/src/main.ts");
     expect(plist).toContain("<string>service</string>");
     expect(plist).toContain("<string>run</string>");
   });
 
-  test("uses the checked-in CLI bin wrapper", () => {
-    expect(existsSync(join(workspaceRoot, "apps", "cli", "bin", "saga.js"))).toBe(true);
+  test("uses the package-local tsx executable", () => {
+    expect(
+      existsSync(join(workspaceRoot, "apps", "cli", "node_modules", "tsx", "dist", "cli.mjs")),
+    ).toBe(true);
   });
 });
 

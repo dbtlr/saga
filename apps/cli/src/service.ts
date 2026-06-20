@@ -279,7 +279,8 @@ export function renderLaunchdPlist(input: {
   <key>ProgramArguments</key>
   <array>
     <string>${escapePlist(process.execPath)}</string>
-    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "bin", "saga.js"))}</string>
+    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "node_modules", "tsx", "dist", "cli.mjs"))}</string>
+    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "src", "main.ts"))}</string>
     <string>service</string>
     <string>run</string>
   </array>
