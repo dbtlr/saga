@@ -105,12 +105,18 @@ importers:
 
   apps/service:
     dependencies:
+      '@saga/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@saga/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
       effect:
         specifier: ^3.21.4
         version: 3.21.4
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
 
   packages/active-context: {}
 

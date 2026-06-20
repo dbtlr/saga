@@ -164,7 +164,13 @@ function readSecretValue(
   if (filePath === undefined) return undefined;
 
   try {
-    return optionalString(readFileSync(filePath, "utf8"));
+    const value = optionalString(readFileSync(filePath, "utf8"));
+    if (value !== undefined) return value;
+    issues.push({
+      key: `${key}_FILE`,
+      message: `secret file ${filePath} is empty`,
+    });
+    return undefined;
   } catch (error) {
     issues.push({
       key: `${key}_FILE`,

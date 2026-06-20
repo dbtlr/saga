@@ -14,7 +14,9 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@saga/db": "workspace:*",
     "@saga/runtime": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "^3.21.4",
+    "tsx": "^4.22.4"
   }
 }

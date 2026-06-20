@@ -1,6 +1,8 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { assertMigrationsCurrent, makeDatabase } from "@saga/db";
 import type { RuntimeConfig } from "@saga/runtime";
+import { Effect } from "effect";
 
 export interface SagaServiceHandle {
   close: () => Promise<void>;
@@ -15,7 +17,15 @@ export interface HealthPayload {
   uptimeSeconds: number;
 }
 
-export async function startSagaService(config: RuntimeConfig): Promise<SagaServiceHandle> {
+export interface SagaServiceDependencies {
+  validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
+}
+
+export async function startSagaService(
+  config: RuntimeConfig,
+  dependencies: SagaServiceDependencies = {},
+): Promise<SagaServiceHandle> {
+  await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
   const server = createServer((request, response) => {
     if (request.url === "/health") {
@@ -44,6 +54,16 @@ export async function startSagaService(config: RuntimeConfig): Promise<SagaServi
     port,
     url: `http://${host}:${port}`,
   };
+}
+
+export async function validateDatabaseReady(config: RuntimeConfig): Promise<void> {
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    await service.sql`select 1`;
+    await Effect.runPromise(assertMigrationsCurrent(service));
+  } finally {
+    await Effect.runPromise(service.close());
+  }
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {

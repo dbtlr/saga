@@ -8,18 +8,23 @@ const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 describe("startSagaService", () => {
   test("serves health", async () => {
-    const service = await startSagaService({
-      databaseUrl: undefined,
-      environment: "test",
-      logLevel: "info",
-      service: {
-        host: "127.0.0.1",
-        port: 0,
+    const service = await startSagaService(
+      {
+        databaseUrl: "postgres://test/saga",
+        environment: "test",
+        logLevel: "info",
+        service: {
+          host: "127.0.0.1",
+          port: 0,
+        },
+        secrets: {
+          openaiApiKey: undefined,
+        },
       },
-      secrets: {
-        openaiApiKey: undefined,
+      {
+        validateDatabase: async () => undefined,
       },
-    });
+    );
 
     try {
       const response = await fetch(`${service.url}/health`);
@@ -30,6 +35,23 @@ describe("startSagaService", () => {
     } finally {
       await service.close();
     }
+  });
+
+  test("fails startup when database config is missing", async () => {
+    await expect(
+      startSagaService({
+        databaseUrl: undefined,
+        environment: "test",
+        logLevel: "info",
+        service: {
+          host: "127.0.0.1",
+          port: 0,
+        },
+        secrets: {
+          openaiApiKey: undefined,
+        },
+      }),
+    ).rejects.toThrow("DATABASE_URL is required");
   });
 });
 

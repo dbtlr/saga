@@ -1,0 +1,16 @@
+.codex/
+.git/
+.mimir.toml
+.saga.local.json
+.saga.toml
+.turbo/
+.env
+.env.*
+!.env.example
+backups/
+coverage/
+dist/
+node_modules/
+**/node_modules/
+**/.turbo/
+*.log

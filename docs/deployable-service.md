@@ -12,6 +12,8 @@ pnpm --filter @saga/service start
 
 This runs `apps/service/src/main.ts`, loads typed runtime config, starts the HTTP service, and handles `SIGINT`/`SIGTERM` shutdown.
 
+Startup validates database connectivity and migration compatibility before the health endpoint is exposed.
+
 ## Container
 
 Build the service image:
@@ -62,6 +64,8 @@ Common runtime settings:
 - `SAGA_SERVICE_PORT=4766`
 
 Secrets must be injected by the deployment environment. Do not bake real secrets into the image or compose files.
+
+The service package declares `tsx` as a runtime dependency while this repo remains source-run/typecheck-only. If the build later emits JavaScript, switch the deploy entrypoint to the emitted artifact.
 
 ## Managed Secrets
 

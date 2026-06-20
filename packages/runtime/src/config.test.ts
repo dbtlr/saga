@@ -94,6 +94,24 @@ describe("parseRuntimeConfig", () => {
     ]);
   });
 
+  test("returns validation issues for blank secret files", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-config-"));
+    const openAiKeyFile = join(cwd, "openai-key");
+    writeFileSync(openAiKeyFile, "\n");
+
+    const { config, issues } = parseRuntimeConfig({
+      OPENAI_API_KEY_FILE: openAiKeyFile,
+    });
+
+    expect(config.secrets.openaiApiKey).toBeUndefined();
+    expect(issues).toEqual([
+      {
+        key: "OPENAI_API_KEY_FILE",
+        message: `secret file ${openAiKeyFile} is empty`,
+      },
+    ]);
+  });
+
   test("returns validation issues for invalid enum values", () => {
     const { config, issues } = parseRuntimeConfig({
       SAGA_ENV: "local",
