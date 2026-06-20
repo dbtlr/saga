@@ -373,8 +373,21 @@ describePostgres("postgres integration", () => {
 
     expect(duplicateProjection.event.id).toBe(firstProjection.event.id);
     expect(supportedProjection.event.id).not.toBe(firstProjection.event.id);
+    expect(firstProjection.event.attributes).toMatchObject({
+      confidenceBase: 0.72,
+      confidenceInputs: {
+        base: 0.72,
+        sourceQuality: 0.01,
+      },
+    });
+    expect(supportedProjection.event.confidence).toBeGreaterThan(firstProjection.event.confidence);
     expect(staleProjection.currentClaim.id).toBe(supportedProjection.currentClaim.id);
     expect(staleProjection.currentClaim.state).toBe("supported");
+    expect(staleProjection.currentClaim.attributes).toMatchObject({
+      confidenceInputs: expect.objectContaining({
+        base: 0.9,
+      }),
+    });
     expect(current[0]?.claimText).toBe("We should compile Active Context from claims.");
     expect(current[0]?.state).toBe("supported");
     expect(await service.db.select().from(claimEvents)).toContainEqual(

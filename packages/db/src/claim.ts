@@ -12,9 +12,11 @@ import { insertRawEvent } from "./raw-event.js";
 import {
   claimEvents,
   currentClaims,
+  rawEvents,
   sourceBindings,
   type ClaimEvent,
   type CurrentClaim,
+  type RawEvent,
 } from "./schema.js";
 
 export type ClaimEventType =
@@ -43,6 +45,33 @@ export interface InsertClaimEventInput {
 export interface ClaimProjectionResult {
   currentClaim: CurrentClaim;
   event: ClaimEvent;
+}
+
+export interface ClaimConfidenceInput {
+  actorId?: string | null | undefined;
+  baseConfidence: number;
+  claimKind: ClaimKind;
+  eventType: ClaimEventType;
+  now?: Date | string | undefined;
+  occurredAt: Date | string;
+  priorContradictions: number;
+  priorEvents: number;
+  sourceType: string;
+  trustLevel?: string | null | undefined;
+}
+
+export interface ClaimConfidenceResult {
+  inputs: {
+    actorAuthority: number;
+    base: number;
+    contradiction: number;
+    explicitness: number;
+    humanPromotion: number;
+    recurrence: number;
+    recency: number;
+    sourceQuality: number;
+  };
+  score: number;
 }
 
 export interface InsertClaimReviewEventInput {
@@ -94,15 +123,29 @@ export function insertClaimEventAndProject(
           message: "claim evidence occurredAt must be an ISO timestamp",
         });
       }
+      const rawEvent = await findRawEventForEvidence(service, input.evidence.rawEventId);
+      const confidenceStats = await readClaimConfidenceStats(service, input);
+      const confidence = scoreClaimConfidence({
+        actorId: rawEvent.actorId,
+        baseConfidence: input.confidence,
+        claimKind: input.kind,
+        eventType: input.eventType,
+        occurredAt: observedAt,
+        priorContradictions: confidenceStats.priorContradictions,
+        priorEvents: confidenceStats.priorEvents,
+        sourceType: rawEvent.sourceType,
+        trustLevel: rawEvent.trustLevel,
+      });
+      const eventAttributes = withConfidenceAttributes(input.attributes, confidence);
 
       const [insertedEvent] = await service.db
         .insert(claimEvents)
         .values({
-          attributes: input.attributes,
+          attributes: eventAttributes,
           claimKey: input.claimKey,
           claimKind: input.kind,
           claimText: input.text,
-          confidence: input.confidence,
+          confidence: confidence.score,
           eventType: input.eventType,
           evidence: input.evidence as unknown as Record<string, unknown>,
           occurredAt: observedAt,
@@ -120,6 +163,8 @@ export function insertClaimEventAndProject(
         .returning();
 
       const event = insertedEvent ?? (await findExistingClaimEvent(service, input));
+      const projectedAttributes = asRecord(event.attributes);
+      const projectedEvidence = asRecord(event.evidence);
       const existingCurrentClaim = await findOptionalCurrentClaim(service, input);
       if (isReviewAttributeEventType(input.eventType)) {
         const existingClaim =
@@ -127,7 +172,7 @@ export function insertClaimEventAndProject(
         const [currentClaim] = await service.db
           .update(currentClaims)
           .set({
-            attributes: input.attributes,
+            attributes: projectedAttributes,
             latestEventId: event.id,
             updatedAt: new Date(),
           })
@@ -146,19 +191,19 @@ export function insertClaimEventAndProject(
       }
 
       const state = stateForEventType(input.eventType);
-      const projectedAttributes = preserveReviewAttributes(
-        input.attributes,
+      const nextAttributes = preserveReviewAttributes(
+        projectedAttributes,
         existingCurrentClaim?.attributes,
       );
       const [currentClaim] = await service.db
         .insert(currentClaims)
         .values({
-          attributes: projectedAttributes,
+          attributes: nextAttributes,
           claimKey: input.claimKey,
-          claimKind: input.kind,
-          claimText: input.text,
-          confidence: input.confidence,
-          evidence: input.evidence as unknown as Record<string, unknown>,
+          claimKind: event.claimKind,
+          claimText: event.claimText,
+          confidence: event.confidence,
+          evidence: projectedEvidence,
           latestEventId: event.id,
           observedAt,
           state,
@@ -166,11 +211,11 @@ export function insertClaimEventAndProject(
         })
         .onConflictDoUpdate({
           set: {
-            attributes: projectedAttributes,
-            claimKind: input.kind,
-            claimText: input.text,
-            confidence: input.confidence,
-            evidence: input.evidence as unknown as Record<string, unknown>,
+            attributes: nextAttributes,
+            claimKind: event.claimKind,
+            claimText: event.claimText,
+            confidence: event.confidence,
+            evidence: projectedEvidence,
             latestEventId: event.id,
             observedAt,
             state,
@@ -190,6 +235,37 @@ export function insertClaimEventAndProject(
         ? cause
         : new ClaimProjectionError({ message: errorMessage(cause) }),
   });
+}
+
+export function scoreClaimConfidence(input: ClaimConfidenceInput): ClaimConfidenceResult {
+  const occurredAt = toDate(input.occurredAt);
+  const now = toDate(input.now ?? new Date());
+  const ageDays = Math.max(0, (now.getTime() - occurredAt.getTime()) / 86_400_000);
+  const inputs = {
+    actorAuthority: actorAuthorityScore(input.actorId),
+    base: clampConfidence(input.baseConfidence),
+    contradiction: contradictionScore(input),
+    explicitness: explicitnessScore(input),
+    humanPromotion: humanPromotionScore(input),
+    recurrence: recurrenceScore(input.priorEvents),
+    recency: recencyScore(ageDays),
+    sourceQuality: sourceQualityScore(input),
+  };
+  const score = clampConfidence(
+    inputs.base +
+      inputs.actorAuthority +
+      inputs.contradiction +
+      inputs.explicitness +
+      inputs.humanPromotion +
+      inputs.recurrence +
+      inputs.recency +
+      inputs.sourceQuality,
+  );
+
+  return {
+    inputs,
+    score,
+  };
 }
 
 export function insertClaimReviewEventAndProject(
@@ -359,6 +435,45 @@ async function findOptionalCurrentClaim(
   return currentClaim;
 }
 
+async function findRawEventForEvidence(
+  service: DatabaseService,
+  rawEventId: string,
+): Promise<RawEvent> {
+  const [rawEvent] = await service.db
+    .select()
+    .from(rawEvents)
+    .where(eq(rawEvents.id, rawEventId))
+    .limit(1);
+
+  if (rawEvent === undefined) {
+    throw new ClaimProjectionError({ message: "claim evidence rawEventId does not exist" });
+  }
+
+  return rawEvent;
+}
+
+async function readClaimConfidenceStats(
+  service: DatabaseService,
+  input: InsertClaimEventInput,
+): Promise<{ priorContradictions: number; priorEvents: number }> {
+  const [stats] = await service.db
+    .select({
+      priorContradictions: sql<number>`count(*) filter (
+        where ${claimEvents.eventType} in ('contradicted', 'rejected')
+      )::int`,
+      priorEvents: sql<number>`count(*)::int`,
+    })
+    .from(claimEvents)
+    .where(
+      and(eq(claimEvents.workspaceId, input.workspaceId), eq(claimEvents.claimKey, input.claimKey)),
+    );
+
+  return {
+    priorContradictions: Number(stats?.priorContradictions ?? 0),
+    priorEvents: Number(stats?.priorEvents ?? 0),
+  };
+}
+
 function stateForEventType(eventType: ClaimEventType): ClaimState {
   if (eventType === "supported") return "supported";
   if (eventType === "contradicted") return "contradicted";
@@ -462,6 +577,77 @@ function readClaimKind(value: string): ClaimKind {
   }
 
   throw new ClaimProjectionError({ message: `unsupported claim kind: ${value}` });
+}
+
+function withConfidenceAttributes(
+  attributes: Record<string, unknown>,
+  confidence: ClaimConfidenceResult,
+): Record<string, unknown> {
+  return {
+    ...attributes,
+    confidenceBase: confidence.inputs.base,
+    confidenceInputs: confidence.inputs,
+  };
+}
+
+function actorAuthorityScore(actorId: string | null | undefined): number {
+  if (actorId === "control-plane") return 0.08;
+  if (actorId === "human") return 0.08;
+  if (actorId === "codex" || actorId === "claude") return 0.01;
+  return 0;
+}
+
+function contradictionScore(input: ClaimConfidenceInput): number {
+  const priorPenalty = -Math.min(0.16, input.priorContradictions * 0.08);
+  if (input.eventType === "contradicted") return priorPenalty - 0.22;
+  if (input.eventType === "rejected") return priorPenalty - 0.35;
+  return priorPenalty;
+}
+
+function explicitnessScore(input: ClaimConfidenceInput): number {
+  if (input.eventType === "supported" && input.sourceType === "saga") return 0.08;
+  if (input.eventType === "extracted" && input.claimKind === "decision") return 0.03;
+  if (input.eventType === "extracted" && input.claimKind === "preference") return 0.02;
+  return 0;
+}
+
+function humanPromotionScore(input: ClaimConfidenceInput): number {
+  if (input.eventType === "supported" && input.sourceType === "saga") return 0.15;
+  if (input.eventType === "rejected" && input.sourceType === "saga") return -0.35;
+  return 0;
+}
+
+function recurrenceScore(priorEvents: number): number {
+  return Math.min(0.12, Math.max(0, priorEvents) * 0.04);
+}
+
+function recencyScore(ageDays: number): number {
+  if (ageDays <= 7) return 0.03;
+  if (ageDays <= 30) return 0.01;
+  if (ageDays <= 90) return 0;
+  return -0.08;
+}
+
+function sourceQualityScore(input: ClaimConfidenceInput): number {
+  const trustScore = input.trustLevel === "trusted" ? 0.08 : 0;
+  if (input.sourceType === "saga") return trustScore + 0.05;
+  if (input.sourceType === "git") return trustScore + 0.03;
+  if (input.sourceType === "codex" || input.sourceType === "claude") return trustScore + 0.01;
+  return trustScore;
+}
+
+function clampConfidence(value: number): number {
+  return Math.max(0, Math.min(1, Number(value.toFixed(4))));
+}
+
+function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function projectionAdvanceSql(
