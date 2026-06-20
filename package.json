@@ -14,6 +14,7 @@
     "check": "vp check",
     "format": "vp format",
     "lint": "vp lint",
+    "smoke:codex-loop": "node scripts/smoke-codex-loop.mjs",
     "smoke:install": "node scripts/smoke-install.mjs",
     "staged": "vp staged",
     "test": "pnpm run test:unit",
