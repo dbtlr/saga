@@ -147,7 +147,13 @@ function ClaimReviewItem({
           Reject
         </button>
         <button
-          disabled={!canEdit || isPending || claim.promoted || claim.state === "rejected"}
+          disabled={
+            !canEdit ||
+            isPending ||
+            claim.promoted ||
+            claim.state === "rejected" ||
+            claim.state === "superseded"
+          }
           onClick={() => runReview("promote")}
           type="button"
         >

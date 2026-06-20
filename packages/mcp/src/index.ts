@@ -33,6 +33,7 @@ export interface SearchMemoryToolResult {
     key: string;
     kind: string;
     matchedFields?: string[] | undefined;
+    snippet?: string | undefined;
     source?: string | undefined;
     state: string;
     text: string;

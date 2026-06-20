@@ -133,6 +133,7 @@ describe("searchMemoryEntries", () => {
     expect(searchMemoryEntries({ query: "search session" }, entries)[0]).toMatchObject({
       key: "raw-1",
       matchedFields: ["payload", "provenance"],
+      snippet: expect.stringContaining("search provenance"),
       source: "recent_activity",
     });
     expect(searchMemoryEntries({ query: "promoted decisions" }, entries)[0]).toMatchObject({

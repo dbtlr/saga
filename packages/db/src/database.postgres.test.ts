@@ -1211,5 +1211,126 @@ describePostgres("postgres integration", () => {
       sourceType: "saga",
       workspaceId: workspace.id,
     });
+
+    const laterRawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:${workspace.id}:promotion-2`,
+        occurredAt: "2026-06-19T21:05:00.000Z",
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Actually, Saga should not expose claim promotion from the governance UI.",
+        },
+        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
+        sessionId: "session",
+        sourceBindingId: sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        traceId: "promotion-2",
+        trustLevel: "raw",
+        workspaceId: workspace.id,
+      }),
+    );
+    const contradicted = await Effect.runPromise(
+      insertClaimEventAndProject(service, {
+        attributes: { extractor: "deterministic-v2" },
+        claimKey: projection.currentClaim.claimKey,
+        confidence: 0.84,
+        evidence: {
+          eventType: laterRawEvent.eventType,
+          externalEventId: laterRawEvent.externalEventId,
+          occurredAt: laterRawEvent.occurredAt.toISOString(),
+          quote: "Actually, Saga should not expose claim promotion from the governance UI.",
+          rawEventId: laterRawEvent.id,
+          sessionId: laterRawEvent.sessionId ?? undefined,
+          sourceId: laterRawEvent.sourceId,
+          sourceType: laterRawEvent.sourceType,
+          traceId: laterRawEvent.traceId ?? undefined,
+        },
+        eventType: "contradicted",
+        kind: "decision",
+        text: "Saga should expose claim promotion from the governance UI.",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    expect(contradicted.currentClaim.attributes).toMatchObject({
+      adrPromoted: true,
+      adrPromotedAt: "2026-06-19T21:00:00.000Z",
+      adrTitle: "Expose Claim Promotion",
+      extractor: "deterministic-v2",
+    });
+  });
+
+  test("does not promote terminal claims", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const db = service;
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("terminal-promotion");
+
+    async function seedClaim(text: string, turn: string) {
+      const rawEvent = await insertCodexPromptEvent({
+        prompt: text,
+        sourceBindingId: sourceBinding.id,
+        turn,
+        workspaceId: workspace.id,
+      });
+      return Effect.runPromise(
+        insertExtractedCandidateClaim(db, {
+          attributes: { extractor: "deterministic-v1" },
+          confidence: 0.68,
+          evidence: {
+            eventType: rawEvent.eventType,
+            externalEventId: rawEvent.externalEventId,
+            occurredAt: rawEvent.occurredAt.toISOString(),
+            quote: text,
+            rawEventId: rawEvent.id,
+            sessionId: rawEvent.sessionId ?? undefined,
+            sourceId: rawEvent.sourceId,
+            sourceType: rawEvent.sourceType,
+            traceId: rawEvent.traceId ?? undefined,
+          },
+          kind: "decision",
+          text,
+          workspaceId: workspace.id,
+        }),
+      );
+    }
+
+    const rejected = await seedClaim("Rejected claims should remain terminal.", "terminal-1");
+    await Effect.runPromise(
+      insertClaimReviewEventAndProject(service, {
+        action: "reject",
+        claimKey: rejected.currentClaim.claimKey,
+        occurredAt: "2026-06-19T21:10:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+    const superseded = await seedClaim("Superseded claims should remain terminal.", "terminal-2");
+    await Effect.runPromise(
+      insertClaimMaintenanceEventAndProject(service, {
+        action: "supersede",
+        claimKey: superseded.currentClaim.claimKey,
+        occurredAt: "2026-06-19T21:11:00.000Z",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        insertClaimPromotionEventAndProject(service, {
+          claimKey: rejected.currentClaim.claimKey,
+          workspaceId: workspace.id,
+        }),
+      ),
+    ).rejects.toThrow("terminal claims are not available for promotion");
+    await expect(
+      Effect.runPromise(
+        insertClaimPromotionEventAndProject(service, {
+          claimKey: superseded.currentClaim.claimKey,
+          workspaceId: workspace.id,
+        }),
+      ),
+    ).rejects.toThrow("terminal claims are not available for promotion");
   });
 });

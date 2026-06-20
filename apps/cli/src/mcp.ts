@@ -28,6 +28,7 @@ export interface RankedMemorySearchMatch {
   kind: string;
   matchedFields: string[];
   score: number;
+  snippet: string;
   source: string;
   state: string;
   text: string;
@@ -210,11 +211,14 @@ function rankMemoryEntry(
   const fieldMatches = Object.entries(entry.fields).flatMap(([field, value]) => {
     const normalized = value.toLowerCase();
     const hits = tokens.filter((token) => normalized.includes(token)).length;
-    return hits === 0 ? [] : [{ field, hits }];
+    return hits === 0 ? [] : [{ field, hits, value }];
   });
   if (fieldMatches.length === 0) return undefined;
 
   const matchedFields = [...new Set(fieldMatches.map((match) => match.field))];
+  const bestFieldMatch = fieldMatches
+    .slice()
+    .sort((left, right) => right.hits - left.hits || left.field.localeCompare(right.field))[0];
   const exactTextBonus = tokens.every((token) => entry.text.toLowerCase().includes(token)) ? 4 : 0;
   const weightedHits = fieldMatches.reduce((score, match) => score + match.hits, 0);
   const sourceWeight = sourceSearchWeight(entry.source);
@@ -224,6 +228,7 @@ function rankMemoryEntry(
     kind: entry.kind,
     matchedFields,
     score: weightedHits + exactTextBonus + sourceWeight + entry.confidence,
+    snippet: matchedSnippet(bestFieldMatch?.value ?? entry.text, tokens),
     source: entry.source,
     state: entry.state,
     text: entry.text,
@@ -241,9 +246,31 @@ function renderSearchMemoryMarkdown(
     "",
     ...matches.map(
       (match) =>
-        `- [${match.source}/${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")})`,
+        `- [${match.source}/${match.state}/${match.kind}] ${match.text} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${match.snippet}`,
     ),
   ].join("\n");
+}
+
+function matchedSnippet(value: string, tokens: readonly string[]): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized === "") return "";
+
+  const lower = normalized.toLowerCase();
+  const firstHit = tokens
+    .map((token) => lower.indexOf(token))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  if (firstHit === undefined) return truncateSnippet(normalized);
+
+  const start = Math.max(0, firstHit - 48);
+  const end = Math.min(normalized.length, firstHit + 112);
+  const prefix = start === 0 ? "" : "...";
+  const suffix = end === normalized.length ? "" : "...";
+  return `${prefix}${normalized.slice(start, end)}${suffix}`;
+}
+
+function truncateSnippet(value: string): string {
+  return value.length <= 160 ? value : `${value.slice(0, 157)}...`;
 }
 
 function sourceSearchWeight(source: string): number {

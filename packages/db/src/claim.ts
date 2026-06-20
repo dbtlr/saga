@@ -559,6 +559,11 @@ export function insertClaimPromotionEventAndProject(
       if (claim === undefined) {
         throw new ClaimProjectionError({ message: "claim is not available for promotion" });
       }
+      if (claim.state === "rejected" || claim.state === "superseded") {
+        throw new ClaimProjectionError({
+          message: "terminal claims are not available for promotion",
+        });
+      }
 
       const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
       if (Number.isNaN(occurredAt.getTime())) {
@@ -846,11 +851,13 @@ function preserveReviewAttributes(
 ): Record<string, unknown> {
   if (existingAttributes === undefined) return nextAttributes;
 
-  const reviewAttributes = Object.fromEntries(
-    Object.entries(existingAttributes).filter(([key]) => key.startsWith("review")),
+  const governanceAttributes = Object.fromEntries(
+    Object.entries(existingAttributes).filter(
+      ([key]) => key.startsWith("review") || key.startsWith("adr"),
+    ),
   );
   return {
-    ...reviewAttributes,
+    ...governanceAttributes,
     ...nextAttributes,
   };
 }
