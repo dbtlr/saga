@@ -151,7 +151,10 @@ export function listContextIndexEntries(
 ): Effect.Effect<ContextIndexEntryWithSource[], DatabaseError | ContextIndexError> {
   return Effect.tryPromise({
     try: async () => {
-      const conditions = [eq(contextIndexEntries.workspaceId, input.workspaceId)];
+      const conditions = [
+        eq(contextIndexEntries.workspaceId, input.workspaceId),
+        eq(sourceBindings.enabled, true),
+      ];
       if (input.includePolicies !== undefined) {
         conditions.push(inArray(contextIndexEntries.includePolicy, [...input.includePolicies]));
       }
@@ -229,6 +232,7 @@ export function resolveSagaLink(
           and(
             eq(contextIndexEntries.workspaceId, input.workspaceId),
             eq(contextIndexEntries.sagaLink, input.sagaLink),
+            eq(sourceBindings.enabled, true),
           ),
         )
         .limit(1);

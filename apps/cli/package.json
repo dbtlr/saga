@@ -15,6 +15,7 @@
     "@saga/active-context": "workspace:*",
     "@saga/claims": "workspace:*",
     "@saga/collectors": "workspace:*",
+    "@saga/connectors": "workspace:*",
     "@saga/db": "workspace:*",
     "@saga/mcp": "workspace:*",
     "@saga/runtime": "workspace:*",

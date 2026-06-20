@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { runMcpCommand, searchMemoryEntries, type MemorySearchEntry } from "./mcp.js";
+import {
+  rewriteResolvedSagaLinkReferences,
+  runMcpCommand,
+  searchMemoryEntries,
+  type MemorySearchEntry,
+} from "./mcp.js";
 
 async function* chunks(text: string) {
   yield text;
@@ -19,6 +24,7 @@ describe("runMcpCommand", () => {
     expect(output).toHaveLength(1);
     expect(output[0]).toContain("get_active_context");
     expect(output[0]).toContain("search_memory");
+    expect(output[0]).toContain("resolve_saga_link");
   });
 
   test("streams a response before stdin closes", async () => {
@@ -79,6 +85,59 @@ describe("runMcpCommand", () => {
       },
       id: null,
       jsonrpc: "2.0",
+    });
+  });
+});
+
+describe("rewriteResolvedSagaLinkReferences", () => {
+  test("rewrites resolved connector references through workspace Context Index entries", () => {
+    const rewritten = rewriteResolvedSagaLinkReferences(
+      {
+        externalId: "notes/architecture.md",
+        metadata: {
+          references: [
+            {
+              externalId: "notes/adr.md",
+              title: "ADR",
+              url: "file:///vault/notes/adr.md",
+            },
+            {
+              externalId: "notes/adr.md",
+              sourceBindingId: "source-2",
+              title: "Other ADR",
+              url: "file:///other-vault/notes/adr.md",
+            },
+          ],
+        },
+        sourceBinding: {
+          id: "source-1",
+          sourceType: "vault",
+        },
+      },
+      [
+        {
+          externalId: "notes/adr.md",
+          sagaLink: "saga:context/adr",
+          sourceBinding: {
+            id: "source-1",
+            sourceType: "vault",
+          },
+        },
+      ],
+    );
+
+    expect(rewritten.references[0]).toMatchObject({
+      originalUrl: "file:///vault/notes/adr.md",
+      sagaLink: "saga:context/adr",
+      sourceBindingId: "source-1",
+      url: "saga:context/adr",
+    });
+    expect(rewritten.references[1]).toEqual({
+      connector: "vault",
+      externalId: "notes/adr.md",
+      sourceBindingId: "source-2",
+      title: "Other ADR",
+      url: "file:///other-vault/notes/adr.md",
     });
   });
 });

@@ -269,6 +269,44 @@ describePostgres("postgres integration", () => {
     ).rejects.toThrow("Context Index source binding must belong to the same workspace");
   });
 
+  test("does not list or resolve Context Index entries for disabled source bindings", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const { sourceBinding, workspace } =
+      await createWorkspaceWithCodexSource("context-index-disabled");
+
+    const entry = await Effect.runPromise(
+      upsertContextIndexEntry(service, {
+        externalId: "notes/disabled.md",
+        includePolicy: "always",
+        key: "disabled-entry",
+        sourceBindingId: sourceBinding.id,
+        title: "Disabled Entry",
+        workspaceId: workspace.id,
+      }),
+    );
+
+    await service.db
+      .update(sourceBindings)
+      .set({ enabled: false })
+      .where(eq(sourceBindings.id, sourceBinding.id));
+
+    await expect(
+      Effect.runPromise(
+        listActiveContextIndexEntries(service, {
+          workspaceId: workspace.id,
+        }),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      Effect.runPromise(
+        resolveSagaLink(service, {
+          sagaLink: entry.sagaLink,
+          workspaceId: workspace.id,
+        }),
+      ),
+    ).rejects.toThrow(`Saga Link not found: ${entry.sagaLink}`);
+  });
+
   test("persists raw events", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 

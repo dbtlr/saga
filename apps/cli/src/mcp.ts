@@ -1,4 +1,10 @@
 import { renderActiveContextMarkdown } from "@saga/active-context";
+import {
+  rewriteConnectorResultToSagaLinks,
+  type ConnectorReference,
+  type ConnectorRetrievalResult,
+  type SagaLinkIndexReference,
+} from "@saga/connectors";
 import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
 import {
   listActiveContextClaims,
@@ -228,19 +234,63 @@ export async function resolveProjectSagaLink(
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
-    const resolved = await Effect.runPromise(
-      resolveDatabaseSagaLink(service, {
-        sagaLink: input.link,
-        workspaceId: binding.workspace.id,
-      }),
-    );
+    const [resolved, contextIndex] = await Promise.all([
+      Effect.runPromise(
+        resolveDatabaseSagaLink(service, {
+          sagaLink: input.link,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+      Effect.runPromise(
+        listContextIndexEntries(service, {
+          includePolicies: ["always", "when_relevant"],
+          limit: 500,
+          workspaceId: binding.workspace.id,
+        }),
+      ),
+    ]);
+    const rewritten = rewriteResolvedSagaLinkReferences(resolved.entry, contextIndex);
     return {
-      markdown: renderResolvedSagaLinkMarkdown(resolved),
-      resolved,
+      markdown: renderResolvedSagaLinkMarkdown(resolved, rewritten),
+      resolved: {
+        ...resolved,
+        retrieval: rewritten,
+      },
     };
   } finally {
     await Effect.runPromise(service.close());
   }
+}
+
+export function rewriteResolvedSagaLinkReferences(
+  entry: {
+    externalId: string;
+    metadata: Record<string, unknown>;
+    sourceBinding: {
+      id: string;
+      sourceType: string;
+    };
+  },
+  contextIndex: ReadonlyArray<{
+    externalId: string;
+    sagaLink: string;
+    sourceBinding: {
+      id: string;
+      sourceType: string;
+    };
+  }>,
+) {
+  return rewriteConnectorResultToSagaLinks(
+    connectorResultFromEntryMetadata(entry),
+    contextIndex.map(
+      (indexEntry): SagaLinkIndexReference => ({
+        connector: indexEntry.sourceBinding.sourceType,
+        externalId: indexEntry.externalId,
+        sagaLink: indexEntry.sagaLink,
+        sourceBindingId: indexEntry.sourceBinding.id,
+      }),
+    ),
+  );
 }
 
 export function searchMemoryEntries(
@@ -310,20 +360,37 @@ function renderSearchMemoryMarkdown(
   ].join("\n");
 }
 
-function renderResolvedSagaLinkMarkdown(resolved: {
-  entry: {
-    externalId: string;
-    sagaLink: string;
-    sourceBinding: {
-      sourceType: string;
-      sourceUri: string;
+function renderResolvedSagaLinkMarkdown(
+  resolved: {
+    entry: {
+      externalId: string;
+      sagaLink: string;
+      sourceBinding: {
+        sourceType: string;
+        sourceUri: string;
+      };
+      title: string;
     };
-    title: string;
-  };
-  provenance: {
-    sourceBindingId: string;
-  };
-}): string {
+    provenance: {
+      sourceBindingId: string;
+    };
+  },
+  retrieval: {
+    references: ReadonlyArray<{
+      externalId: string;
+      sagaLink?: string | undefined;
+      title?: string | undefined;
+    }>;
+  },
+): string {
+  const referenceLines =
+    retrieval.references.length === 0
+      ? ["- References: none"]
+      : retrieval.references.map(
+          (reference) =>
+            `- Reference: ${reference.title ?? reference.externalId} ${reference.sagaLink ?? reference.externalId}`,
+        );
+
   return [
     "# Saga Link",
     "",
@@ -333,7 +400,53 @@ function renderResolvedSagaLinkMarkdown(resolved: {
     `- External ID: ${resolved.entry.externalId}`,
     `- Source URI: ${resolved.entry.sourceBinding.sourceUri}`,
     `- Provenance: sourceBinding=${resolved.provenance.sourceBindingId}`,
+    ...referenceLines,
   ].join("\n");
+}
+
+function connectorResultFromEntryMetadata(entry: {
+  metadata: Record<string, unknown>;
+  sourceBinding: {
+    id: string;
+    sourceType: string;
+  };
+}): ConnectorRetrievalResult {
+  return {
+    content: readOptionalString(entry.metadata.content),
+    references: readConnectorReferences(entry.metadata.references, entry),
+  };
+}
+
+function readConnectorReferences(
+  value: unknown,
+  entry: {
+    sourceBinding: {
+      id: string;
+      sourceType: string;
+    };
+  },
+): ConnectorReference[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((reference): ConnectorReference[] => {
+    if (!isRecord(reference)) return [];
+    const externalId = readOptionalString(reference.externalId);
+    if (externalId === undefined) return [];
+
+    return [
+      {
+        connector: readOptionalString(reference.connector) ?? entry.sourceBinding.sourceType,
+        externalId,
+        sourceBindingId: readOptionalString(reference.sourceBindingId) ?? entry.sourceBinding.id,
+        title: readOptionalString(reference.title),
+        url: readOptionalString(reference.url),
+      },
+    ];
+  });
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 function matchedSnippet(value: string, tokens: readonly string[]): string {
