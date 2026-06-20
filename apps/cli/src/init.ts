@@ -21,27 +21,21 @@ export interface InitResult {
   registration: RegisterWorkspaceResult;
 }
 
+type WorkspaceHarnessTarget = "codex" | "claude";
+type WorkspaceHarnessSourceUri = "codex://local" | "claude://local";
+
+interface WorkspaceHarnessBinding {
+  hookCommand: string;
+  hookTrust: "requires-review";
+  hooksPath: string;
+  installedAt: string;
+  sourceBindingId: string;
+  sourceUri: WorkspaceHarnessSourceUri;
+  target: WorkspaceHarnessTarget;
+}
+
 export interface WorkspaceBindingFile {
-  harnesses?: {
-    claude?: {
-      hookCommand: string;
-      hookTrust: "requires-review";
-      hooksPath: string;
-      installedAt: string;
-      sourceBindingId: string;
-      sourceUri: "claude://local";
-      target: "claude";
-    };
-    codex?: {
-      hookCommand: string;
-      hookTrust: "requires-review";
-      hooksPath: string;
-      installedAt: string;
-      sourceBindingId: string;
-      sourceUri: "codex://local";
-      target: "codex";
-    };
-  };
+  harnesses?: Partial<Record<WorkspaceHarnessTarget, WorkspaceHarnessBinding>>;
   project: {
     gitRemote: string | undefined;
     root: string;

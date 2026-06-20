@@ -25,6 +25,7 @@ export type HarnessTarget = "codex" | "claude";
 
 export interface HarnessStatus {
   binding: "installed" | "missing";
+  displayName: string;
   hookCommand: string;
   hookTrust: "not installed" | "requires review";
   hooks: "installed" | "invalid" | "missing";
@@ -36,6 +37,21 @@ export interface HarnessStatus {
 }
 
 export type CodexHarnessStatus = HarnessStatus & { target: "codex" };
+
+type HarnessSourceUri = "codex://local" | "claude://local";
+
+export interface HarnessAdapter {
+  displayName: string;
+  gitignoreEntries: readonly string[];
+  hooksPath(projectRoot: string): string;
+  ingestCommand: "codex-hook" | "claude-hook";
+  settingsLabel: string;
+  shimScriptName: string;
+  shimPath(projectRoot: string): string;
+  sourceType: HarnessTarget;
+  sourceUri: HarnessSourceUri;
+  target: HarnessTarget;
+}
 
 interface HookCommand {
   command: string;
@@ -69,19 +85,34 @@ const LEGACY_HOOK_COMMANDS = {
   codex: "saga ingest codex-hook",
 } as const;
 const LEGACY_CODEX_HOOK_COMMAND = "saga ingest codex-hook";
-const HOOK_SCRIPTS = {
-  claude: "saga-claude-hook.sh",
-  codex: "saga-codex-hook.sh",
-} as const;
-const SOURCE_URIS = {
-  claude: "claude://local",
-  codex: "codex://local",
-} as const;
-const SOURCE_DISPLAY_NAMES = {
-  claude: "Claude Code",
-  codex: "Codex",
-} as const;
 const HOOK_TIMEOUT_SECONDS = 30;
+const HARNESS_TARGET_ORDER = ["codex", "claude"] as const satisfies readonly HarnessTarget[];
+const HARNESS_ADAPTERS = {
+  claude: {
+    displayName: "Claude Code",
+    gitignoreEntries: [".claude/settings.local.json", ".claude/saga-claude-hook.sh"],
+    hooksPath: (projectRoot: string) => join(projectRoot, ".claude", "settings.local.json"),
+    ingestCommand: "claude-hook",
+    settingsLabel: "Claude settings file",
+    shimScriptName: "saga-claude-hook.sh",
+    shimPath: (projectRoot: string) => join(projectRoot, ".claude", "saga-claude-hook.sh"),
+    sourceType: "claude",
+    sourceUri: "claude://local",
+    target: "claude",
+  },
+  codex: {
+    displayName: "Codex",
+    gitignoreEntries: [".codex/"],
+    hooksPath: (projectRoot: string) => join(projectRoot, ".codex", "hooks.json"),
+    ingestCommand: "codex-hook",
+    settingsLabel: "Codex hooks file",
+    shimScriptName: "saga-codex-hook.sh",
+    shimPath: (projectRoot: string) => join(projectRoot, ".codex", "saga-codex-hook.sh"),
+    sourceType: "codex",
+    sourceUri: "codex://local",
+    target: "codex",
+  },
+} as const satisfies Record<HarnessTarget, HarnessAdapter>;
 
 export async function runHarnessCommand(
   args: readonly string[],
@@ -114,15 +145,16 @@ export async function installHarness(input: {
   registerCodexSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
   target: HarnessTarget;
 }): Promise<HarnessStatus> {
+  const adapter = getHarnessAdapter(input.target);
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
     throw new Error(`run saga init before installing the ${input.target} harness`);
   }
 
-  const hooksPath = harnessHooksPath(projectRoot, input.target);
-  const hookCommand = hookShimCommand(projectRoot, input.target);
-  const hooksFile = readHooksSettingsFile(hooksPath, input.target);
+  const hooksPath = adapter.hooksPath(projectRoot);
+  const hookCommand = hookShimCommand(projectRoot, adapter);
+  const hooksFile = readHooksSettingsFile(hooksPath, adapter);
   const sourceBinding = await registerHarnessSourceBinding(input)(
     projectRoot,
     binding.workspace.id,
@@ -139,7 +171,7 @@ export async function installHarness(input: {
         hooksPath,
         installedAt,
         sourceBindingId: sourceBinding.id,
-        sourceUri: SOURCE_URIS[input.target],
+        sourceUri: adapter.sourceUri,
         target: input.target,
       },
     },
@@ -147,8 +179,8 @@ export async function installHarness(input: {
 
   writeBindingFile(projectRoot, nextBinding);
   try {
-    ensureGitignoreEntry(projectRoot, gitignoreEntriesForTarget(input.target));
-    installHookShim(projectRoot, input.target);
+    ensureGitignoreEntry(projectRoot, adapter.gitignoreEntries);
+    installHookShim(projectRoot, adapter);
     writeJsonFile(hooksPath, installSagaHooks(hooksFile, hookCommand));
   } catch (error) {
     writeBindingFile(projectRoot, binding);
@@ -159,12 +191,13 @@ export async function installHarness(input: {
 }
 
 export function uninstallHarness(input: { cwd?: string; target: HarnessTarget }): HarnessStatus {
+  const adapter = getHarnessAdapter(input.target);
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
-  const hooksPath = harnessHooksPath(projectRoot, input.target);
+  const hooksPath = adapter.hooksPath(projectRoot);
 
   if (existsSync(hooksPath)) {
-    const hooksFile = readHooksSettingsFile(hooksPath, input.target);
+    const hooksFile = readHooksSettingsFile(hooksPath, adapter);
     writeJsonFile(
       hooksPath,
       uninstallSagaHooks(hooksFile, binding?.harnesses?.[input.target]?.hookCommand, input.target),
@@ -185,18 +218,27 @@ export function uninstallHarness(input: { cwd?: string; target: HarnessTarget })
 }
 
 export function inspectHarness(input: { cwd?: string; target: HarnessTarget }): HarnessStatus {
-  return inspectTargetHarness(findProjectRoot(input.cwd ?? process.cwd()), input.target);
+  return inspectTargetHarness(
+    findProjectRoot(input.cwd ?? process.cwd()),
+    getHarnessAdapter(input.target),
+  );
 }
 
-function inspectTargetHarness(projectRoot: string, target: HarnessTarget): HarnessStatus {
-  const hooksPath = harnessHooksPath(projectRoot, target);
+export function inspectHarnesses(input: { cwd?: string } = {}): HarnessStatus[] {
+  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
+  return listHarnessAdapters().map((adapter) => inspectTargetHarness(projectRoot, adapter));
+}
+
+function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): HarnessStatus {
+  const hooksPath = adapter.hooksPath(projectRoot);
   const binding = readBindingFile(projectRoot);
   const hookCommand =
-    binding?.harnesses?.[target]?.hookCommand ?? hookShimCommand(projectRoot, target);
-  const hooksFile = tryReadHooksSettingsFile(hooksPath, target);
+    binding?.harnesses?.[adapter.target]?.hookCommand ?? hookShimCommand(projectRoot, adapter);
+  const hooksFile = tryReadHooksSettingsFile(hooksPath, adapter);
   if (!hooksFile.ok) {
     return {
-      binding: binding?.harnesses?.[target] === undefined ? "missing" : "installed",
+      binding: binding?.harnesses?.[adapter.target] === undefined ? "missing" : "installed",
+      displayName: adapter.displayName,
       hookCommand,
       hooks: "invalid",
       hooksError: formatHooksSettingsParseError(hooksFile.error),
@@ -204,20 +246,21 @@ function inspectTargetHarness(projectRoot: string, target: HarnessTarget): Harne
       hooksPath,
       mcp: "deferred",
       skills: "deferred",
-      target,
+      target: adapter.target,
     };
   }
 
   const hooksInstalled = hasSagaHooks(hooksFile.file, hookCommand);
   return {
-    binding: binding?.harnesses?.[target] === undefined ? "missing" : "installed",
+    binding: binding?.harnesses?.[adapter.target] === undefined ? "missing" : "installed",
+    displayName: adapter.displayName,
     hookCommand,
     hookTrust: hooksInstalled ? "requires review" : "not installed",
     hooks: hooksInstalled ? "installed" : "missing",
     hooksPath,
     mcp: "deferred",
     skills: "deferred",
-    target,
+    target: adapter.target,
   };
 }
 
@@ -254,34 +297,30 @@ function parseTarget(value: string | undefined): HarnessTarget {
   throw new Error(`unsupported harness target: ${value}`);
 }
 
-function harnessHooksPath(projectRoot: string, target: HarnessTarget): string {
-  if (target === "claude") return join(projectRoot, ".claude", "settings.local.json");
-  return join(projectRoot, ".codex", "hooks.json");
+export function listHarnessAdapters(): readonly HarnessAdapter[] {
+  return HARNESS_TARGET_ORDER.map((target) => HARNESS_ADAPTERS[target]);
 }
 
-function hookShimPath(projectRoot: string, target: HarnessTarget): string {
-  return join(projectRoot, target === "claude" ? ".claude" : ".codex", HOOK_SCRIPTS[target]);
+function getHarnessAdapter(target: HarnessTarget): HarnessAdapter {
+  return HARNESS_ADAPTERS[target];
 }
 
-function hookShimCommand(projectRoot: string, target: HarnessTarget): string {
-  return quoteShellArg(hookShimPath(projectRoot, target));
+function hookShimCommand(projectRoot: string, adapter: HarnessAdapter): string {
+  return quoteShellArg(adapter.shimPath(projectRoot));
 }
 
-function installHookShim(projectRoot: string, target: HarnessTarget): string {
-  const shimPath = hookShimPath(projectRoot, target);
+function installHookShim(projectRoot: string, adapter: HarnessAdapter): string {
+  const shimPath = adapter.shimPath(projectRoot);
   const cliPath = fileURLToPath(new URL("../bin/saga.js", import.meta.url));
   mkdirSync(dirname(shimPath), { recursive: true });
   writeFileSync(
     shimPath,
-    ["#!/bin/sh", `exec ${quoteShellArg(cliPath)} ingest ${target}-hook "$@"`, ""].join("\n"),
+    ["#!/bin/sh", `exec ${quoteShellArg(cliPath)} ingest ${adapter.ingestCommand} "$@"`, ""].join(
+      "\n",
+    ),
   );
   chmodSync(shimPath, 0o755);
   return quoteShellArg(shimPath);
-}
-
-function gitignoreEntriesForTarget(target: HarnessTarget): string[] {
-  if (target === "claude") return [".claude/settings.local.json", ".claude/saga-claude-hook.sh"];
-  return [".codex/"];
 }
 
 function registerHarnessSourceBinding(input: {
@@ -308,6 +347,7 @@ async function registerAgentSourceBinding(
 ) {
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  const adapter = getHarnessAdapter(target);
   try {
     await Effect.runPromise(assertMigrationsCurrent(service));
     return await Effect.runPromise(
@@ -315,9 +355,9 @@ async function registerAgentSourceBinding(
         config: {
           projectRoot,
         },
-        displayName: SOURCE_DISPLAY_NAMES[target],
-        sourceType: target,
-        sourceUri: SOURCE_URIS[target],
+        displayName: adapter.displayName,
+        sourceType: adapter.sourceType,
+        sourceUri: adapter.sourceUri,
         workspaceId,
       }),
     );
@@ -326,13 +366,13 @@ async function registerAgentSourceBinding(
   }
 }
 
-function readHooksSettingsFile(path: string, target: HarnessTarget): HooksSettingsFile {
-  const result = tryReadHooksSettingsFile(path, target);
+function readHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsFile {
+  const result = tryReadHooksSettingsFile(path, adapter);
   if (result.ok) return result.file;
   throw new Error(formatHooksSettingsParseError(result.error));
 }
 
-function tryReadHooksSettingsFile(path: string, target: HarnessTarget): HooksSettingsReadResult {
+function tryReadHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsReadResult {
   if (!existsSync(path)) return { file: {}, ok: true };
   try {
     return { file: parseHooksSettingsFile(JSON.parse(readFileSync(path, "utf8"))), ok: true };
@@ -341,7 +381,7 @@ function tryReadHooksSettingsFile(path: string, target: HarnessTarget): HooksSet
       error: {
         message: error instanceof Error ? error.message : String(error),
         path,
-        target,
+        target: adapter.target,
       },
       ok: false,
     };
@@ -349,7 +389,7 @@ function tryReadHooksSettingsFile(path: string, target: HarnessTarget): HooksSet
 }
 
 function formatHooksSettingsParseError(error: HooksSettingsParseError): string {
-  const label = error.target === "claude" ? "Claude settings file" : "Codex hooks file";
+  const label = getHarnessAdapter(error.target).settingsLabel;
   return `invalid ${label} ${error.path}: ${error.message}`;
 }
 
@@ -476,7 +516,9 @@ function withoutSagaHooks(
   const legacyCommands: readonly string[] =
     target === undefined ? Object.values(LEGACY_HOOK_COMMANDS) : [LEGACY_HOOK_COMMANDS[target]];
   const hookScripts: readonly string[] =
-    target === undefined ? Object.values(HOOK_SCRIPTS) : [HOOK_SCRIPTS[target]];
+    target === undefined
+      ? listHarnessAdapters().map((adapter) => adapter.shimScriptName)
+      : [getHarnessAdapter(target).shimScriptName];
   return matchers
     .map((matcher) => {
       if (matcher.hooks === undefined) return matcher;

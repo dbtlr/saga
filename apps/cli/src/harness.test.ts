@@ -3,7 +3,12 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { installHarness, inspectHarness, uninstallHarness } from "./harness.js";
+import {
+  installHarness,
+  inspectHarness,
+  listHarnessAdapters,
+  uninstallHarness,
+} from "./harness.js";
 import { readBindingFile, writeBindingFile } from "./init.js";
 
 function boundProject(): string {
@@ -27,6 +32,34 @@ function boundProject(): string {
   });
   return projectRoot;
 }
+
+describe("listHarnessAdapters", () => {
+  test("describes the supported harness targets", () => {
+    const projectRoot = "/workspace";
+
+    expect(
+      listHarnessAdapters().map((adapter) => ({
+        hooksPath: adapter.hooksPath(projectRoot),
+        ingestCommand: adapter.ingestCommand,
+        sourceUri: adapter.sourceUri,
+        target: adapter.target,
+      })),
+    ).toEqual([
+      {
+        hooksPath: join(projectRoot, ".codex", "hooks.json"),
+        ingestCommand: "codex-hook",
+        sourceUri: "codex://local",
+        target: "codex",
+      },
+      {
+        hooksPath: join(projectRoot, ".claude", "settings.local.json"),
+        ingestCommand: "claude-hook",
+        sourceUri: "claude://local",
+        target: "claude",
+      },
+    ]);
+  });
+});
 
 describe("installHarness", () => {
   test("installs Codex hooks and records local harness state", async () => {
