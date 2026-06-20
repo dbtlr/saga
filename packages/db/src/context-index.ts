@@ -97,6 +97,11 @@ export function upsertContextIndexEntry(
         throw new ContextIndexError({ message: `unsupported include policy: ${includePolicy}` });
       }
 
+      await assertSourceBindingInWorkspace(service, {
+        sourceBindingId: input.sourceBindingId,
+        workspaceId: input.workspaceId,
+      });
+
       const [entry] = await service.db
         .insert(contextIndexEntries)
         .values({
@@ -163,7 +168,13 @@ export function listContextIndexEntries(
           },
         })
         .from(contextIndexEntries)
-        .innerJoin(sourceBindings, eq(contextIndexEntries.sourceBindingId, sourceBindings.id))
+        .innerJoin(
+          sourceBindings,
+          and(
+            eq(contextIndexEntries.sourceBindingId, sourceBindings.id),
+            eq(contextIndexEntries.workspaceId, sourceBindings.workspaceId),
+          ),
+        )
         .where(and(...conditions))
         .orderBy(desc(contextIndexEntries.importance), asc(contextIndexEntries.title))
         .limit(input.limit ?? 50);
@@ -207,7 +218,13 @@ export function resolveSagaLink(
           },
         })
         .from(contextIndexEntries)
-        .innerJoin(sourceBindings, eq(contextIndexEntries.sourceBindingId, sourceBindings.id))
+        .innerJoin(
+          sourceBindings,
+          and(
+            eq(contextIndexEntries.sourceBindingId, sourceBindings.id),
+            eq(contextIndexEntries.workspaceId, sourceBindings.workspaceId),
+          ),
+        )
         .where(
           and(
             eq(contextIndexEntries.workspaceId, input.workspaceId),
@@ -246,6 +263,28 @@ function normalizeKey(key: string): string {
     throw new ContextIndexError({ message: "Context Index key is required" });
   }
   return normalized;
+}
+
+async function assertSourceBindingInWorkspace(
+  service: DatabaseService,
+  input: { sourceBindingId: string; workspaceId: string },
+): Promise<void> {
+  const [sourceBinding] = await service.db
+    .select({ id: sourceBindings.id })
+    .from(sourceBindings)
+    .where(
+      and(
+        eq(sourceBindings.id, input.sourceBindingId),
+        eq(sourceBindings.workspaceId, input.workspaceId),
+      ),
+    )
+    .limit(1);
+
+  if (sourceBinding === undefined) {
+    throw new ContextIndexError({
+      message: "Context Index source binding must belong to the same workspace",
+    });
+  }
 }
 
 function errorMessage(cause: unknown): string {

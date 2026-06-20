@@ -251,6 +251,24 @@ describePostgres("postgres integration", () => {
     expect(rows).toHaveLength(1);
   });
 
+  test("rejects Context Index entries that reference another workspace source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const first = await createWorkspaceWithCodexSource("context-index-first");
+    const second = await createWorkspaceWithCodexSource("context-index-second");
+
+    await expect(
+      Effect.runPromise(
+        upsertContextIndexEntry(service, {
+          externalId: "notes/cross-workspace.md",
+          key: "cross-workspace",
+          sourceBindingId: first.sourceBinding.id,
+          title: "Cross Workspace",
+          workspaceId: second.workspace.id,
+        }),
+      ),
+    ).rejects.toThrow("Context Index source binding must belong to the same workspace");
+  });
+
   test("persists raw events", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 
