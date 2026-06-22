@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import {
   extractCodexTranscriptImportHints,
@@ -493,6 +493,7 @@ async function deriveSessionRelationships(
       and(
         eq(sessions.workspaceId, input.input.workspaceId),
         eq(sessions.harness, input.input.harness),
+        eq(sessions.sourceBindingId, input.session.sourceBindingId),
       ),
     );
   for (const peerSession of peerSessions) {
@@ -529,6 +530,11 @@ async function deriveChildRelationshipsForSession(
   },
 ): Promise<void> {
   const candidates = relationshipParentCandidates(input.childSession);
+  const desiredRelationships: {
+    parentSession: Session;
+    relationshipEvidence: Record<string, unknown>;
+  }[] = [];
+
   for (const candidate of candidates) {
     const parentSession = await findParentSessionForRelationship(tx, {
       childSession: input.childSession,
@@ -536,13 +542,28 @@ async function deriveChildRelationshipsForSession(
       parentHarnessSessionId: candidate.parentHarnessSessionId,
     });
     if (parentSession === undefined) continue;
-    await insertOrRefreshChildRelationship(tx, {
-      childSession: input.childSession,
-      input: input.input,
+    desiredRelationships.push({
       parentSession,
       relationshipEvidence: relationshipEvidenceForCandidate(candidate, input.childSession),
     });
   }
+
+  for (const desiredRelationship of desiredRelationships) {
+    await insertOrRefreshChildRelationship(tx, {
+      childSession: input.childSession,
+      input: input.input,
+      parentSession: desiredRelationship.parentSession,
+      relationshipEvidence: desiredRelationship.relationshipEvidence,
+    });
+  }
+
+  await deleteStaleChildRelationships(tx, {
+    childSession: input.childSession,
+    desiredParentSessionIds: desiredRelationships.map(
+      (desiredRelationship) => desiredRelationship.parentSession.id,
+    ),
+    input: input.input,
+  });
 }
 
 async function findParentSessionForRelationship(
@@ -561,6 +582,7 @@ async function findParentSessionForRelationship(
         eq(sessions.workspaceId, input.input.workspaceId),
         eq(sessions.harness, input.input.harness),
         eq(sessions.harnessSessionId, input.parentHarnessSessionId),
+        eq(sessions.sourceBindingId, input.childSession.sourceBindingId),
       ),
     )
     .limit(1);
@@ -577,10 +599,11 @@ async function insertOrRefreshChildRelationship(
     relationshipEvidence: Record<string, unknown>;
   },
 ): Promise<void> {
-  const sourceTurnId = await findRelationshipSourceTurnId(tx, {
-    parentSession: input.parentSession,
-    relationshipEvidence: input.relationshipEvidence,
-  });
+  const sourceTurnId =
+    (await findRelationshipSourceTurnId(tx, {
+      parentSession: input.parentSession,
+      relationshipEvidence: input.relationshipEvidence,
+    })) ?? null;
   const [existingRelationship] = await tx
     .select()
     .from(sessionRelationships)
@@ -617,14 +640,47 @@ async function insertOrRefreshChildRelationship(
     return;
   }
 
-  if (existingRelationship.sourceTurnId !== null || sourceTurnId === undefined) return;
+  if (
+    existingRelationship.sourceTurnId === sourceTurnId &&
+    jsonEqual(existingRelationship.evidence, input.relationshipEvidence)
+  ) {
+    return;
+  }
+
   await tx
     .update(sessionRelationships)
     .set({
+      evidence: input.relationshipEvidence,
       sourceTurnId,
       updatedAt: new Date(),
     })
     .where(eq(sessionRelationships.id, existingRelationship.id));
+}
+
+async function deleteStaleChildRelationships(
+  tx: DatabaseService["db"],
+  input: {
+    childSession: Session;
+    desiredParentSessionIds: string[];
+    input: NormalizedRawSessionImportInput;
+  },
+): Promise<void> {
+  const baseConditions = [
+    eq(sessionRelationships.workspaceId, input.input.workspaceId),
+    eq(sessionRelationships.targetSessionId, input.childSession.id),
+    eq(sessionRelationships.relationshipType, "child"),
+  ];
+
+  await tx
+    .delete(sessionRelationships)
+    .where(
+      and(
+        ...baseConditions,
+        ...(input.desiredParentSessionIds.length === 0
+          ? []
+          : [notInArray(sessionRelationships.sourceSessionId, input.desiredParentSessionIds)]),
+      ),
+    );
 }
 
 async function findRelationshipSourceTurnId(
@@ -771,7 +827,10 @@ async function refreshSessionAndActivityInterval(
       lastActivityAt:
         input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
       metadata: {
-        ...asRecord(input.session.metadata),
+        ...sessionMetadataBaseForRefresh({
+          existingMetadata: input.session.metadata,
+          transcriptNormalization: input.transcriptNormalization,
+        }),
         ...input.transcriptNormalization?.session.metadata,
         latestRawSessionRecordId: input.rawSessionRecordId,
       },
@@ -821,6 +880,19 @@ async function refreshSessionAndActivityInterval(
   }
 
   return { activityInterval: updatedActivityInterval, session: updatedSession };
+}
+
+function sessionMetadataBaseForRefresh(input: {
+  existingMetadata: unknown;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): Record<string, unknown> {
+  const metadata = asRecord(input.existingMetadata);
+  if (input.transcriptNormalization === undefined) return metadata;
+
+  const refreshedMetadata = { ...metadata };
+  delete refreshedMetadata.parentHarnessSessionId;
+  delete refreshedMetadata.subagentEvidence;
+  return refreshedMetadata;
 }
 
 async function repairActiveRawSessionRecordDerivedRows(

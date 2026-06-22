@@ -2273,6 +2273,300 @@ describePostgres("raw session import", () => {
     ]);
   });
 
+  test("synchronizes Codex child relationships from current child evidence", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-relationship-sync");
+    const host = { id: "host-codex-relationship-sync" };
+    const parentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T15:10:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "parent-thread-sync-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:10:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-sync-1" },
+      },
+      {
+        timestamp: "2026-06-22T15:10:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate first importer inspection." }],
+          metadata: { turn_id: "parent-turn-sync-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:10:03.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-sync-2" },
+      },
+      {
+        timestamp: "2026-06-22T15:10:04.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate second importer inspection." }],
+          metadata: { turn_id: "parent-turn-sync-2" },
+        },
+      },
+    ]);
+    const secondParentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T15:11:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "parent-thread-sync-2",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:11:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-sync-3" },
+      },
+      {
+        timestamp: "2026-06-22T15:11:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate alternate importer inspection." }],
+          metadata: { turn_id: "parent-turn-sync-3" },
+        },
+      },
+    ]);
+    const childRawContent = (parentThreadId: string, parentTurnId: string, text: string) =>
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T15:12:00.000Z",
+          type: "session_meta",
+          payload: {
+            agent_role: "subagent",
+            cwd: "/work/saga",
+            id: "child-thread-sync",
+            parent_thread_id: parentThreadId,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_turn_id: parentTurnId,
+                },
+              },
+            },
+            thread_source: "subagent",
+          },
+        },
+        {
+          timestamp: "2026-06-22T15:12:01.000Z",
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: `child-${parentTurnId}` },
+        },
+        {
+          timestamp: "2026-06-22T15:12:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+            metadata: { turn_id: `child-${parentTurnId}` },
+          },
+        },
+      ]);
+    const noRelationshipChildRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T15:13:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "child-thread-sync",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:13:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "child-no-parent" },
+      },
+      {
+        timestamp: "2026-06-22T15:13:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue without subagent evidence." }],
+          metadata: { turn_id: "child-no-parent" },
+        },
+      },
+    ]);
+
+    const parent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:10:05.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "parent-thread-sync-1",
+        host,
+        locator: "/tmp/parent-thread-sync-1.jsonl",
+        rawContent: parentRawContent,
+        workspaceId,
+      }),
+    );
+    const secondParent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:11:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "parent-thread-sync-2",
+        host,
+        locator: "/tmp/parent-thread-sync-2.jsonl",
+        rawContent: secondParentRawContent,
+        workspaceId,
+      }),
+    );
+    const child = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:12:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-sync",
+        host,
+        locator: "/tmp/child-thread-sync.jsonl",
+        rawContent: childRawContent(
+          "parent-thread-sync-1",
+          "parent-turn-sync-1",
+          "Inspect the first delegated task.",
+        ),
+        workspaceId,
+      }),
+    );
+
+    const parentTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, parent.session.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    const matchesCodexTurn = (turn: (typeof parentTurns)[number], turnId: string) =>
+      turn.harnessTurnId === turnId ||
+      (turn.metadata as Record<string, unknown>).codexTurnId === turnId;
+    const firstParentTurn = parentTurns.find((turn) =>
+      matchesCodexTurn(turn, "parent-turn-sync-1"),
+    );
+    const secondParentTurn = parentTurns.find((turn) =>
+      matchesCodexTurn(turn, "parent-turn-sync-2"),
+    );
+    const [thirdParentTurn] = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, secondParent.session.id))
+      .limit(1);
+
+    let relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      sourceSessionId: parent.session.id,
+      sourceTurnId: firstParentTurn?.id,
+    });
+    expect(relationships[0]?.evidence).toMatchObject({
+      parentHarnessSessionId: "parent-thread-sync-1",
+      parentTurnId: "parent-turn-sync-1",
+    });
+    const firstRelationshipId = relationships[0]?.id;
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:12:04.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-sync",
+        host,
+        locator: "/tmp/child-thread-sync.jsonl",
+        rawContent: childRawContent(
+          "parent-thread-sync-1",
+          "parent-turn-sync-2",
+          "Inspect the updated delegated task.",
+        ),
+        workspaceId,
+      }),
+    );
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      id: firstRelationshipId,
+      sourceSessionId: parent.session.id,
+      sourceTurnId: secondParentTurn?.id,
+    });
+    expect(relationships[0]?.evidence).toMatchObject({
+      parentHarnessSessionId: "parent-thread-sync-1",
+      parentTurnId: "parent-turn-sync-2",
+    });
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:12:05.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-sync",
+        host,
+        locator: "/tmp/child-thread-sync.jsonl",
+        rawContent: childRawContent(
+          "parent-thread-sync-2",
+          "parent-turn-sync-3",
+          "Inspect the alternate delegated task.",
+        ),
+        workspaceId,
+      }),
+    );
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      sourceSessionId: secondParent.session.id,
+      sourceTurnId: thirdParentTurn?.id,
+    });
+    expect(relationships[0]?.id).not.toBe(firstRelationshipId);
+    expect(relationships[0]?.evidence).toMatchObject({
+      parentHarnessSessionId: "parent-thread-sync-2",
+      parentTurnId: "parent-turn-sync-3",
+    });
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:13:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-sync",
+        host,
+        locator: "/tmp/child-thread-sync.jsonl",
+        rawContent: noRelationshipChildRawContent,
+        workspaceId,
+      }),
+    );
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(0);
+  });
+
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("claude-normalize");
@@ -3303,6 +3597,103 @@ describePostgres("raw session import", () => {
       .where(
         sql`${sessionRelationships.workspaceId} in (${parentWorkspaceId}, ${childWorkspaceId})`,
       );
+    expect(relationships).toHaveLength(0);
+  });
+
+  test("does not derive subagent relationships across source bindings", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("relationship-source-binding");
+    const parentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:10:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "shared-source-parent-thread",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Parent on the first host." }],
+        },
+      },
+    ]);
+    const childRawContent = (id: string, text: string) =>
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T18:11:00.000Z",
+          type: "session_meta",
+          payload: {
+            agent_role: "subagent",
+            id,
+            parent_thread_id: "shared-source-parent-thread",
+            thread_source: "subagent",
+          },
+        },
+        {
+          timestamp: "2026-06-22T18:11:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        },
+      ]);
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:11:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "source-child-before-parent",
+        host: { id: "host-relationship-child-source" },
+        locator: "/tmp/source-child-before-parent.jsonl",
+        rawContent: childRawContent(
+          "source-child-before-parent",
+          "Child imported before parent on another host.",
+        ),
+        workspaceId,
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:10:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "shared-source-parent-thread",
+        host: { id: "host-relationship-parent-source" },
+        locator: "/tmp/shared-source-parent-thread.jsonl",
+        rawContent: parentRawContent,
+        workspaceId,
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:11:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "source-child-after-parent",
+        host: { id: "host-relationship-child-source" },
+        locator: "/tmp/source-child-after-parent.jsonl",
+        rawContent: childRawContent(
+          "source-child-after-parent",
+          "Child imported after parent on another host.",
+        ),
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
     expect(relationships).toHaveLength(0);
   });
 
