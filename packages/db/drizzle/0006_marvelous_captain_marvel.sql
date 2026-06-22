@@ -1,0 +1,2 @@
+DROP INDEX "users_workspace_identity_handle_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "users_workspace_identity_handle_external_unique" ON "users" USING btree ("workspace_id","identity_source","handle","external_subject");

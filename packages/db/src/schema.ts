@@ -51,10 +51,11 @@ export const users = pgTable(
   (table) => [
     index("users_workspace_id_idx").on(table.workspaceId),
     uniqueIndex("users_id_workspace_unique").on(table.id, table.workspaceId),
-    uniqueIndex("users_workspace_identity_handle_unique").on(
+    uniqueIndex("users_workspace_identity_handle_external_unique").on(
       table.workspaceId,
       table.identitySource,
       table.handle,
+      table.externalSubject,
     ),
   ],
 );

@@ -190,6 +190,83 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("keeps same-handle host users distinct across host subjects", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-host-users");
+    const baseInput = {
+      author: {
+        displayName: "Drew",
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      model: "gpt-5-fixture",
+      rawContent: '{"type":"user","text":"Host attribution fixture"}\n',
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T14:00:00.000Z",
+        harnessSessionId: "host-session-1",
+        host: {
+          id: "host-1",
+          label: "host-one",
+          projectRoot: "/tmp/saga-one",
+        },
+        locator: "/tmp/host-session-1.jsonl",
+      }),
+    );
+    const second = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T14:01:00.000Z",
+        harnessSessionId: "host-session-2",
+        host: {
+          id: "host-2",
+          label: "host-two",
+          projectRoot: "/tmp/saga-two",
+        },
+        locator: "/tmp/host-session-2.jsonl",
+        rawContent: '{"type":"user","text":"Second host attribution fixture"}\n',
+      }),
+    );
+
+    expect(first.authorUser.id).not.toBe(second.authorUser.id);
+    expect(first.authorUser).toMatchObject({
+      externalSubject: "host-1",
+      handle: "drew",
+      identitySource: "host",
+    });
+    expect(second.authorUser).toMatchObject({
+      externalSubject: "host-2",
+      handle: "drew",
+      identitySource: "host",
+    });
+
+    const hostUsers = await service.db
+      .select()
+      .from(users)
+      .where(eq(users.workspaceId, workspaceId))
+      .orderBy(asc(users.externalSubject));
+    expect(hostUsers.map((user) => user.externalSubject)).toEqual(["host-1", "host-2"]);
+
+    const rows = await service.sql<{ external_subject: string; sessions: string }[]>`
+      select u.external_subject, count(*)::text as sessions
+      from sessions s
+      inner join users u
+        on u.id = s.author_user_id
+      where s.workspace_id = ${workspaceId}
+      group by u.external_subject
+      order by u.external_subject
+    `;
+    expect(rows).toEqual([
+      { external_subject: "host-1", sessions: "1" },
+      { external_subject: "host-2", sessions: "1" },
+    ]);
+  });
+
   test("lists recent raw session records with session and provenance metadata", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-list");

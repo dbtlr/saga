@@ -157,7 +157,7 @@ async function importRawSessionRecordUnsafe(
           },
           updatedAt: now,
         },
-        target: [users.workspaceId, users.identitySource, users.handle],
+        target: [users.workspaceId, users.identitySource, users.handle, users.externalSubject],
       })
       .returning();
     if (authorUser === undefined) {
