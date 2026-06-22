@@ -4,10 +4,12 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
+import { sessionSegmentEmbeddingInputHash } from "./session-embeddings.js";
 import {
   activityIntervals,
   rawSessionRecords,
   sessions,
+  sessionSegmentEmbeddings,
   sessionSegments,
   sessionTurns,
   sourceBindings,
@@ -85,6 +87,7 @@ describePostgres("session recall", () => {
     expect(first?.scores.lexical).toBeGreaterThan(0);
     expect(first?.scores.trigram).toBeGreaterThan(0);
     expect(first?.scores.combined).toBe(first?.combinedScore);
+    expect(first?.scores.vector).toBeUndefined();
     expect(first?.snippet.toLowerCase()).toContain("lexical");
     expect(first?.snippet.toLowerCase()).toContain("recall");
     expect(first?.turn).toMatchObject({
@@ -173,6 +176,83 @@ describePostgres("session recall", () => {
     expect(highThresholdResult.matchCount).toBe(0);
   });
 
+  test("uses optional vector candidates while preserving segment-level recall pointers", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const corpus = await seedRecallCorpus(service, "vector");
+    const provider = recallVectorProvider();
+    await insertRecallEmbedding(service, {
+      provider,
+      rawSessionRecordId: corpus.primary.rawSessionRecordId,
+      segmentId: corpus.primary.segmentIds.authentication,
+      text: "Authentication cache invalidation failed in Codex harness.",
+      vector: [1, 0, 0],
+      workspaceId: corpus.workspaceId,
+    });
+    await insertRecallEmbedding(service, {
+      provider,
+      rawSessionRecordId: corpus.primary.rawSessionRecordId,
+      segmentId: corpus.primary.segmentIds.lexicalExact,
+      text: "Implement lexical recall lexical recall over session segments with full text search.",
+      vector: [0, 1, 0],
+      workspaceId: corpus.workspaceId,
+    });
+
+    const result = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "zzzznomatch",
+        queryEmbedding: {
+          dimensions: provider.dimensions,
+          model: provider.model,
+          provider: provider.id,
+          vector: [1, 0, 0],
+        },
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+
+    const first = result.sessions[0]?.matches[0];
+    expect(first?.segment.id).toBe(corpus.primary.segmentIds.authentication);
+    expect(first?.scores.lexical).toBe(0);
+    expect(first?.scores.vector).toBeGreaterThan(0.99);
+    expect(first?.combinedScore).toBe(first?.scores.combined);
+    expect(first?.session.id).toBe(corpus.primary.sessionId);
+    expect(first?.turn.id).toBe(corpus.primary.turnIds.authentication);
+    expect(first?.rawSessionRecord.id).toBe(corpus.primary.rawSessionRecordId);
+  });
+
+  test("can generate the recall query vector through an injected provider callback", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const corpus = await seedRecallCorpus(service, "vector-provider");
+    const provider = recallVectorProvider();
+    await insertRecallEmbedding(service, {
+      provider,
+      rawSessionRecordId: corpus.primary.rawSessionRecordId,
+      segmentId: corpus.primary.segmentIds.lexicalExact,
+      text: "Implement lexical recall lexical recall over session segments with full text search.",
+      vector: [0, 1, 0],
+      workspaceId: corpus.workspaceId,
+    });
+
+    const queries: string[] = [];
+    const result = await Effect.runPromise(
+      searchSessionRecall(service, {
+        embeddingProvider: {
+          provider,
+          embedQuery: async ({ query }) => {
+            queries.push(query);
+            return [0, 1, 0];
+          },
+        },
+        query: "provider callback query",
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+
+    expect(queries).toEqual(["provider callback query"]);
+    expect(result.sessions[0]?.matches[0]?.segment.id).toBe(corpus.primary.segmentIds.lexicalExact);
+    expect(result.sessions[0]?.matches[0]?.scores.vector).toBeGreaterThan(0.99);
+  });
+
   test("scopes recall to the workspace and only searches filtered segment text", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const corpus = await seedRecallCorpus(service, "isolation");
@@ -206,6 +286,15 @@ describePostgres("session recall", () => {
   test("excludes disabled source bindings from search and context expansion", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const corpus = await seedRecallCorpus(service, "disabled-source");
+    const provider = recallVectorProvider();
+    await insertRecallEmbedding(service, {
+      provider,
+      rawSessionRecordId: corpus.primary.rawSessionRecordId,
+      segmentId: corpus.primary.segmentIds.authentication,
+      text: "Authentication cache invalidation failed in Codex harness.",
+      vector: [1, 0, 0],
+      workspaceId: corpus.workspaceId,
+    });
 
     await service.db
       .update(sourceBindings)
@@ -220,6 +309,20 @@ describePostgres("session recall", () => {
     );
     expect(result.matchCount).toBe(0);
 
+    const vectorResult = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "zzzznomatch",
+        queryEmbedding: {
+          dimensions: provider.dimensions,
+          model: provider.model,
+          provider: provider.id,
+          vector: [1, 0, 0],
+        },
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(vectorResult.matchCount).toBe(0);
+
     await expect(
       Effect.runPromise(
         expandRecallContext(service, {
@@ -233,6 +336,15 @@ describePostgres("session recall", () => {
   test("excludes inactive raw session snapshots from search and context expansion", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const corpus = await seedRecallCorpus(service, "inactive-raw");
+    const provider = recallVectorProvider();
+    await insertRecallEmbedding(service, {
+      provider,
+      rawSessionRecordId: corpus.primary.rawSessionRecordId,
+      segmentId: corpus.primary.segmentIds.authentication,
+      text: "Authentication cache invalidation failed in Codex harness.",
+      vector: [1, 0, 0],
+      workspaceId: corpus.workspaceId,
+    });
 
     await service.db
       .update(rawSessionRecords)
@@ -246,6 +358,20 @@ describePostgres("session recall", () => {
       }),
     );
     expect(result.matchCount).toBe(0);
+
+    const vectorResult = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "zzzznomatch",
+        queryEmbedding: {
+          dimensions: provider.dimensions,
+          model: provider.model,
+          provider: provider.id,
+          vector: [1, 0, 0],
+        },
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(vectorResult.matchCount).toBe(0);
 
     await expect(
       Effect.runPromise(
@@ -346,6 +472,41 @@ interface WorkspaceBundle {
   authorUserId: string;
   sourceBindingId: string;
   workspaceId: string;
+}
+
+function recallVectorProvider() {
+  return {
+    dimensions: 3,
+    id: "openai",
+    model: "deterministic-recall-vector",
+  } as const;
+}
+
+async function insertRecallEmbedding(
+  service: DatabaseService,
+  input: {
+    provider: ReturnType<typeof recallVectorProvider>;
+    rawSessionRecordId: string;
+    segmentId: string;
+    text: string;
+    vector: number[];
+    workspaceId: string;
+  },
+): Promise<void> {
+  await service.db.insert(sessionSegmentEmbeddings).values({
+    dimensions: input.provider.dimensions,
+    embedding: input.vector,
+    inputHash: sessionSegmentEmbeddingInputHash(input.text, input.provider),
+    metadata: {
+      fixture: "session-recall",
+      status: "indexed",
+    },
+    model: input.provider.model,
+    provider: input.provider.id,
+    rawSessionRecordId: input.rawSessionRecordId,
+    segmentId: input.segmentId,
+    workspaceId: input.workspaceId,
+  });
 }
 
 async function seedRecallCorpus(service: DatabaseService, suffix: string): Promise<SeededCorpus> {
