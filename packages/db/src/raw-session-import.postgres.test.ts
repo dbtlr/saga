@@ -17,6 +17,7 @@ import {
   activityIntervals,
   rawSessionRecords,
   sessions,
+  sessionRelationships,
   sessionSegments,
   sessionTurns,
   sourceBindings,
@@ -2068,6 +2069,210 @@ describePostgres("raw session import", () => {
     expect(resultTurnSegments[0]?.searchText).toContain("Structured array output needle");
   });
 
+  test("derives Codex subagent child relationships when the parent session is present later", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-subagent-relationships");
+    const childRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T15:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          agent_role: "subagent",
+          cwd: "/work/saga",
+          id: "child-thread-1",
+          parent_thread_id: "parent-thread-1",
+          source: {
+            subagent: {
+              thread_spawn: {
+                parent_turn_id: "parent-turn-1",
+              },
+            },
+          },
+          thread_source: "subagent",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:00:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "child-turn-1" },
+      },
+      {
+        timestamp: "2026-06-22T15:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Inspect a focused importer concern." }],
+          metadata: { turn_id: "child-turn-1" },
+        },
+      },
+    ]);
+    const parentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:59:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "parent-thread-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:59:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-1" },
+      },
+      {
+        timestamp: "2026-06-22T14:59:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate the importer inspection." }],
+          metadata: { turn_id: "parent-turn-1" },
+        },
+      },
+    ]);
+
+    const child = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:00:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-1",
+        host: { id: "host-codex-relationships" },
+        locator: "/tmp/child-thread-1.jsonl",
+        rawContent: childRawContent,
+        workspaceId,
+      }),
+    );
+
+    let relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(0);
+
+    const parent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:00:04.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "parent-thread-1",
+        host: { id: "host-codex-relationships" },
+        locator: "/tmp/parent-thread-1.jsonl",
+        rawContent: parentRawContent,
+        workspaceId,
+      }),
+    );
+
+    const [parentTurn] = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, parent.session.id))
+      .limit(1);
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: "explicit",
+      relationshipType: "child",
+      sourceSessionId: parent.session.id,
+      sourceTurnId: parentTurn?.id,
+      targetSessionId: child.session.id,
+    });
+    expect(relationships[0]?.evidence).toMatchObject({
+      agentRole: "subagent",
+      childHarnessSessionId: "child-thread-1",
+      derivation: "session-relationship-import-v1",
+      parentHarnessSessionId: "parent-thread-1",
+      parentThreadId: "parent-thread-1",
+      parentTurnId: "parent-turn-1",
+      threadSource: "subagent",
+    });
+
+    const updatedParentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:59:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "parent-thread-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:59:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-1" },
+      },
+      {
+        timestamp: "2026-06-22T14:59:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate the importer inspection again." }],
+          metadata: { turn_id: "parent-turn-1" },
+        },
+      },
+    ]);
+    const updatedParent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:00:04.500Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "parent-thread-1",
+        host: { id: "host-codex-relationships" },
+        locator: "/tmp/parent-thread-1.jsonl",
+        rawContent: updatedParentRawContent,
+        workspaceId,
+      }),
+    );
+    expect(updatedParent.operation).toBe("inserted");
+    const [updatedParentTurn] = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, parent.session.id))
+      .limit(1);
+    const refreshedRelationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(refreshedRelationships).toHaveLength(1);
+    expect(refreshedRelationships[0]).toMatchObject({
+      id: relationships[0]?.id,
+      sourceTurnId: updatedParentTurn?.id,
+    });
+    expect(refreshedRelationships[0]?.sourceTurnId).not.toBe(relationships[0]?.sourceTurnId);
+    relationships = refreshedRelationships;
+
+    const repeatedChild = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:00:05.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-1",
+        host: { id: "host-codex-relationships" },
+        locator: "/tmp/child-thread-1.jsonl",
+        rawContent: childRawContent,
+        workspaceId,
+      }),
+    );
+    expect(repeatedChild.operation).toBe("unchanged");
+    const repeatedRelationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(repeatedRelationships.map((relationship) => relationship.id)).toEqual([
+      relationships[0]?.id,
+    ]);
+  });
+
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("claude-normalize");
@@ -2973,6 +3178,132 @@ describePostgres("raw session import", () => {
       sessionId: "claude-parent-session",
       sourceToolUseID: "toolu-agent-parent",
     });
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: "explicit",
+      relationshipType: "child",
+      sourceSessionId: parent.session.id,
+      sourceTurnId: parentTurns[1]?.id,
+      targetSessionId: subagent.session.id,
+    });
+    expect(relationships[0]?.evidence).toMatchObject({
+      agentId: "agent-1",
+      childHarnessSessionId: "claude-parent-session:subagent:agent-1",
+      derivation: "session-relationship-import-v1",
+      parentHarnessSessionId: "claude-parent-session",
+      sourceToolUseID: "toolu-agent-parent",
+    });
+
+    const repeatedSubagent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T17:00:06.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        harnessSessionId: "claude-parent-session",
+        host: {
+          id: "host-claude-sidechain",
+        },
+        locator: "/tmp/claude-parent-session/subagents/agent-1.jsonl",
+        rawContent: subagentRawContent,
+        workspaceId,
+      }),
+    );
+    expect(repeatedSubagent.operation).toBe("unchanged");
+    const repeatedRelationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(repeatedRelationships.map((relationship) => relationship.id)).toEqual([
+      relationships[0]?.id,
+    ]);
+  });
+
+  test("does not derive subagent relationships across workspaces", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const parentWorkspaceId = await createBoundWorkspace("relationship-parent-workspace");
+    const childWorkspaceId = await createBoundWorkspace("relationship-child-workspace");
+    const parentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "shared-parent-thread",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Parent in another workspace." }],
+        },
+      },
+    ]);
+    const childRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:01:00.000Z",
+        type: "session_meta",
+        payload: {
+          agent_role: "subagent",
+          id: "shared-child-thread",
+          parent_thread_id: "shared-parent-thread",
+          thread_source: "subagent",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:01:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Child in a different workspace." }],
+        },
+      },
+    ]);
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:00:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "shared-parent-thread",
+        host: { id: "host-cross-workspace" },
+        locator: "/tmp/shared-parent-thread.jsonl",
+        rawContent: parentRawContent,
+        workspaceId: parentWorkspaceId,
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:01:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "shared-child-thread",
+        host: { id: "host-cross-workspace" },
+        locator: "/tmp/shared-child-thread.jsonl",
+        rawContent: childRawContent,
+        workspaceId: childWorkspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(
+        sql`${sessionRelationships.workspaceId} in (${parentWorkspaceId}, ${childWorkspaceId})`,
+      );
+    expect(relationships).toHaveLength(0);
   });
 
   test("preserves Claude lifecycle payloads without creating turns", async () => {

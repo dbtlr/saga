@@ -15,6 +15,7 @@ import {
   activityIntervals,
   rawSessionRecords,
   sessionSegmentEmbeddings,
+  sessionRelationships,
   sessionSegments,
   sessionTurns,
   sessions,
@@ -214,13 +215,17 @@ async function importRawSessionRecordUnsafe(
         session,
         transcriptNormalization,
       });
+      const relationshipSession = await deriveSessionRelationships(tx, {
+        input,
+        session: existing.session,
+      });
       return {
         activityInterval: existing.activityInterval,
         authorUser,
         contentHash: input.contentHash,
         operation: "unchanged",
         rawSessionRecord: existing.rawSessionRecord,
-        session: existing.session,
+        session: relationshipSession,
         sourceBinding,
       };
     }
@@ -285,13 +290,17 @@ async function importRawSessionRecordUnsafe(
               session,
               transcriptNormalization,
             });
+            const relationshipSession = await deriveSessionRelationships(tx, {
+              input,
+              session: existing.session,
+            });
             return {
               activityInterval: existing.activityInterval,
               authorUser,
               contentHash: input.contentHash,
               operation: "unchanged",
               rawSessionRecord: existing.rawSessionRecord,
-              session: existing.session,
+              session: relationshipSession,
               sourceBinding,
             };
           }
@@ -352,13 +361,17 @@ async function importRawSessionRecordUnsafe(
         session,
         transcriptNormalization,
       });
+      const relationshipSession = await deriveSessionRelationships(tx, {
+        input,
+        session: existing.session,
+      });
       return {
         activityInterval: existing.activityInterval,
         authorUser,
         contentHash: input.contentHash,
         operation: "unchanged",
         rawSessionRecord: existing.rawSessionRecord,
-        session: existing.session,
+        session: relationshipSession,
         sourceBinding,
       };
     }
@@ -379,6 +392,11 @@ async function importRawSessionRecordUnsafe(
       transcriptNormalization,
       rawSessionRecordId: insertedRawSessionRecord.id,
       sessionId: session.id,
+    });
+
+    await deriveSessionRelationships(tx, {
+      input,
+      session: updated.session,
     });
 
     return {
@@ -452,6 +470,284 @@ async function reuseExistingRawSessionRecord(
     rawSessionRecord: repairedRecord,
     session: refreshed.session,
   };
+}
+
+async function deriveSessionRelationships(
+  tx: DatabaseService["db"],
+  input: {
+    input: NormalizedRawSessionImportInput;
+    session: Session;
+  },
+): Promise<Session> {
+  await deriveChildRelationshipsForSession(tx, {
+    childSession: input.session,
+    input: input.input,
+  });
+
+  if (input.session.harnessSessionId === null) return input.session;
+
+  const peerSessions = await tx
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.workspaceId, input.input.workspaceId),
+        eq(sessions.harness, input.input.harness),
+      ),
+    );
+  for (const peerSession of peerSessions) {
+    if (peerSession.id === input.session.id) continue;
+    const parentCandidates = relationshipParentCandidates(peerSession);
+    if (
+      !parentCandidates.some(
+        (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
+      )
+    ) {
+      continue;
+    }
+    await insertOrRefreshChildRelationship(tx, {
+      childSession: peerSession,
+      input: input.input,
+      parentSession: input.session,
+      relationshipEvidence: relationshipEvidenceForCandidate(
+        parentCandidates.find(
+          (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
+        ),
+        peerSession,
+      ),
+    });
+  }
+
+  return input.session;
+}
+
+async function deriveChildRelationshipsForSession(
+  tx: DatabaseService["db"],
+  input: {
+    childSession: Session;
+    input: NormalizedRawSessionImportInput;
+  },
+): Promise<void> {
+  const candidates = relationshipParentCandidates(input.childSession);
+  for (const candidate of candidates) {
+    const parentSession = await findParentSessionForRelationship(tx, {
+      childSession: input.childSession,
+      input: input.input,
+      parentHarnessSessionId: candidate.parentHarnessSessionId,
+    });
+    if (parentSession === undefined) continue;
+    await insertOrRefreshChildRelationship(tx, {
+      childSession: input.childSession,
+      input: input.input,
+      parentSession,
+      relationshipEvidence: relationshipEvidenceForCandidate(candidate, input.childSession),
+    });
+  }
+}
+
+async function findParentSessionForRelationship(
+  tx: DatabaseService["db"],
+  input: {
+    childSession: Session;
+    input: NormalizedRawSessionImportInput;
+    parentHarnessSessionId: string;
+  },
+): Promise<Session | undefined> {
+  const [parentSession] = await tx
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.workspaceId, input.input.workspaceId),
+        eq(sessions.harness, input.input.harness),
+        eq(sessions.harnessSessionId, input.parentHarnessSessionId),
+      ),
+    )
+    .limit(1);
+  if (parentSession === undefined || parentSession.id === input.childSession.id) return undefined;
+  return parentSession;
+}
+
+async function insertOrRefreshChildRelationship(
+  tx: DatabaseService["db"],
+  input: {
+    childSession: Session;
+    input: NormalizedRawSessionImportInput;
+    parentSession: Session;
+    relationshipEvidence: Record<string, unknown>;
+  },
+): Promise<void> {
+  const sourceTurnId = await findRelationshipSourceTurnId(tx, {
+    parentSession: input.parentSession,
+    relationshipEvidence: input.relationshipEvidence,
+  });
+  const [existingRelationship] = await tx
+    .select()
+    .from(sessionRelationships)
+    .where(
+      and(
+        eq(sessionRelationships.workspaceId, input.input.workspaceId),
+        eq(sessionRelationships.sourceSessionId, input.parentSession.id),
+        eq(sessionRelationships.targetSessionId, input.childSession.id),
+        eq(sessionRelationships.relationshipType, "child"),
+      ),
+    )
+    .limit(1);
+
+  if (existingRelationship === undefined) {
+    await tx
+      .insert(sessionRelationships)
+      .values({
+        confidence: "explicit",
+        evidence: input.relationshipEvidence,
+        relationshipType: "child",
+        sourceSessionId: input.parentSession.id,
+        sourceTurnId,
+        targetSessionId: input.childSession.id,
+        workspaceId: input.input.workspaceId,
+      })
+      .onConflictDoNothing({
+        target: [
+          sessionRelationships.workspaceId,
+          sessionRelationships.sourceSessionId,
+          sessionRelationships.targetSessionId,
+          sessionRelationships.relationshipType,
+        ],
+      });
+    return;
+  }
+
+  if (existingRelationship.sourceTurnId !== null || sourceTurnId === undefined) return;
+  await tx
+    .update(sessionRelationships)
+    .set({
+      sourceTurnId,
+      updatedAt: new Date(),
+    })
+    .where(eq(sessionRelationships.id, existingRelationship.id));
+}
+
+async function findRelationshipSourceTurnId(
+  tx: DatabaseService["db"],
+  input: {
+    parentSession: Session;
+    relationshipEvidence: Record<string, unknown>;
+  },
+): Promise<string | undefined> {
+  const sourceToolUseId = cleanOptional(readString(input.relationshipEvidence.sourceToolUseID));
+  const parentTurnId = cleanOptional(readString(input.relationshipEvidence.parentTurnId));
+  const harnessTurnIds = [sourceToolUseId, parentTurnId].filter(
+    (value): value is string => value !== undefined,
+  );
+  if (harnessTurnIds.length > 0) {
+    const [turn] = await tx
+      .select({ id: sessionTurns.id })
+      .from(sessionTurns)
+      .where(
+        and(
+          eq(sessionTurns.workspaceId, input.parentSession.workspaceId),
+          eq(sessionTurns.sessionId, input.parentSession.id),
+          inArray(sessionTurns.harnessTurnId, harnessTurnIds),
+        ),
+      )
+      .limit(1);
+    if (turn !== undefined) return turn.id;
+  }
+
+  if (parentTurnId === undefined) return undefined;
+  const [codexTurn] = await tx
+    .select({ id: sessionTurns.id })
+    .from(sessionTurns)
+    .where(
+      and(
+        eq(sessionTurns.workspaceId, input.parentSession.workspaceId),
+        eq(sessionTurns.sessionId, input.parentSession.id),
+        sql`${sessionTurns.metadata}->>'codexTurnId' = ${parentTurnId}`,
+      ),
+    )
+    .limit(1);
+  return codexTurn?.id;
+}
+
+interface RelationshipParentCandidate {
+  evidence: Record<string, unknown>;
+  parentHarnessSessionId: string;
+}
+
+function relationshipParentCandidates(session: Session): RelationshipParentCandidate[] {
+  const metadata = asRecord(session.metadata);
+  const parentHarnessSessionId = cleanOptional(readString(metadata.parentHarnessSessionId));
+  const subagentEvidence = arrayRecords(metadata.subagentEvidence);
+  const parentEvidence =
+    subagentEvidence.find(
+      (evidence) =>
+        readString(evidence.sourceToolUseID) !== undefined ||
+        readString(evidence.sourceToolAssistantUUID) !== undefined,
+    ) ??
+    subagentEvidence.find((evidence) => readString(evidence.agentId) !== undefined) ??
+    subagentEvidence[0];
+  const candidates: RelationshipParentCandidate[] =
+    parentHarnessSessionId === undefined
+      ? []
+      : [
+          {
+            evidence: { ...parentEvidence, parentHarnessSessionId },
+            parentHarnessSessionId,
+          },
+        ];
+
+  for (const evidence of subagentEvidence) {
+    const codexParentThreadId = cleanOptional(readString(evidence.parent_thread_id));
+    if (codexParentThreadId !== undefined && isCodexSubagentEvidence(evidence)) {
+      candidates.push({
+        evidence,
+        parentHarnessSessionId: codexParentThreadId,
+      });
+    }
+  }
+
+  return dedupeRelationshipCandidates(candidates);
+}
+
+function relationshipEvidenceForCandidate(
+  candidate: RelationshipParentCandidate | undefined,
+  childSession: Session,
+): Record<string, unknown> {
+  const evidence = asRecord(candidate?.evidence);
+  const threadSpawn = optionalRecord(evidence.source_subagent_thread_spawn);
+  return compactRecord({
+    agentId: readString(evidence.agentId),
+    agentRole: readString(evidence.agent_role),
+    childHarnessSessionId: childSession.harnessSessionId,
+    derivation: "session-relationship-import-v1",
+    parentHarnessSessionId: candidate?.parentHarnessSessionId,
+    parentThreadId: readString(evidence.parent_thread_id),
+    parentTurnId: readString(threadSpawn?.parent_turn_id),
+    sourceLocatorKind: readString(evidence.sourceLocatorKind),
+    sourceRecordType: readString(evidence.sourceRecordType),
+    sourceToolAssistantUUID: readString(evidence.sourceToolAssistantUUID),
+    sourceToolUseID: readString(evidence.sourceToolUseID),
+    threadSource: readString(evidence.thread_source),
+  });
+}
+
+function isCodexSubagentEvidence(evidence: Record<string, unknown>): boolean {
+  return (
+    readString(evidence.agent_role) === "subagent" ||
+    readString(evidence.thread_source) === "subagent" ||
+    optionalRecord(evidence.source_subagent_thread_spawn) !== undefined
+  );
+}
+
+function dedupeRelationshipCandidates(
+  candidates: readonly RelationshipParentCandidate[],
+): RelationshipParentCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.parentHarnessSessionId)) return false;
+    seen.add(candidate.parentHarnessSessionId);
+    return true;
+  });
 }
 
 async function refreshSessionAndActivityInterval(
@@ -1457,6 +1753,32 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  const records: Record<string, unknown>[] = [];
+  for (const entry of value) {
+    const record = optionalRecord(entry);
+    if (record !== undefined) records.push(record);
+  }
+  return records;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
+  );
 }
 
 function datesEqual(actual: Date | null, expected: Date | undefined): boolean {
