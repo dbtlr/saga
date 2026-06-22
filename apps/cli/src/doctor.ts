@@ -278,7 +278,10 @@ async function inspectService(): Promise<{
 function checkHarnesses(projectRoot: string): DoctorCheck[] {
   try {
     return inspectHarnesses({ cwd: projectRoot }).map((harness) => ({
-      detail: `${harness.state}; ${harness.stateDetail}`,
+      detail:
+        harness.nextStep === undefined
+          ? `${harness.state}; ${harness.stateDetail}`
+          : `${harness.state}; ${harness.stateDetail}; next step: ${harness.nextStep}`,
       label: `harness:${harness.target}`,
       status: harnessDoctorStatus(harness.state),
     }));

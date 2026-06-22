@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,7 +81,14 @@ describe("installHarness", () => {
 
     expect(status.binding).toBe("installed");
     expect(status.hooks).toBe("installed");
-    expect(status.hookTrust).toBe("requires review");
+    expect(status.hookTrust).toBe("pending user trust");
+    expect(status.state).toBe("pending-trust");
+    expect(status.stateDetail).toBe(
+      "binding and hooks are installed; Codex project-local hook trust is pending explicit user approval",
+    );
+    expect(status.nextStep).toBe(
+      "approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",
+    );
     expect(status.hooksPath).toBe(join(projectRoot, ".codex", "hooks.json"));
     const binding = readBindingFile(projectRoot)!;
     expect(binding?.harnesses?.codex?.sourceBindingId).toBe("codex-source-id");
@@ -429,7 +443,7 @@ describe("inspectHarness", () => {
     expect(status.stateDetail).toBe("hooks are installed but local binding is missing");
   });
 
-  test("reports configured harness state for complete recognized shim hooks", () => {
+  test("reports pending Codex trust for complete recognized shim hooks", () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
     const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
@@ -462,10 +476,57 @@ describe("inspectHarness", () => {
 
     const status = inspectHarness({ cwd: projectRoot, target: "codex" });
 
+    expect(status.state).toBe("pending-trust");
+    expect(status.hooks).toBe("installed");
+    expect(status.hooksCoverage).toBe("complete");
+    expect(status.hookTrust).toBe("pending user trust");
+    expect(status.stateDetail).toBe(
+      "binding and hooks are installed; Codex project-local hook trust is pending explicit user approval",
+    );
+    expect(status.nextStep).toBe(
+      "approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",
+    );
+  });
+
+  test("reports configured Claude state for complete recognized shim hooks", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".claude", "settings.local.json");
+    const shimPath = join(projectRoot, ".claude", "saga-claude-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".claude"));
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        claude: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "claude-source-id",
+          sourceUri: `claude://host/${binding.host?.id}`,
+          target: "claude",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "claude" });
+
     expect(status.state).toBe("configured");
     expect(status.hooks).toBe("installed");
     expect(status.hooksCoverage).toBe("complete");
+    expect(status.hookTrust).toBe("requires review");
     expect(status.stateDetail).toBe("binding is valid and complete Saga hooks are active");
+    expect(status.nextStep).toBeUndefined();
   });
 
   test("reports stale harness state for legacy unhosted local source bindings", () => {
@@ -598,6 +659,54 @@ describe("inspectHarness", () => {
 });
 
 describe("runHarnessCommand", () => {
+  test("renders Codex pending-trust next step in status records", async () => {
+    const projectRoot = realpathSync(boundProject());
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".codex"));
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        codex: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "codex-source-id",
+          sourceUri: `codex://host/${binding.host?.id}`,
+          target: "codex",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const output = await withCwd(projectRoot, () =>
+      runHarnessCommand(["status", "codex"], {
+        ascii: true,
+        color: "never",
+        format: "records",
+        isTty: false,
+      }),
+    );
+
+    expect(output).toContain("state           pending-trust");
+    expect(output).toContain("hooks           installed");
+    expect(output).toContain("hook trust      pending user trust");
+    expect(output).toContain(
+      "next step       approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",
+    );
+  });
+
   test("reports all harness targets when status target is omitted", async () => {
     const projectRoot = boundProject();
     const output = await withCwd(projectRoot, () =>

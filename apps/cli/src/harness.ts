@@ -23,13 +23,19 @@ import {
 } from "./init.js";
 
 export type HarnessTarget = "codex" | "claude";
-export type HarnessIntegrationState = "configured" | "divergent" | "invalid" | "missing" | "stale";
+export type HarnessIntegrationState =
+  | "configured"
+  | "divergent"
+  | "invalid"
+  | "missing"
+  | "pending-trust"
+  | "stale";
 
 export interface HarnessStatus {
   binding: "installed" | "missing";
   displayName: string;
   hookCommand: string;
-  hookTrust: "not installed" | "requires review";
+  hookTrust: "not installed" | "pending user trust" | "requires review";
   hooksCoverage: "complete" | "partial" | "none";
   hooks: "installed" | "invalid" | "missing";
   hooksError?: string;
@@ -37,6 +43,7 @@ export interface HarnessStatus {
   state: HarnessIntegrationState;
   stateDetail: string;
   mcp: "deferred";
+  nextStep: string | undefined;
   skills: "deferred";
   target: HarnessTarget;
 }
@@ -268,6 +275,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hookTrust: "not installed",
       hooksPath,
       mcp: "deferred",
+      nextStep: undefined,
       skills: "deferred",
       state: "invalid",
       stateDetail: formatHooksSettingsParseError(hooksFile.error),
@@ -291,6 +299,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hooks: hooksInstalled ? "installed" : "missing",
       hooksPath,
       mcp: "deferred",
+      nextStep: undefined,
       skills: "deferred",
       state: "invalid",
       stateDetail: `invalid harness binding: ${bindingIssue}`,
@@ -311,11 +320,12 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     binding: harnessBinding === undefined ? "missing" : "installed",
     displayName: adapter.displayName,
     hookCommand,
-    hookTrust: hooksInstalled ? "requires review" : "not installed",
+    hookTrust: hookTrustDisplay(adapter.target, hooksInstalled, state.state),
     hooksCoverage: sagaHookCoverage,
     hooks: hooksInstalled ? "installed" : "missing",
     hooksPath,
     mcp: "deferred",
+    nextStep: nextStepForHarnessState(adapter.target, state.state),
     skills: "deferred",
     state: state.state,
     stateDetail: state.detail,
@@ -373,6 +383,14 @@ function classifyHarnessState(input: {
     return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: "divergent" };
   }
 
+  if (input.adapter.target === "codex" && input.harnessBinding?.hookTrust === "requires-review") {
+    return {
+      detail:
+        "binding and hooks are installed; Codex project-local hook trust is pending explicit user approval",
+      state: "pending-trust",
+    };
+  }
+
   return { detail: "binding is valid and complete Saga hooks are active", state: "configured" };
 }
 
@@ -385,6 +403,26 @@ function bindingHookDivergenceDetail(coverage: "complete" | "partial" | "none"):
   if (coverage === "partial")
     return "local binding exists but Saga hooks are only partially installed";
   return "local binding exists but hooks are missing";
+}
+
+function hookTrustDisplay(
+  target: HarnessTarget,
+  hooksInstalled: boolean,
+  state: HarnessIntegrationState,
+): HarnessStatus["hookTrust"] {
+  if (!hooksInstalled) return "not installed";
+  if (target === "codex" && state === "pending-trust") return "pending user trust";
+  return "requires review";
+}
+
+function nextStepForHarnessState(
+  target: HarnessTarget,
+  state: HarnessIntegrationState,
+): string | undefined {
+  if (target === "codex" && state === "pending-trust") {
+    return "approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here";
+  }
+  return undefined;
 }
 
 function staleHarnessBindingReasons(input: {
@@ -445,6 +483,7 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
         ? []
         : [{ label: "hooks error", value: status.hooksError }]),
       { label: "hook trust", value: status.hookTrust },
+      ...(status.nextStep === undefined ? [] : [{ label: "next step", value: status.nextStep }]),
       { label: "hooks path", value: status.hooksPath },
       { label: "hook command", value: status.hookCommand },
       { label: "mcp", value: "deferred until saga mcp is implemented" },
