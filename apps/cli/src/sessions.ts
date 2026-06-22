@@ -391,14 +391,23 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
     ),
   ];
 
-  if (detail.activeRawSessionRecord !== null) {
+  const renderedRawRecordIds = new Set<string>();
+  for (const record of detail.rawSessionRecords) {
+    renderedRawRecordIds.add(record.id);
+    blocks.push(renderRawSessionRecord("Raw Session Record", record, options));
+  }
+  if (
+    detail.activeRawSessionRecord !== null &&
+    !renderedRawRecordIds.has(detail.activeRawSessionRecord.id)
+  ) {
     blocks.push(
       renderRawSessionRecord("Active Raw Session Record", detail.activeRawSessionRecord, options),
     );
+    renderedRawRecordIds.add(detail.activeRawSessionRecord.id);
   }
   if (
     detail.selectedRawSessionRecord !== null &&
-    detail.selectedRawSessionRecord.id !== detail.activeRawSessionRecord?.id
+    !renderedRawRecordIds.has(detail.selectedRawSessionRecord.id)
   ) {
     blocks.push(
       renderRawSessionRecord(

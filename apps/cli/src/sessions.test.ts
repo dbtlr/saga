@@ -136,7 +136,7 @@ describe("runSessionsCommand", () => {
   test("shows a bounded session detail with Activity Intervals, turns, segments, and metadata", async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
-      ["show", "session-id", "--turns", "1", "--segments", "1", "--raw-body"],
+      ["show", "session-id", "--turns", "1", "--segments", "1", "--raw-records", "2", "--raw-body"],
       {
         ...renderOptions,
         format: "records",
@@ -147,6 +147,7 @@ describe("runSessionsCommand", () => {
           expect(input).toMatchObject({
             id: "session-id",
             includeRawBody: true,
+            maxRawRecords: 2,
             maxSegmentsPerTurn: 1,
             maxTurns: 1,
             workspaceId: "workspace-id",
@@ -157,13 +158,41 @@ describe("runSessionsCommand", () => {
     );
 
     expect(output).toContain("Session");
-    expect(output).toContain("Active Raw Session Record");
+    expect(output).toContain("Raw Session Record");
     expect(output).toContain("Activity Interval 0");
     expect(output).toContain("Turn 0");
     expect(output).toContain("Segment 0");
     expect(output).toContain("host-user");
     expect(output).toContain("provenance");
     expect(output).toContain("Bounds");
+  });
+
+  test("renders the bounded raw session snapshot list without duplicate active or selected blocks", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(
+      ["show", "session-id", "--raw-records", "2"],
+      {
+        ...renderOptions,
+        format: "records",
+      },
+      {
+        cwd: projectRoot,
+        getDetail: async (input) => {
+          expect(input).toMatchObject({
+            id: "session-id",
+            maxRawRecords: 2,
+            workspaceId: "workspace-id",
+          });
+          return sessionDetailWithRawRecords();
+        },
+      },
+    );
+
+    expect(countOccurrences(output, "Raw Session Record")).toBe(2);
+    expect(output).not.toContain("Active Raw Session Record");
+    expect(output).not.toContain("Selected Raw Session Record");
+    expect(output).toContain("raw-record-id");
+    expect(output).toContain("raw-record-older");
   });
 });
 
@@ -428,4 +457,31 @@ function sessionDetail(): SessionDetail {
       turns: true,
     },
   };
+}
+
+function sessionDetailWithRawRecords(): SessionDetail {
+  const detail = sessionDetail();
+  if (detail.activeRawSessionRecord === null) throw new Error("missing active raw record");
+  const olderRawRecord = {
+    ...detail.activeRawSessionRecord,
+    capturedAt: new Date("2026-06-22T09:55:00.000Z"),
+    contentHash: "sha256:older",
+    id: "raw-record-older",
+    isActive: false,
+    snapshotOrdinal: 0,
+  };
+  const activeRawRecord = {
+    ...detail.activeRawSessionRecord,
+    snapshotOrdinal: 1,
+  };
+  return {
+    ...detail,
+    activeRawSessionRecord: activeRawRecord,
+    rawSessionRecords: [activeRawRecord, olderRawRecord],
+    selectedRawSessionRecord: olderRawRecord,
+  };
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }

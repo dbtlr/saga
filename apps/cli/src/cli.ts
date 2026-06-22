@@ -157,11 +157,6 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
     const arg = argv[index];
     if (arg === undefined) continue;
 
-    if (positionals.length > 0) {
-      positionals.push(arg);
-      continue;
-    }
-
     if (arg === "--") {
       positionals.push(...argv.slice(index + 1));
       break;
@@ -204,7 +199,7 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       continue;
     }
 
-    if (arg.startsWith("-")) {
+    if (arg.startsWith("-") && positionals.length === 0) {
       throw new UsageError(`unknown option: ${arg}`);
     }
 

@@ -322,6 +322,116 @@ describePostgres("raw session import", () => {
     expect(byRawRecord.activityIntervals[0]?.turns).toHaveLength(2);
   });
 
+  test("shows a selected raw record outside the bounded raw-record window", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-show-selected-outside-window");
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "claude",
+      host: {
+        id: "host-show-selected-outside-window",
+        label: "test-host",
+      },
+      locator: "/tmp/claude-selected-outside-window.jsonl",
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T18:00:00.000Z",
+        rawContent: '{"role":"user","content":"Historical selected turn"}\n',
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T18:05:00.000Z",
+        rawContent:
+          '{"role":"user","content":"Historical selected turn"}\n{"role":"assistant","content":"Second snapshot"}\n',
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T18:10:00.000Z",
+        rawContent:
+          '{"role":"user","content":"Historical selected turn"}\n{"role":"assistant","content":"Second snapshot"}\n{"role":"user","content":"Third snapshot"}\n',
+      }),
+    );
+    const active = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-21T18:15:00.000Z",
+        rawContent:
+          '{"role":"user","content":"Historical selected turn"}\n{"role":"assistant","content":"Second snapshot"}\n{"role":"user","content":"Third snapshot"}\n{"role":"assistant","content":"Active snapshot"}\n',
+      }),
+    );
+
+    const [historicalTurn] = await service.db
+      .insert(sessionTurns)
+      .values({
+        actorKind: "host_user",
+        actorLabel: "drew",
+        activityIntervalId: first.activityInterval.id,
+        contentParts: [{ type: "text", text: "Historical selected turn" }],
+        harnessTurnId: "historical-selected-turn",
+        metadata: {
+          fixture: "selected-outside-window",
+        },
+        model: null,
+        ordinal: 0,
+        rawSessionRecordId: first.rawSessionRecord.id,
+        role: "user",
+        sessionId: first.session.id,
+        startedAt: new Date("2026-06-21T18:00:00.000Z"),
+        workspaceId,
+      })
+      .returning();
+    if (historicalTurn === undefined) throw new Error("historical turn insert returned no row");
+    await service.db.insert(sessionSegments).values({
+      activityIntervalId: first.activityInterval.id,
+      charEnd: "Historical selected turn".length,
+      charStart: 0,
+      metadata: {
+        fixture: "selected-outside-window",
+      },
+      ordinal: 0,
+      rawSessionRecordId: first.rawSessionRecord.id,
+      searchText: "Historical selected turn",
+      segmentKind: "turn",
+      sessionId: first.session.id,
+      snippet: "Historical selected turn",
+      tokenEnd: null,
+      tokenStart: null,
+      turnId: historicalTurn.id,
+      workspaceId,
+    });
+
+    const detail = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: first.rawSessionRecord.id,
+        maxRawRecords: 2,
+        workspaceId,
+      }),
+    );
+
+    expect(detail.activeRawSessionRecord?.id).toBe(active.rawSessionRecord.id);
+    expect(detail.selectedRawSessionRecord?.id).toBe(first.rawSessionRecord.id);
+    expect(detail.rawSessionRecords).toHaveLength(2);
+    expect(detail.rawSessionRecords.map((record) => record.id)).not.toContain(
+      first.rawSessionRecord.id,
+    );
+    expect(detail.truncated.rawSessionRecords).toBe(true);
+    const turns = detail.activityIntervals.flatMap((interval) => interval.turns);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.turn.harnessTurnId).toBe("historical-selected-turn");
+    expect(turns[0]?.segments[0]?.searchText).toBe("Historical selected turn");
+  });
+
   test("imports growing raw content as a new active snapshot and regenerates derived rows", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-growing");

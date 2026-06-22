@@ -29,6 +29,27 @@ describe("parseArgs", () => {
       command: "sessions",
     });
   });
+
+  test("parses global flags after command positionals", () => {
+    expect(parseArgs(["sessions", "recent", "--format", "json"])).toEqual({
+      args: ["recent"],
+      command: "sessions",
+      options: {
+        ascii: false,
+        color: "auto",
+        format: "json",
+        help: false,
+        version: false,
+      },
+    });
+    expect(parseArgs(["context", "--format", "json"])).toMatchObject({
+      args: [],
+      command: "context",
+      options: {
+        format: "json",
+      },
+    });
+  });
 });
 
 describe("run", () => {
@@ -207,6 +228,33 @@ describe("run", () => {
       run(["sessions", "recent", "--limit", "5"], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
     expect(output).toEqual(["sessions recent,--limit,5"]);
+  });
+
+  test("does not pass trailing global format flags to sessions handlers", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      context: async () => "context",
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
+      init: async () => "init",
+      mcp: async () => "mcp",
+      service: async () => "service",
+      sessions: async (args, options) =>
+        JSON.stringify({
+          args,
+          format: options.format,
+        }),
+      start: async () => 0,
+    };
+
+    await expect(
+      run(["sessions", "recent", "--format", "json"], (text) => output.push(text), handlers),
+    ).resolves.toBe(0);
+    expect(JSON.parse(output[0] ?? "{}")).toEqual({
+      args: ["recent"],
+      format: "json",
+    });
   });
 
   test("dispatches context through the context handler", async () => {

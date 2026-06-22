@@ -578,11 +578,73 @@ export function getSessionDetail(
       const rawRecords = rawRecordRows.slice(0, maxRawRecords).map(mapRawSessionRecord);
       const activeRawSessionRecord =
         rawRecords.find((record) => record.isActive) ?? mapRawSessionRecord(metadata);
-      const selectedRawSessionRecord =
+      let selectedRawSessionRecord =
         identity.selected_raw_record_id === null
           ? null
-          : (rawRecords.find((record) => record.id === identity.selected_raw_record_id) ??
-            activeRawSessionRecord);
+          : (rawRecords.find((record) => record.id === identity.selected_raw_record_id) ?? null);
+      if (identity.selected_raw_record_id !== null && selectedRawSessionRecord === null) {
+        const selectedRows = await service.sql<CommonSessionRow[]>`
+          select
+            s.id as session_id,
+            s.workspace_id as session_workspace_id,
+            s.source_binding_id as session_source_binding_id,
+            s.harness as session_harness,
+            s.harness_session_id as session_harness_session_id,
+            s.source_locator as session_source_locator,
+            s.title as session_title,
+            s.model as session_model,
+            s.status as session_status,
+            s.started_at as session_started_at,
+            s.last_activity_at as session_last_activity_at,
+            s.ended_at as session_ended_at,
+            s.metadata as session_metadata,
+            s.provenance as session_provenance,
+            u.id as author_id,
+            u.handle as author_handle,
+            u.display_name as author_display_name,
+            u.identity_source as author_identity_source,
+            u.external_subject as author_external_subject,
+            u.metadata as author_metadata,
+            sb.id as source_binding_id,
+            sb.source_type as source_binding_source_type,
+            sb.source_uri as source_binding_source_uri,
+            sb.display_name as source_binding_display_name,
+            sb.config as source_binding_config,
+            sb.enabled as source_binding_enabled,
+            r.id as raw_record_id,
+            r.session_id as raw_record_session_id,
+            r.snapshot_ordinal as raw_record_snapshot_ordinal,
+            r.is_active as raw_record_is_active,
+            r.status as raw_record_status,
+            r.harness as raw_record_harness,
+            r.harness_session_id as raw_record_harness_session_id,
+            r.source_locator as raw_record_source_locator,
+            r.content_type as raw_record_content_type,
+            r.content_hash as raw_record_content_hash,
+            r.content_bytes as raw_record_content_bytes,
+            r.captured_at as raw_record_captured_at,
+            r.provenance as raw_record_provenance,
+            r.metadata as raw_record_metadata,
+            case when ${includeRawBody}::boolean then r.body_text else null end as raw_record_body_text,
+            case when ${includeRawBody}::boolean then r.body_json else null end as raw_record_body_json
+          from raw_session_records r
+          inner join sessions s
+            on s.id = r.session_id
+            and s.workspace_id = r.workspace_id
+          inner join users u
+            on u.id = s.author_user_id
+            and u.workspace_id = s.workspace_id
+          inner join source_bindings sb
+            on sb.id = s.source_binding_id
+            and sb.workspace_id = s.workspace_id
+          where r.workspace_id = ${workspaceId}
+            and r.session_id = ${identity.session_id}
+            and r.id = ${identity.selected_raw_record_id}
+          limit 1
+        `;
+        selectedRawSessionRecord =
+          selectedRows[0] === undefined ? null : mapRawSessionRecord(selectedRows[0]);
+      }
       const detailRawRecordId =
         selectedRawSessionRecord?.id ?? activeRawSessionRecord?.id ?? rawRecords[0]?.id;
 
