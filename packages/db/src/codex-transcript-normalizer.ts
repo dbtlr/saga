@@ -332,6 +332,39 @@ function responseItemTurn(
     };
   }
 
+  if (payloadType === "web_search_call") {
+    const callId = readString(payload.call_id) ?? readString(payload.id);
+    const name = "web_search";
+    if (callId !== undefined) {
+      state.callIdToToolName.set(callId, name);
+      if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
+    }
+    const action = asRecord(payload.action) ?? payload.action;
+    const contentParts = [
+      compactRecord({
+        action,
+        callId,
+        name,
+        status: readString(payload.status),
+        type: "tool_call",
+      }),
+    ];
+    return {
+      actorKind: "tool",
+      actorLabel: name,
+      codexTurnId,
+      contentParts,
+      harnessTurnId:
+        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, "tool", codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+      model: state.model,
+      rawSpan: rawSpan(record),
+      role: "tool",
+      searchText: contentPartsToSearchText(contentParts),
+      startedAt: timestamp,
+    };
+  }
+
   if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
     const callId = readString(payload.call_id);
     const name = callId === undefined ? undefined : state.callIdToToolName.get(callId);
@@ -561,7 +594,10 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
     .map((part) => {
       const type = readString(part.type);
       if (type === "tool_call") {
-        return [readString(part.name), stringifyForSearch(part.arguments ?? part.input)]
+        return [
+          readString(part.name),
+          stringifyForSearch(part.arguments ?? part.input ?? part.action),
+        ]
           .filter(Boolean)
           .join(" ");
       }

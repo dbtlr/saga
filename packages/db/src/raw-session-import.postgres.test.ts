@@ -6,6 +6,7 @@ import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
 import {
+  activityIntervals,
   rawSessionRecords,
   sessions,
   sessionSegments,
@@ -335,6 +336,20 @@ describePostgres("raw session import", () => {
           ],
         },
       },
+      {
+        timestamp: "2026-06-22T14:00:09.000Z",
+        type: "response_item",
+        payload: {
+          type: "web_search_call",
+          id: "ws-call-1",
+          status: "completed",
+          action: {
+            type: "search",
+            query: "SGA-121 Codex web_search_call fixture",
+          },
+          metadata: { turn_id: "turn-1" },
+        },
+      },
     ]);
 
     const normalized = normalizeCodexTranscript({
@@ -343,6 +358,7 @@ describePostgres("raw session import", () => {
     });
     expect(normalized?.turns[5]?.searchText).toContain("Structured array output needle");
     expect(normalized?.turns[5]?.searchText).toContain("codex-output.png");
+    expect(normalized?.turns[6]?.searchText).toContain("SGA-121 Codex web_search_call fixture");
 
     const result = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -367,7 +383,7 @@ describePostgres("raw session import", () => {
     expect(result.operation).toBe("inserted");
     expect(result.session.harnessSessionId).toBe("codex-transcript-session-1");
     expect(result.session).toMatchObject({
-      lastActivityAt: new Date("2026-06-22T14:00:08.000Z"),
+      lastActivityAt: new Date("2026-06-22T14:00:09.000Z"),
       model: "gpt-5-codex",
       startedAt: new Date("2026-06-22T14:00:03.000Z"),
     });
@@ -376,7 +392,7 @@ describePostgres("raw session import", () => {
       cwd: "/work/saga",
       detectedHarnessSessionId: "codex-transcript-session-1",
       normalizer: "codex-transcript-v1",
-      turnCount: 6,
+      turnCount: 7,
     });
     expect(result.activityInterval.startedAt).toEqual(new Date("2026-06-22T14:00:03.000Z"));
     expect(result.activityInterval.metadata).toMatchObject({
@@ -411,7 +427,7 @@ describePostgres("raw session import", () => {
           thread_source: "subagent",
         },
       ],
-      turnCount: 6,
+      turnCount: 7,
     });
 
     const [rawRecord] = await service.db
@@ -438,7 +454,7 @@ describePostgres("raw session import", () => {
             thread_source: "subagent",
           },
         ],
-        turnCount: 6,
+        turnCount: 7,
       },
     });
 
@@ -450,6 +466,7 @@ describePostgres("raw session import", () => {
     expect(turns.map((turn) => turn.role)).toEqual([
       "user",
       "assistant",
+      "tool",
       "tool",
       "tool",
       "tool",
@@ -510,6 +527,22 @@ describePostgres("raw session import", () => {
         ],
       },
     ]);
+    expect(turns[6]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "web_search",
+        callId: "ws-call-1",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "SGA-121 Codex web_search_call fixture",
+        },
+      },
+    ]);
+    expect(turns[6]?.metadata).toMatchObject({
+      sourcePayloadType: "web_search_call",
+      sourceRecordType: "response_item",
+    });
 
     const segments = await service.db
       .select()
@@ -802,6 +835,15 @@ describePostgres("raw session import", () => {
       },
       {
         timestamp: "2026-06-22T14:40:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-legacy",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:40:02.000Z",
         type: "response_item",
         payload: {
           type: "message",
@@ -831,18 +873,64 @@ describePostgres("raw session import", () => {
     // Simulate a pre-normalizer import that was identifiable only by locator.
     await service.db
       .update(rawSessionRecords)
-      .set({ harnessSessionId: null })
+      .set({
+        harnessSessionId: null,
+        metadata: {
+          contentBytes: Buffer.byteLength(input.rawContent, "utf8"),
+          legacyImporter: true,
+        },
+      })
       .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
     await service.db
       .update(sessions)
-      .set({ harnessSessionId: null })
+      .set({
+        harnessSessionId: null,
+        lastActivityAt: new Date("2026-06-22T14:40:03.000Z"),
+        metadata: {
+          legacyImporter: true,
+        },
+        model: "legacy-model",
+        startedAt: new Date("2026-06-22T14:40:03.000Z"),
+      })
       .where(eq(sessions.id, first.session.id));
+    await service.db
+      .update(activityIntervals)
+      .set({
+        metadata: {
+          importBoundary: "raw_session",
+          legacyImporter: true,
+        },
+        startedAt: new Date("2026-06-22T14:40:03.000Z"),
+      })
+      .where(eq(activityIntervals.id, first.activityInterval.id));
 
     const second = await Effect.runPromise(importRawSessionRecord(service, input));
 
     expect(second.operation).toBe("unchanged");
     expect(second.session.id).toBe(first.session.id);
     expect(second.session.harnessSessionId).toBe("codex-legacy-locator-session");
+    expect(second.session).toMatchObject({
+      lastActivityAt: new Date("2026-06-22T14:40:02.000Z"),
+      model: "gpt-5-codex",
+      startedAt: new Date("2026-06-22T14:40:02.000Z"),
+    });
+    expect(second.session.metadata).toMatchObject({
+      cwd: "/work/saga",
+      detectedHarnessSessionId: "codex-legacy-locator-session",
+      normalizer: "codex-transcript-v1",
+      turnCount: 1,
+    });
+    expect(second.activityInterval.startedAt).toEqual(new Date("2026-06-22T14:40:02.000Z"));
+    expect(second.activityInterval.metadata).toMatchObject({
+      cwd: "/work/saga",
+      normalizer: "codex-transcript-v1",
+      turnContexts: [
+        {
+          model: "gpt-5-codex",
+          turn_id: "turn-legacy",
+        },
+      ],
+    });
     expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
 
     const workspaceSessions = await service.db
@@ -851,6 +939,10 @@ describePostgres("raw session import", () => {
       .where(eq(sessions.workspaceId, workspaceId));
     expect(workspaceSessions).toHaveLength(1);
     expect(workspaceSessions[0]?.harnessSessionId).toBe("codex-legacy-locator-session");
+    expect(workspaceSessions[0]?.metadata).toMatchObject({
+      normalizer: "codex-transcript-v1",
+      turnCount: 1,
+    });
 
     const records = await service.db
       .select()
@@ -858,6 +950,12 @@ describePostgres("raw session import", () => {
       .where(eq(rawSessionRecords.sessionId, first.session.id));
     expect(records).toHaveLength(1);
     expect(records[0]?.harnessSessionId).toBe("codex-legacy-locator-session");
+    expect(records[0]?.metadata).toMatchObject({
+      normalization: {
+        normalizer: "codex-transcript-v1",
+        turnCount: 1,
+      },
+    });
   });
 
   test("unchanged Codex reimport preserves current session turn ids", async () => {

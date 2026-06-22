@@ -201,13 +201,24 @@ async function importRawSessionRecordUnsafe(
               transcriptNormalization,
             })
           : existingRecord;
+      const refreshed =
+        existingRecord.isActive && transcriptNormalization !== undefined
+          ? await refreshSessionAndActivityInterval(tx, {
+              activityInterval,
+              input,
+              now,
+              rawSessionRecordId: repairedRecord.id,
+              session,
+              transcriptNormalization,
+            })
+          : { activityInterval, session };
       return {
-        activityInterval,
+        activityInterval: refreshed.activityInterval,
         authorUser,
         contentHash: input.contentHash,
         operation: "unchanged",
         rawSessionRecord: repairedRecord,
-        session,
+        session: refreshed.session,
         sourceBinding,
       };
     }
@@ -267,46 +278,14 @@ async function importRawSessionRecordUnsafe(
       throw new RawSessionImportError({ message: "raw session record insert returned no row" });
     }
 
-    const [updatedSession] = await tx
-      .update(sessions)
-      .set({
-        endedAt: transcriptNormalization?.session.endedAt,
-        lastActivityAt: transcriptNormalization?.session.lastActivityAt ?? input.capturedAt,
-        metadata: {
-          ...asRecord(session.metadata),
-          ...transcriptNormalization?.session.metadata,
-          latestRawSessionRecordId: rawSessionRecord.id,
-        },
-        model: transcriptNormalization?.session.model ?? input.model ?? session.model,
-        startedAt: transcriptNormalization?.session.startedAt ?? session.startedAt,
-        status: transcriptNormalization?.session.status ?? input.status ?? session.status,
-        title: transcriptNormalization?.session.title ?? input.title ?? session.title,
-        updatedAt: now,
-      })
-      .where(eq(sessions.id, session.id))
-      .returning();
-    if (updatedSession === undefined) {
-      throw new RawSessionImportError({ message: "session update returned no row" });
-    }
-
-    const [updatedActivityInterval] = await tx
-      .update(activityIntervals)
-      .set({
-        endedAt: transcriptNormalization?.activityInterval.endedAt,
-        metadata: {
-          ...asRecord(activityInterval.metadata),
-          ...transcriptNormalization?.activityInterval.metadata,
-        },
-        startedAt:
-          transcriptNormalization?.activityInterval.startedAt ?? activityInterval.startedAt,
-        status: transcriptNormalization?.activityInterval.status ?? activityInterval.status,
-        updatedAt: now,
-      })
-      .where(eq(activityIntervals.id, activityInterval.id))
-      .returning();
-    if (updatedActivityInterval === undefined) {
-      throw new RawSessionImportError({ message: "activity interval update returned no row" });
-    }
+    const updated = await refreshSessionAndActivityInterval(tx, {
+      activityInterval,
+      input,
+      now,
+      rawSessionRecordId: rawSessionRecord.id,
+      session,
+      transcriptNormalization,
+    });
 
     await regenerateDerivedSessionRecords(tx, {
       activityIntervalId: activityInterval.id,
@@ -317,15 +296,76 @@ async function importRawSessionRecordUnsafe(
     });
 
     return {
-      activityInterval: updatedActivityInterval,
+      activityInterval: updated.activityInterval,
       authorUser,
       contentHash: input.contentHash,
       operation: "inserted",
       rawSessionRecord,
-      session: updatedSession,
+      session: updated.session,
       sourceBinding,
     };
   });
+}
+
+async function refreshSessionAndActivityInterval(
+  tx: DatabaseService["db"],
+  input: {
+    activityInterval: ActivityInterval;
+    input: NormalizedRawSessionImportInput;
+    now: Date;
+    rawSessionRecordId: string;
+    session: Session;
+    transcriptNormalization?: CodexTranscriptNormalization | undefined;
+  },
+): Promise<{ activityInterval: ActivityInterval; session: Session }> {
+  const [updatedSession] = await tx
+    .update(sessions)
+    .set({
+      endedAt: input.transcriptNormalization?.session.endedAt,
+      lastActivityAt:
+        input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
+      metadata: {
+        ...asRecord(input.session.metadata),
+        ...input.transcriptNormalization?.session.metadata,
+        latestRawSessionRecordId: input.rawSessionRecordId,
+      },
+      model:
+        input.transcriptNormalization?.session.model ?? input.input.model ?? input.session.model,
+      startedAt: input.transcriptNormalization?.session.startedAt ?? input.session.startedAt,
+      status:
+        input.transcriptNormalization?.session.status ?? input.input.status ?? input.session.status,
+      title:
+        input.transcriptNormalization?.session.title ?? input.input.title ?? input.session.title,
+      updatedAt: input.now,
+    })
+    .where(eq(sessions.id, input.session.id))
+    .returning();
+  if (updatedSession === undefined) {
+    throw new RawSessionImportError({ message: "session update returned no row" });
+  }
+
+  const [updatedActivityInterval] = await tx
+    .update(activityIntervals)
+    .set({
+      endedAt: input.transcriptNormalization?.activityInterval.endedAt,
+      metadata: {
+        ...asRecord(input.activityInterval.metadata),
+        ...input.transcriptNormalization?.activityInterval.metadata,
+      },
+      startedAt:
+        input.transcriptNormalization?.activityInterval.startedAt ??
+        input.activityInterval.startedAt,
+      status:
+        input.transcriptNormalization?.activityInterval.status ?? input.activityInterval.status,
+      updatedAt: input.now,
+    })
+    .where(eq(activityIntervals.id, input.activityInterval.id))
+    .returning();
+  if (updatedActivityInterval === undefined) {
+    throw new RawSessionImportError({ message: "activity interval update returned no row" });
+  }
+
+  return { activityInterval: updatedActivityInterval, session: updatedSession };
 }
 
 async function repairActiveRawSessionRecordDerivedRows(
