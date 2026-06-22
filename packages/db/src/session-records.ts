@@ -11,6 +11,7 @@ const MAX_TURNS = 500;
 const MAX_SEGMENTS_PER_TURN = 25;
 
 type JsonRecord = Record<string, unknown>;
+type TimestampValue = Date | string | null;
 
 export interface ListRecentSessionRecordsInput {
   activeOnly?: boolean | undefined;
@@ -176,14 +177,14 @@ export class SessionRecordQueryError extends Data.TaggedError("SessionRecordQuer
 }> {}
 
 interface RecentSessionRecordRow extends CommonSessionRow {
-  activity_interval_ended_at: Date | null;
+  activity_interval_ended_at: TimestampValue;
   activity_interval_id: string | null;
   activity_interval_metadata: JsonRecord | null;
   activity_interval_ordinal: number | null;
   activity_interval_session_id: string | null;
-  activity_interval_settled_at: Date | null;
+  activity_interval_settled_at: TimestampValue;
   activity_interval_settlement_reason: string | null;
-  activity_interval_started_at: Date | null;
+  activity_interval_started_at: TimestampValue;
   activity_interval_status: string | null;
   activity_intervals_count: number | string;
   raw_records_count: number | string;
@@ -200,7 +201,7 @@ interface CommonSessionRow {
   author_metadata: JsonRecord;
   raw_record_body_json?: unknown;
   raw_record_body_text?: string | null;
-  raw_record_captured_at: Date;
+  raw_record_captured_at: Date | string;
   raw_record_content_bytes: number | null;
   raw_record_content_hash: string;
   raw_record_content_type: string;
@@ -214,17 +215,17 @@ interface CommonSessionRow {
   raw_record_snapshot_ordinal: number;
   raw_record_source_locator: string | null;
   raw_record_status: string;
-  session_ended_at: Date | null;
+  session_ended_at: TimestampValue;
   session_harness: string;
   session_harness_session_id: string | null;
   session_id: string;
-  session_last_activity_at: Date | null;
+  session_last_activity_at: TimestampValue;
   session_metadata: JsonRecord;
   session_model: string | null;
   session_provenance: JsonRecord;
   session_source_binding_id: string;
   session_source_locator: string | null;
-  session_started_at: Date | null;
+  session_started_at: TimestampValue;
   session_status: string;
   session_title: string | null;
   session_workspace_id: string;
@@ -244,14 +245,14 @@ interface SessionIdentityRow {
 interface SessionMetadataRow extends CommonSessionRow {}
 
 interface ActivityIntervalRow {
-  activity_interval_ended_at: Date | null;
+  activity_interval_ended_at: TimestampValue;
   activity_interval_id: string;
   activity_interval_metadata: JsonRecord;
   activity_interval_ordinal: number;
   activity_interval_session_id: string;
-  activity_interval_settled_at: Date | null;
+  activity_interval_settled_at: TimestampValue;
   activity_interval_settlement_reason: string | null;
-  activity_interval_started_at: Date;
+  activity_interval_started_at: Date | string;
   activity_interval_status: string;
 }
 
@@ -259,7 +260,7 @@ interface TurnRow extends ActivityIntervalRow {
   turn_actor_kind: string;
   turn_actor_label: string | null;
   turn_content_parts: unknown[];
-  turn_ended_at: Date | null;
+  turn_ended_at: TimestampValue;
   turn_harness_turn_id: string | null;
   turn_id: string;
   turn_metadata: JsonRecord;
@@ -269,7 +270,7 @@ interface TurnRow extends ActivityIntervalRow {
   turn_raw_session_record_id: string;
   turn_raw_span: JsonRecord;
   turn_role: string;
-  turn_started_at: Date | null;
+  turn_started_at: TimestampValue;
 }
 
 interface SegmentRow {
@@ -802,12 +803,12 @@ function groupActivityIntervals(
     const existing = turnsByInterval.get(row.activity_interval_id) ?? [];
     existing.push({
       contentParts: row.turn_content_parts,
-      endedAt: row.turn_ended_at,
+      endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
       metadata: row.turn_metadata,
       rawEventIds: row.turn_raw_event_ids,
       rawSpan: row.turn_raw_span,
       segments: segmentsByTurn.get(row.turn_id) ?? [],
-      startedAt: row.turn_started_at,
+      startedAt: normalizeNullableTimestamp(row.turn_started_at, "turn.startedAt"),
       turn: mapTurn(row),
     });
     turnsByInterval.set(row.activity_interval_id, existing);
@@ -821,17 +822,20 @@ function groupActivityIntervals(
 
 function mapSession(row: CommonSessionRow): SessionMetadata {
   return {
-    endedAt: row.session_ended_at,
+    endedAt: normalizeNullableTimestamp(row.session_ended_at, "session.endedAt"),
     harness: row.session_harness,
     harnessSessionId: row.session_harness_session_id,
     id: row.session_id,
-    lastActivityAt: row.session_last_activity_at,
+    lastActivityAt: normalizeNullableTimestamp(
+      row.session_last_activity_at,
+      "session.lastActivityAt",
+    ),
     metadata: row.session_metadata,
     model: row.session_model,
     provenance: row.session_provenance,
     sourceBindingId: row.session_source_binding_id,
     sourceLocator: row.session_source_locator,
-    startedAt: row.session_started_at,
+    startedAt: normalizeNullableTimestamp(row.session_started_at, "session.startedAt"),
     status: row.session_status,
     title: row.session_title,
     workspaceId: row.session_workspace_id,
@@ -862,14 +866,20 @@ function mapSourceBinding(row: CommonSessionRow): SessionSourceBindingMetadata {
 
 function mapActivityInterval(row: ActivityIntervalRow): SessionActivityIntervalMetadata {
   return {
-    endedAt: row.activity_interval_ended_at,
+    endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, "activityInterval.endedAt"),
     id: row.activity_interval_id,
     metadata: row.activity_interval_metadata,
     ordinal: row.activity_interval_ordinal,
     sessionId: row.activity_interval_session_id,
-    settledAt: row.activity_interval_settled_at,
+    settledAt: normalizeNullableTimestamp(
+      row.activity_interval_settled_at,
+      "activityInterval.settledAt",
+    ),
     settlementReason: row.activity_interval_settlement_reason,
-    startedAt: row.activity_interval_started_at,
+    startedAt: normalizeRequiredTimestamp(
+      row.activity_interval_started_at,
+      "activityInterval.startedAt",
+    ),
     status: row.activity_interval_status,
   };
 }
@@ -878,7 +888,10 @@ function mapRawSessionRecord(row: CommonSessionRow): SessionRawSessionRecordMeta
   return {
     ...(Object.hasOwn(row, "raw_record_body_json") ? { bodyJson: row.raw_record_body_json } : {}),
     ...(Object.hasOwn(row, "raw_record_body_text") ? { bodyText: row.raw_record_body_text } : {}),
-    capturedAt: row.raw_record_captured_at,
+    capturedAt: normalizeRequiredTimestamp(
+      row.raw_record_captured_at,
+      "rawSessionRecord.capturedAt",
+    ),
     contentBytes: row.raw_record_content_bytes,
     contentHash: row.raw_record_content_hash,
     contentType: row.raw_record_content_type,
@@ -893,6 +906,25 @@ function mapRawSessionRecord(row: CommonSessionRow): SessionRawSessionRecordMeta
     sourceLocator: row.raw_record_source_locator,
     status: row.raw_record_status,
   };
+}
+
+function normalizeNullableTimestamp(value: TimestampValue, label: string): Date | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (!Number.isNaN(value.getTime())) return value;
+  } else if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  throw new SessionRecordQueryError({ message: `${label} must be a valid timestamp` });
+}
+
+function normalizeRequiredTimestamp(value: Date | string | null, label: string): Date {
+  const normalized = normalizeNullableTimestamp(value, label);
+  if (normalized === null) {
+    throw new SessionRecordQueryError({ message: `${label} is required` });
+  }
+  return normalized;
 }
 
 function mapTurn(row: TurnRow): SessionTurnMetadata {

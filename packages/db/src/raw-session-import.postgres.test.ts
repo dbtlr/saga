@@ -6,7 +6,12 @@ import { normalizeClaudeTranscript } from "./claude-transcript-normalizer.js";
 import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
-import { getSessionDetail, listRecentSessionRecords } from "./session-records.js";
+import {
+  getSessionDetail,
+  listRecentSessionRecords,
+  type RecentSessionRecord,
+  type SessionDetail,
+} from "./session-records.js";
 import {
   activityIntervals,
   rawSessionRecords,
@@ -229,6 +234,7 @@ describePostgres("raw session import", () => {
     );
 
     expect(rows).toHaveLength(1);
+    expectRecentSessionRecordTimestampsCanRender(rows[0]);
     expect(rows[0]).toMatchObject({
       activityInterval: {
         id: imported.activityInterval.id,
@@ -306,6 +312,7 @@ describePostgres("raw session import", () => {
     );
 
     expect(bySession.session.id).toBe(imported.session.id);
+    expectSessionDetailTimestampsCanRender(bySession);
     expect(bySession.activeRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
     expect(bySession.selectedRawSessionRecord).toBeNull();
     expect(bySession.activityIntervals).toHaveLength(1);
@@ -318,6 +325,7 @@ describePostgres("raw session import", () => {
     });
 
     expect(byRawRecord.session.id).toBe(imported.session.id);
+    expectSessionDetailTimestampsCanRender(byRawRecord);
     expect(byRawRecord.selectedRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
     expect(byRawRecord.activityIntervals[0]?.turns).toHaveLength(2);
   });
@@ -2837,4 +2845,85 @@ function codexTranscript(records: readonly Record<string, unknown>[]): string {
 
 function claudeTranscript(records: readonly Record<string, unknown>[]): string {
   return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
+
+function expectRecentSessionRecordTimestampsCanRender(row: RecentSessionRecord | undefined): void {
+  if (row === undefined) throw new Error("expected recent session record");
+  expectNullableDate(row.session.startedAt, "session.startedAt");
+  expectNullableDate(row.session.lastActivityAt, "session.lastActivityAt");
+  expectNullableDate(row.session.endedAt, "session.endedAt");
+  expectDate(row.rawSessionRecord.capturedAt, "rawSessionRecord.capturedAt");
+  if (row.activityInterval !== null) {
+    expectDate(row.activityInterval.startedAt, "activityInterval.startedAt");
+    expectNullableDate(row.activityInterval.endedAt, "activityInterval.endedAt");
+    expectNullableDate(row.activityInterval.settledAt, "activityInterval.settledAt");
+  }
+
+  const eagerRecordsOutput = [
+    row.rawSessionRecord.capturedAt.toISOString(),
+    row.session.startedAt?.toISOString() ?? "none",
+    row.session.lastActivityAt?.toISOString() ?? "none",
+    row.session.endedAt?.toISOString() ?? "none",
+    row.activityInterval?.startedAt.toISOString() ?? "none",
+    row.activityInterval?.endedAt?.toISOString() ?? "none",
+    row.activityInterval?.settledAt?.toISOString() ?? "none",
+  ];
+  expect(JSON.parse(JSON.stringify({ records: eagerRecordsOutput, value: row }))).toMatchObject({
+    records: eagerRecordsOutput,
+  });
+}
+
+function expectSessionDetailTimestampsCanRender(detail: SessionDetail): void {
+  expectNullableDate(detail.session.startedAt, "session.startedAt");
+  expectNullableDate(detail.session.lastActivityAt, "session.lastActivityAt");
+  expectNullableDate(detail.session.endedAt, "session.endedAt");
+
+  const rawRecords = [
+    ...detail.rawSessionRecords,
+    ...(detail.activeRawSessionRecord === null ? [] : [detail.activeRawSessionRecord]),
+    ...(detail.selectedRawSessionRecord === null ? [] : [detail.selectedRawSessionRecord]),
+  ];
+  const eagerRecordsOutput = [
+    detail.session.startedAt?.toISOString() ?? "none",
+    detail.session.lastActivityAt?.toISOString() ?? "none",
+    detail.session.endedAt?.toISOString() ?? "none",
+  ];
+
+  for (const record of rawRecords) {
+    expectDate(record.capturedAt, "rawSessionRecord.capturedAt");
+    eagerRecordsOutput.push(record.capturedAt.toISOString());
+  }
+
+  for (const interval of detail.activityIntervals) {
+    expectDate(interval.activityInterval.startedAt, "activityInterval.startedAt");
+    expectNullableDate(interval.activityInterval.endedAt, "activityInterval.endedAt");
+    expectNullableDate(interval.activityInterval.settledAt, "activityInterval.settledAt");
+    eagerRecordsOutput.push(
+      interval.activityInterval.startedAt.toISOString(),
+      interval.activityInterval.endedAt?.toISOString() ?? "none",
+      interval.activityInterval.settledAt?.toISOString() ?? "none",
+    );
+    for (const turn of interval.turns) {
+      expectNullableDate(turn.startedAt, "turn.startedAt");
+      expectNullableDate(turn.endedAt, "turn.endedAt");
+      eagerRecordsOutput.push(
+        turn.startedAt?.toISOString() ?? "none",
+        turn.endedAt?.toISOString() ?? "none",
+      );
+    }
+  }
+
+  expect(JSON.parse(JSON.stringify({ records: eagerRecordsOutput, value: detail }))).toMatchObject({
+    records: eagerRecordsOutput,
+  });
+}
+
+function expectDate(value: Date, label: string): void {
+  expect(value, label).toBeInstanceOf(Date);
+  expect(value.toISOString(), label).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+}
+
+function expectNullableDate(value: Date | null, label: string): void {
+  if (value === null) return;
+  expectDate(value, label);
 }
