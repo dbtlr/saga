@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { normalizeClaudeTranscript } from "./claude-transcript-normalizer.js";
 import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
@@ -214,7 +215,7 @@ describePostgres("raw session import", () => {
       .select()
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, second.rawSessionRecord.id));
-    expect(newTurns).toHaveLength(1);
+    expect(newTurns).toHaveLength(2);
 
     const activeSegments = await service.db
       .select()
@@ -225,8 +226,7 @@ describePostgres("raw session import", () => {
           eq(sessionSegments.sessionId, second.session.id),
         ),
       );
-    expect(activeSegments).toHaveLength(1);
-    expect(activeSegments[0]?.searchText).toContain("Second turn");
+    expect(activeSegments).toHaveLength(0);
   });
 
   test("normalizes Codex transcript JSONL into session metadata, turns, parts, and spans", async () => {
@@ -659,6 +659,395 @@ describePostgres("raw session import", () => {
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
     expect(segments).toHaveLength(0);
+  });
+
+  test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("claude-normalize");
+    const rawContent = claudeTranscript([
+      {
+        type: "mode",
+        mode: "default",
+        sessionId: "claude-transcript-session-1",
+      },
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: "prompt-1",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Normalize Claude transcripts.",
+        },
+        uuid: "user-1",
+        timestamp: "2026-06-22T16:00:00.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-transcript-session-1",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        parentUuid: "user-1",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "msg-1",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "I will parse Claude JSONL." }],
+          stop_reason: "tool_use",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 7,
+          },
+        },
+        requestId: "req-1",
+        type: "assistant",
+        uuid: "assistant-1",
+        timestamp: "2026-06-22T16:00:01.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-transcript-session-1",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        parentUuid: "assistant-1",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "msg-1",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu-bash-1",
+              name: "Bash",
+              input: {
+                command: "pnpm test -- --run",
+              },
+            },
+          ],
+          stop_reason: "tool_use",
+        },
+        requestId: "req-1",
+        type: "assistant",
+        uuid: "assistant-2",
+        timestamp: "2026-06-22T16:00:02.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-transcript-session-1",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        parentUuid: "assistant-2",
+        isSidechain: false,
+        promptId: "prompt-2",
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu-bash-1",
+              content: "tests passed",
+            },
+          ],
+        },
+        uuid: "tool-result-1",
+        timestamp: "2026-06-22T16:00:03.000Z",
+        toolUseResult: {
+          success: true,
+        },
+        sourceToolAssistantUUID: "assistant-2",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-transcript-session-1",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        parentUuid: "tool-result-1",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "msg-2",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu-agent-1",
+              name: "Agent",
+              input: {
+                description: "Inspect related code",
+                prompt: "Summarize the importer extension point.",
+              },
+            },
+          ],
+          stop_reason: "tool_use",
+        },
+        requestId: "req-2",
+        type: "assistant",
+        uuid: "assistant-agent-1",
+        timestamp: "2026-06-22T16:00:04.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-transcript-session-1",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        type: "ai-title",
+        aiTitle: "Claude normalization fixture",
+        sessionId: "claude-transcript-session-1",
+      },
+    ]);
+
+    const normalized = normalizeClaudeTranscript({
+      contentType: "jsonl",
+      rawContent,
+      sourceLocator: "/tmp/claude-transcript-session-1.jsonl",
+    });
+    expect(normalized?.turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+      "subagent",
+    ]);
+    expect(normalized?.turns[2]?.searchText).toContain("pnpm test");
+    expect(normalized?.turns[3]?.searchText).toContain("tests passed");
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          displayName: "Drew",
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T16:00:05.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-claude-normalize",
+          label: "local-host",
+          projectRoot: "/work/saga",
+        },
+        locator: "/tmp/claude-transcript-session-1.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.operation).toBe("inserted");
+    expect(result.session.harnessSessionId).toBe("claude-transcript-session-1");
+    expect(result.session).toMatchObject({
+      lastActivityAt: new Date("2026-06-22T16:00:04.000Z"),
+      model: "claude-sonnet-4-5",
+      startedAt: new Date("2026-06-22T16:00:00.000Z"),
+      title: "Claude normalization fixture",
+    });
+    expect(result.session.metadata).toMatchObject({
+      cwd: "/work/saga",
+      detectedHarnessSessionId: "claude-transcript-session-1",
+      normalizer: "claude-transcript-v1",
+      turnCount: 5,
+      version: "2.1.160",
+    });
+    expect(result.session.metadata).toMatchObject({
+      subagentEvidence: [
+        {
+          sourceRecordType: "assistant",
+          toolUseId: "toolu-agent-1",
+          toolInput: {
+            description: "Inspect related code",
+            prompt: "Summarize the importer extension point.",
+          },
+        },
+      ],
+    });
+    expect(result.activityInterval.startedAt).toEqual(new Date("2026-06-22T16:00:00.000Z"));
+    expect(result.activityInterval.metadata).toMatchObject({
+      cwd: "/work/saga",
+      lifecycleEvents: [
+        {
+          mode: "default",
+          type: "mode",
+        },
+        {
+          aiTitle: "Claude normalization fixture",
+          type: "ai-title",
+        },
+      ],
+      normalizer: "claude-transcript-v1",
+      parseErrors: [],
+    });
+
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
+      .limit(1);
+    expect(rawRecord?.metadata).toMatchObject({
+      normalization: {
+        cwd: "/work/saga",
+        detectedHarnessSessionId: "claude-transcript-session-1",
+        normalizer: "claude-transcript-v1",
+        turnCount: 5,
+      },
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+      "subagent",
+    ]);
+    expect(turns[0]).toMatchObject({
+      actorKind: "host_user",
+      harnessTurnId: "user-1:user",
+      rawSpan: {
+        lineStart: 1,
+        lineEnd: 1,
+      },
+    });
+    expect(turns[0]?.metadata).toMatchObject({
+      cwd: "/work/saga",
+      normalizer: "claude-transcript-v1",
+      promptId: "prompt-1",
+      sessionId: "claude-transcript-session-1",
+      uuid: "user-1",
+    });
+    expect(turns[0]?.contentParts).toEqual([
+      { type: "text", text: "Normalize Claude transcripts." },
+    ]);
+    expect(turns[2]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "Bash",
+        callId: "toolu-bash-1",
+        input: {
+          command: "pnpm test -- --run",
+        },
+      },
+    ]);
+    expect(turns[3]).toMatchObject({
+      actorKind: "tool",
+      actorLabel: "Bash",
+      harnessTurnId: "toolu-bash-1:result",
+    });
+    expect(turns[3]?.contentParts).toEqual([
+      {
+        type: "tool_result",
+        name: "Bash",
+        callId: "toolu-bash-1",
+        output: "tests passed",
+      },
+    ]);
+    expect(turns[4]).toMatchObject({
+      actorKind: "subagent",
+      actorLabel: "Agent",
+      harnessTurnId: "toolu-agent-1",
+    });
+
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id));
+    expect(segments).toHaveLength(0);
+  });
+
+  test("unchanged Claude reimport preserves current session turn ids", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("claude-unchanged-turn-ids");
+    const rawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: "prompt-unchanged",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Keep Claude turn ids stable.",
+        },
+        uuid: "claude-unchanged-user",
+        timestamp: "2026-06-22T16:10:00.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-unchanged-session",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+      {
+        parentUuid: "claude-unchanged-user",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "msg-unchanged",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "Stable." }],
+        },
+        requestId: "req-unchanged",
+        type: "assistant",
+        uuid: "claude-unchanged-assistant",
+        timestamp: "2026-06-22T16:10:01.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/work/saga",
+        sessionId: "claude-unchanged-session",
+        version: "2.1.160",
+        gitBranch: "main",
+      },
+    ]);
+    const input = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T16:10:02.000Z",
+      contentType: "jsonl",
+      harness: "claude",
+      host: {
+        id: "host-claude-unchanged-turn-ids",
+      },
+      locator: "/tmp/claude-unchanged-session.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+    const firstTurns = await service.db
+      .select({ id: sessionTurns.id })
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+
+    const second = await Effect.runPromise(importRawSessionRecord(service, input));
+    const secondTurns = await service.db
+      .select({ id: sessionTurns.id })
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+
+    expect(second.operation).toBe("unchanged");
+    expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(second.session.id).toBe(first.session.id);
+    expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
   });
 
   test("records invalid Codex JSONL parse errors in normalization metadata", async () => {
@@ -1261,5 +1650,9 @@ describePostgres("raw session import", () => {
 });
 
 function codexTranscript(records: readonly Record<string, unknown>[]): string {
+  return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
+
+function claudeTranscript(records: readonly Record<string, unknown>[]): string {
   return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
 }

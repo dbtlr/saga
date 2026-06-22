@@ -4,9 +4,11 @@ import { Data, Effect } from "effect";
 import {
   extractCodexTranscriptImportHints,
   normalizeCodexTranscript,
-  type CodexTranscriptNormalization,
-  type NormalizedTranscriptTurn,
 } from "./codex-transcript-normalizer.js";
+import {
+  extractClaudeTranscriptImportHints,
+  normalizeClaudeTranscript,
+} from "./claude-transcript-normalizer.js";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import {
   activityIntervals,
@@ -24,6 +26,11 @@ import {
   type SourceBinding,
   type User,
 } from "./schema.js";
+import type {
+  NormalizedTranscriptTurn,
+  TranscriptImportHints,
+  TranscriptNormalization,
+} from "./transcript-normalizer.js";
 
 export type RawSessionHarness = "claude" | "codex";
 export type RawSessionContentType = "json" | "jsonl" | "text";
@@ -176,15 +183,7 @@ async function importRawSessionRecordUnsafe(
       input,
       sessionId: session.id,
     });
-    const transcriptNormalization =
-      input.harness === "codex"
-        ? normalizeCodexTranscript({
-            contentType: input.contentType,
-            fallbackHarnessSessionId: input.harnessSessionId,
-            fallbackModel: input.model,
-            rawContent: input.rawContent,
-          })
-        : undefined;
+    const transcriptNormalization = normalizeTranscript(input);
 
     const existingRecord = await findRawSessionRecordByContentHash(tx, {
       contentHash: input.contentHash,
@@ -315,7 +314,7 @@ async function refreshSessionAndActivityInterval(
     now: Date;
     rawSessionRecordId: string;
     session: Session;
-    transcriptNormalization?: CodexTranscriptNormalization | undefined;
+    transcriptNormalization?: TranscriptNormalization | undefined;
   },
 ): Promise<{ activityInterval: ActivityInterval; session: Session }> {
   const [updatedSession] = await tx
@@ -375,10 +374,10 @@ async function repairActiveRawSessionRecordDerivedRows(
     existingRecord: RawSessionRecord;
     input: NormalizedRawSessionImportInput;
     sessionId: string;
-    transcriptNormalization: CodexTranscriptNormalization;
+    transcriptNormalization: TranscriptNormalization;
   },
 ): Promise<RawSessionRecord> {
-  const derivedRowsCurrent = await codexDerivedRowsAreCurrent(tx, {
+  const derivedRowsCurrent = await transcriptDerivedRowsAreCurrent(tx, {
     activityIntervalId: input.activityIntervalId,
     input: input.input,
     rawSessionRecordId: input.existingRecord.id,
@@ -423,14 +422,14 @@ async function repairActiveRawSessionRecordDerivedRows(
   return rawSessionRecord;
 }
 
-async function codexDerivedRowsAreCurrent(
+async function transcriptDerivedRowsAreCurrent(
   tx: DatabaseService["db"],
   input: {
     activityIntervalId: string;
     input: NormalizedRawSessionImportInput;
     rawSessionRecordId: string;
     sessionId: string;
-    transcriptNormalization: CodexTranscriptNormalization;
+    transcriptNormalization: TranscriptNormalization;
   },
 ): Promise<boolean> {
   const turnRows = await tx
@@ -490,6 +489,41 @@ interface NormalizedRawSessionImportInput extends RawSessionImportInput {
   sourceLocatorHash: string | undefined;
 }
 
+function normalizeTranscript(
+  input: NormalizedRawSessionImportInput,
+): TranscriptNormalization | undefined {
+  if (input.harness === "codex") {
+    return normalizeCodexTranscript({
+      contentType: input.contentType,
+      fallbackHarnessSessionId: input.harnessSessionId,
+      fallbackModel: input.model,
+      rawContent: input.rawContent,
+    });
+  }
+
+  return normalizeClaudeTranscript({
+    contentType: input.contentType,
+    fallbackHarnessSessionId: input.harnessSessionId,
+    fallbackModel: input.model,
+    rawContent: input.rawContent,
+    sourceLocator: input.locator,
+  });
+}
+
+function extractTranscriptImportHints(input: RawSessionImportInput): TranscriptImportHints {
+  if (input.harness === "codex") {
+    return extractCodexTranscriptImportHints({
+      contentType: input.contentType,
+      rawContent: input.rawContent,
+    });
+  }
+
+  return extractClaudeTranscriptImportHints({
+    contentType: input.contentType,
+    rawContent: input.rawContent,
+  });
+}
+
 function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImportInput {
   const workspaceId = input.workspaceId.trim();
   if (workspaceId === "") {
@@ -506,14 +540,9 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
     throw new RawSessionImportError({ message: "author.handle is required" });
   }
 
-  const codexHints =
-    input.harness === "codex"
-      ? extractCodexTranscriptImportHints({
-          contentType: input.contentType,
-          rawContent: input.rawContent,
-        })
-      : undefined;
-  const harnessSessionId = cleanOptional(input.harnessSessionId) ?? codexHints?.harnessSessionId;
+  const transcriptHints = extractTranscriptImportHints(input);
+  const harnessSessionId =
+    cleanOptional(input.harnessSessionId) ?? transcriptHints?.harnessSessionId;
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
   if (harnessSessionId === undefined && sourceLocatorHash === undefined) {
@@ -538,7 +567,7 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
       id: hostId,
     },
     locator,
-    model: input.model ?? codexHints?.model,
+    model: input.model ?? transcriptHints?.model,
     sourceLocatorHash,
     workspaceId,
   };
@@ -684,7 +713,7 @@ async function regenerateDerivedSessionRecords(
     input: NormalizedRawSessionImportInput;
     rawSessionRecordId: string;
     sessionId: string;
-    transcriptNormalization?: CodexTranscriptNormalization | undefined;
+    transcriptNormalization?: TranscriptNormalization | undefined;
   },
 ): Promise<void> {
   const rawSessionRecordIds = await tx
