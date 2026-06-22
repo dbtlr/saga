@@ -22,6 +22,7 @@ import {
 export type RawSessionHarness = "claude" | "codex";
 export type RawSessionContentType = "json" | "jsonl" | "text";
 export type RawSessionImportStatus = "inserted" | "unchanged";
+type JsonBody = boolean | null | number | string | JsonBody[] | { [key: string]: JsonBody };
 
 export interface RawSessionImportInput {
   author: {
@@ -459,7 +460,9 @@ async function regenerateDerivedSessionRecords(
   await tx
     .delete(sessionSegments)
     .where(eq(sessionSegments.rawSessionRecordId, input.rawSessionRecordId));
-  await tx.delete(sessionTurns).where(eq(sessionTurns.rawSessionRecordId, input.rawSessionRecordId));
+  await tx
+    .delete(sessionTurns)
+    .where(eq(sessionTurns.rawSessionRecordId, input.rawSessionRecordId));
 
   const searchText = deriveSearchText(input.input);
   if (searchText === "") return;
@@ -505,7 +508,7 @@ async function regenerateDerivedSessionRecords(
 }
 
 function buildRawBody(input: NormalizedRawSessionImportInput): {
-  bodyJson: unknown | undefined;
+  bodyJson: JsonBody | undefined;
   bodyText: string | undefined;
 } {
   if (input.contentType === "json") {
@@ -521,9 +524,9 @@ function buildRawBody(input: NormalizedRawSessionImportInput): {
   };
 }
 
-function parseJsonBody(rawContent: string): unknown {
+function parseJsonBody(rawContent: string): JsonBody | undefined {
   try {
-    return JSON.parse(rawContent);
+    return JSON.parse(rawContent) as JsonBody;
   } catch {
     return undefined;
   }

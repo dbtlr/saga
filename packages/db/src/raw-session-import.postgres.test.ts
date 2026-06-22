@@ -127,7 +127,10 @@ describePostgres("raw session import", () => {
       sourceUri: "codex://host/host-1",
     });
 
-    const hostUsers = await service.db.select().from(users).where(eq(users.workspaceId, workspaceId));
+    const hostUsers = await service.db
+      .select()
+      .from(users)
+      .where(eq(users.workspaceId, workspaceId));
     expect(hostUsers).toHaveLength(1);
     expect(hostUsers[0]).toMatchObject({
       handle: "drew",
@@ -178,7 +181,9 @@ describePostgres("raw session import", () => {
     expect(second.operation).toBe("inserted");
     expect(second.session.id).toBe(first.session.id);
     expect(second.rawSessionRecord.id).not.toBe(first.rawSessionRecord.id);
-    expect(second.rawSessionRecord.snapshotOrdinal).toBe(first.rawSessionRecord.snapshotOrdinal + 1);
+    expect(second.rawSessionRecord.snapshotOrdinal).toBe(
+      first.rawSessionRecord.snapshotOrdinal + 1,
+    );
     expect(second.rawSessionRecord.isActive).toBe(true);
 
     const records = await service.db
