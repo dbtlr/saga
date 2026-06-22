@@ -254,6 +254,116 @@ describe("deriveSessionSegmentsFromTurns", () => {
     expect(segmentsByTurnId.get(turns[1]?.id ?? "")?.searchText).toContain("printf ambiguous-one");
     expect(segmentsByTurnId.get(turns[2]?.id ?? "")?.searchText).toContain("ALPHA_RESULT_NEEDLE");
   });
+
+  test("persists safe observability for a standalone skipped-only turn", () => {
+    const secretNeedle = "sk-standaloneskippedsecretfixture000000";
+    const turns = [
+      makeTurn(0, [
+        {
+          type: "text",
+          text: `api_key=${secretNeedle}`,
+        },
+      ]),
+    ];
+
+    const segments = deriveSessionSegmentsFromTurns(turns);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      charEnd: null,
+      charStart: null,
+      ordinal: 0,
+      searchText: "",
+      segmentKind: "turn_skipped",
+      snippet: null,
+      tokenEnd: null,
+      tokenStart: null,
+      turnId: turns[0]?.id,
+    });
+    expect(JSON.stringify(segments[0]?.metadata)).not.toContain(secretNeedle);
+    expect(segments[0]?.metadata).toMatchObject({
+      contentPartTypes: ["text"],
+      filterReasons: ["secret"],
+      filters: [
+        {
+          partIndex: 0,
+          reason: "secret",
+          type: "text",
+        },
+      ],
+      groupedTurnIds: [turns[0]?.id],
+      groupedTurnOrdinals: [0],
+      normalizer: "session-segments-v1",
+      omittedSearchText: true,
+      omissionReason: "all_content_filtered_or_empty",
+      searchTextSpan: null,
+      segmentStatus: "skipped",
+      segmentTurnId: turns[0]?.id,
+      skippedPartCount: 1,
+    });
+  });
+
+  test("persists safe observability for a skipped tool group member", () => {
+    const hugeLogNeedle = "SKIPPED_TOOL_RESULT_NEEDLE";
+    const hugeLog = Array.from(
+      { length: 850 },
+      (_, index) =>
+        `2026-06-22T18:10:${String(index % 60).padStart(2, "0")}Z ${hugeLogNeedle} line ${index}`,
+    ).join("\n");
+    const turns = [
+      makeTurn(0, [
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-skipped",
+          arguments: { command: "cat build.log" },
+        },
+      ]),
+      makeTurn(1, [
+        {
+          type: "tool_result",
+          name: "shell",
+          callId: "call-skipped",
+          output: hugeLog,
+        },
+      ]),
+    ];
+
+    const segments = deriveSessionSegmentsFromTurns(turns);
+
+    expect(segments).toHaveLength(2);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "tool_group_call",
+      "tool_group_skipped",
+    ]);
+    expect(segments[0]?.searchText).toContain("cat build.log");
+    expect(segments[1]?.searchText).toBe("");
+    expect(JSON.stringify(segments[1]?.metadata)).not.toContain(hugeLogNeedle);
+    expect(segments[1]?.metadata).toMatchObject({
+      contentPartTypes: ["tool_result"],
+      filterReasons: ["huge_raw_log"],
+      filters: [
+        {
+          partIndex: 0,
+          reason: "huge_raw_log",
+          type: "tool_result",
+        },
+      ],
+      groupedTurnIds: [turns[0]?.id, turns[1]?.id],
+      groupedTurnOrdinals: [0, 1],
+      omittedSearchText: true,
+      segmentStatus: "skipped",
+      toolGroup: {
+        callId: "call-skipped",
+        filterReasons: ["huge_raw_log"],
+        memberCount: 2,
+        memberIndex: 1,
+        skippedPartCount: 1,
+        turnIds: [turns[0]?.id, turns[1]?.id],
+        turnOrdinals: [0, 1],
+      },
+    });
+  });
 });
 
 function makeTurn(ordinal: number, contentParts: unknown[]): SessionTurn {

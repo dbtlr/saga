@@ -4110,10 +4110,74 @@ describePostgres("raw session import", () => {
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
 
-    expect(segments).toHaveLength(2);
+    expect(segments).toHaveLength(7);
     expect(segments.map((segment) => segment.searchText)).toEqual([
       "Remember safe searchable context.",
       'shell {"command":"cat build.log"} completed',
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "turn",
+      "tool_group_call",
+      "tool_group_skipped",
+      "turn_skipped",
+      "turn_skipped",
+      "turn_skipped",
+      "turn_skipped",
+    ]);
+    expect(segments.slice(2).every((segment) => segment.snippet === null)).toBe(true);
+    expect(segments.slice(2).every((segment) => segment.charStart === null)).toBe(true);
+    expect(segments.slice(2).every((segment) => segment.tokenStart === null)).toBe(true);
+    expect(segments.slice(2).map((segment) => segment.metadata)).toMatchObject([
+      {
+        contentPartTypes: ["tool_result"],
+        filterReasons: ["huge_raw_log"],
+        filters: [
+          {
+            reason: "huge_raw_log",
+            type: "tool_result",
+          },
+        ],
+        omittedSearchText: true,
+        segmentStatus: "skipped",
+        skippedPartCount: 1,
+        toolGroup: {
+          filterReasons: ["huge_raw_log"],
+          skippedPartCount: 1,
+        },
+      },
+      {
+        contentPartTypes: ["text"],
+        filterReasons: ["secret"],
+        omittedSearchText: true,
+        segmentStatus: "skipped",
+        skippedPartCount: 1,
+      },
+      {
+        contentPartTypes: ["text"],
+        filterReasons: ["binary_or_base64"],
+        omittedSearchText: true,
+        segmentStatus: "skipped",
+        skippedPartCount: 1,
+      },
+      {
+        contentPartTypes: ["text"],
+        filterReasons: ["unbounded_diff"],
+        omittedSearchText: true,
+        segmentStatus: "skipped",
+        skippedPartCount: 1,
+      },
+      {
+        contentPartTypes: ["text"],
+        filterReasons: ["repeated_generated_file"],
+        omittedSearchText: true,
+        segmentStatus: "skipped",
+        skippedPartCount: 1,
+      },
     ]);
     expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain(
       "supersecretfixture",
@@ -4123,6 +4187,12 @@ describePostgres("raw session import", () => {
       "added generated line",
     );
     expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain("routeTree");
+    expect(JSON.stringify(segments.map((segment) => segment.metadata))).not.toContain(
+      "supersecretfixture",
+    );
+    expect(JSON.stringify(segments.map((segment) => segment.metadata))).not.toContain(
+      "added generated line",
+    );
     expect(segments[1]?.metadata).toMatchObject({
       toolGroup: {
         filters: [
@@ -4134,6 +4204,22 @@ describePostgres("raw session import", () => {
         skippedPartCount: 1,
       },
     });
+
+    const omittedSecretRecall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "supersecretfixture",
+        workspaceId,
+      }),
+    );
+    expect(omittedSecretRecall.matchCount).toBe(0);
+
+    const omittedLogRecall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "noisy log line 42",
+        workspaceId,
+      }),
+    );
+    expect(omittedLogRecall.matchCount).toBe(0);
   });
 
   test("imports Claude sidechain subagent transcripts as separate sessions from an explicit parent id", async () => {

@@ -147,7 +147,10 @@ async function selectSegmentSourceTurns(
 
 function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext): SegmentDraft[] {
   const extraction = extractGroupSearchText([turn]);
-  if (extraction.searchText === "") return [];
+  if (extraction.searchText === "") {
+    if (extraction.skippedPartCount === 0 && extraction.contentPartTypes.length === 0) return [];
+    return [buildSkippedDraft(turn, extraction, group)];
+  }
 
   const baseKind = group === undefined ? "turn" : toolGroupMemberKind(turn);
   const chunks = splitSearchText(extraction.searchText);
@@ -171,6 +174,24 @@ function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext):
     tokenStart: chunk.tokenStart,
     turn,
   }));
+}
+
+function buildSkippedDraft(
+  turn: SessionTurn,
+  extraction: TextExtraction,
+  group?: ToolGroupContext,
+): SegmentDraft {
+  return {
+    charEnd: null,
+    charStart: null,
+    metadata: buildSkippedSegmentMetadata(group?.turns ?? [turn], turn, extraction, group),
+    searchText: "",
+    segmentKind: group === undefined ? "turn_skipped" : "tool_group_skipped",
+    snippet: null,
+    tokenEnd: null,
+    tokenStart: null,
+    turn,
+  };
 }
 
 function toolGroupMemberKind(turn: SessionTurn): string {
@@ -509,9 +530,71 @@ function buildSegmentMetadata(
   };
 }
 
+function buildSkippedSegmentMetadata(
+  turns: readonly SessionTurn[],
+  segmentTurn: SessionTurn,
+  extraction: TextExtraction,
+  toolGroup?: ToolGroupContext,
+): JsonRecord {
+  const primaryTurn = segmentTurn;
+  const metadata = compactRecord({
+    actorKind: primaryTurn.actorKind,
+    actorLabel: primaryTurn.actorLabel,
+    contentPartTypes: extraction.contentPartTypes,
+    filterReasons: uniqueFilterReasons(extraction.filters),
+    filters: extraction.filters,
+    groupedActorKinds: turns.map((turn) => turn.actorKind),
+    groupedContentPartTypes: turns.map((turn) => contentPartTypes(turn)),
+    groupedHarnessTurnIds: turns.map((turn) => turn.harnessTurnId).filter((id) => id !== null),
+    groupedRoles: turns.map((turn) => turn.role),
+    groupedTurnIds: turns.map((turn) => turn.id),
+    groupedTurnOrdinals: turns.map((turn) => turn.ordinal),
+    harnessTurnId: primaryTurn.harnessTurnId,
+    normalizer: DERIVER,
+    omittedSearchText: true,
+    omissionReason: "all_content_filtered_or_empty",
+    role: primaryTurn.role,
+    searchTextSpan: null,
+    segmentRawSpan: null,
+    segmentSourceRawSpan: primaryTurn.rawSpan,
+    segmentStatus: "skipped",
+    segmentTurnId: primaryTurn.id,
+    segmentTurnOrdinal: primaryTurn.ordinal,
+    skippedPartCount: extraction.skippedPartCount,
+    sourceRawSpans: turns.map((turn) => turn.rawSpan),
+    sourceTurnSpans: turns.map((turn) => ({
+      harnessTurnId: turn.harnessTurnId,
+      rawSpan: turn.rawSpan,
+      turnId: turn.id,
+      turnOrdinal: turn.ordinal,
+    })),
+    turnOrdinal: primaryTurn.ordinal,
+  });
+  if (toolGroup === undefined) return metadata;
+
+  return {
+    ...metadata,
+    toolGroup: compactRecord({
+      callId: toolGroup.callId,
+      contentPartTypes: toolGroup.contentPartTypes,
+      filterReasons: uniqueFilterReasons(toolGroup.filters),
+      filters: toolGroup.filters,
+      memberCount: toolGroup.memberCount,
+      memberIndex: toolGroup.memberIndex,
+      skippedPartCount: toolGroup.skippedPartCount,
+      turnIds: toolGroup.turns.map((turn) => turn.id),
+      turnOrdinals: toolGroup.turns.map((turn) => turn.ordinal),
+    }),
+  };
+}
+
 function contentPartTypes(turn: SessionTurn): string[] {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts : [];
   return parts.map((part) => readString(asRecord(part).type) ?? "unknown");
+}
+
+function uniqueFilterReasons(filters: readonly FilterReason[]): string[] {
+  return Array.from(new Set(filters.map((filter) => filter.reason))).sort();
 }
 
 function segmentRawSpan(
