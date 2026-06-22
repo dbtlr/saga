@@ -257,7 +257,7 @@ async function importRawSessionRecordUnsafe(
       throw new RawSessionImportError({ message: "raw session record insert returned no row" });
     }
 
-    await tx
+    const [updatedSession] = await tx
       .update(sessions)
       .set({
         endedAt: transcriptNormalization?.session.endedAt,
@@ -273,9 +273,13 @@ async function importRawSessionRecordUnsafe(
         title: transcriptNormalization?.session.title ?? input.title ?? session.title,
         updatedAt: now,
       })
-      .where(eq(sessions.id, session.id));
+      .where(eq(sessions.id, session.id))
+      .returning();
+    if (updatedSession === undefined) {
+      throw new RawSessionImportError({ message: "session update returned no row" });
+    }
 
-    await tx
+    const [updatedActivityInterval] = await tx
       .update(activityIntervals)
       .set({
         endedAt: transcriptNormalization?.activityInterval.endedAt,
@@ -288,7 +292,11 @@ async function importRawSessionRecordUnsafe(
         status: transcriptNormalization?.activityInterval.status ?? activityInterval.status,
         updatedAt: now,
       })
-      .where(eq(activityIntervals.id, activityInterval.id));
+      .where(eq(activityIntervals.id, activityInterval.id))
+      .returning();
+    if (updatedActivityInterval === undefined) {
+      throw new RawSessionImportError({ message: "activity interval update returned no row" });
+    }
 
     await regenerateDerivedSessionRecords(tx, {
       activityIntervalId: activityInterval.id,
@@ -299,12 +307,12 @@ async function importRawSessionRecordUnsafe(
     });
 
     return {
-      activityInterval,
+      activityInterval: updatedActivityInterval,
       authorUser,
       contentHash: input.contentHash,
       operation: "inserted",
       rawSessionRecord,
-      session,
+      session: updatedSession,
       sourceBinding,
     };
   });
@@ -598,7 +606,6 @@ async function insertNormalizedTranscriptTurns(
     turns: readonly NormalizedTranscriptTurn[];
   },
 ): Promise<void> {
-  let segmentOrdinal = 0;
   for (const [turnIndex, normalizedTurn] of input.turns.entries()) {
     const [turn] = await tx
       .insert(sessionTurns)
@@ -624,34 +631,6 @@ async function insertNormalizedTranscriptTurns(
     if (turn === undefined) {
       throw new RawSessionImportError({ message: "session turn insert returned no row" });
     }
-
-    const searchText = normalizedTurn.searchText.trim();
-    if (searchText === "") continue;
-    const rawSpan = asRecord(normalizedTurn.rawSpan);
-    const [segment] = await tx
-      .insert(sessionSegments)
-      .values({
-        activityIntervalId: input.activityIntervalId,
-        charEnd: readNumber(rawSpan.charEnd),
-        charStart: readNumber(rawSpan.charStart),
-        metadata: {
-          codexTurnId: normalizedTurn.codexTurnId,
-          normalizer: "codex-transcript-v1",
-          role: normalizedTurn.role,
-        },
-        ordinal: segmentOrdinal,
-        rawSessionRecordId: input.rawSessionRecordId,
-        searchText,
-        sessionId: input.sessionId,
-        snippet: searchText.slice(0, 240),
-        turnId: turn.id,
-        workspaceId: input.input.workspaceId,
-      })
-      .returning();
-    if (segment === undefined) {
-      throw new RawSessionImportError({ message: "session segment insert returned no row" });
-    }
-    segmentOrdinal += 1;
   }
 }
 
@@ -738,10 +717,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function errorMessage(cause: unknown): string {

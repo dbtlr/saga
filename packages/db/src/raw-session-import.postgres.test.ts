@@ -147,7 +147,7 @@ describePostgres("raw session import", () => {
       .select()
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id));
-    expect(segments).toHaveLength(1);
+    expect(segments).toHaveLength(0);
   });
 
   test("imports growing raw content as a new active snapshot and regenerates derived rows", async () => {
@@ -241,6 +241,14 @@ describePostgres("raw session import", () => {
           id: "codex-transcript-session-1",
           model_provider: "openai",
           parent_thread_id: "parent-thread-1",
+          source: {
+            subagent: {
+              thread_spawn: {
+                parent_turn_id: "parent-turn-1",
+              },
+            },
+          },
+          thread_source: "subagent",
         },
       },
       {
@@ -285,11 +293,11 @@ describePostgres("raw session import", () => {
         timestamp: "2026-06-22T14:00:05.000Z",
         type: "response_item",
         payload: {
-          type: "function_call",
-          id: "call-item-1",
+          type: "custom_tool_call",
+          status: "completed",
           call_id: "call-1",
-          name: "exec_command",
-          arguments: '{"cmd":"pnpm test"}',
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** Add File: note.md\n+tests passed\n*** End Patch\n",
           metadata: { turn_id: "turn-1" },
         },
       },
@@ -297,9 +305,9 @@ describePostgres("raw session import", () => {
         timestamp: "2026-06-22T14:00:06.000Z",
         type: "response_item",
         payload: {
-          type: "function_call_output",
+          type: "custom_tool_call_output",
           call_id: "call-1",
-          output: "tests passed",
+          output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated files\n",
         },
       },
     ]);
@@ -326,6 +334,24 @@ describePostgres("raw session import", () => {
 
     expect(result.operation).toBe("inserted");
     expect(result.session.harnessSessionId).toBe("codex-transcript-session-1");
+    expect(result.session).toMatchObject({
+      lastActivityAt: new Date("2026-06-22T14:00:06.000Z"),
+      model: "gpt-5-codex",
+      startedAt: new Date("2026-06-22T14:00:03.000Z"),
+    });
+    expect(result.session.metadata).toMatchObject({
+      cliVersion: "0.42.0-test",
+      cwd: "/work/saga",
+      detectedHarnessSessionId: "codex-transcript-session-1",
+      normalizer: "codex-transcript-v1",
+      turnCount: 4,
+    });
+    expect(result.activityInterval.startedAt).toEqual(new Date("2026-06-22T14:00:03.000Z"));
+    expect(result.activityInterval.metadata).toMatchObject({
+      cwd: "/work/saga",
+      normalizer: "codex-transcript-v1",
+      parseErrors: [],
+    });
 
     const [session] = await service.db
       .select()
@@ -344,7 +370,13 @@ describePostgres("raw session import", () => {
       normalizer: "codex-transcript-v1",
       subagentEvidence: [
         {
+          agent_role: "subagent",
+          parent_thread_id: "parent-thread-1",
+          source_subagent_thread_spawn: {
+            parent_turn_id: "parent-turn-1",
+          },
           sourceRecordType: "session_meta",
+          thread_source: "subagent",
         },
       ],
       turnCount: 4,
@@ -368,7 +400,10 @@ describePostgres("raw session import", () => {
         normalizer: "codex-transcript-v1",
         subagentEvidence: [
           {
+            agent_role: "subagent",
+            parent_thread_id: "parent-thread-1",
             sourceRecordType: "session_meta",
+            thread_source: "subagent",
           },
         ],
         turnCount: 4,
@@ -402,17 +437,18 @@ describePostgres("raw session import", () => {
     expect(turns[2]?.contentParts).toEqual([
       {
         type: "tool_call",
-        name: "exec_command",
+        name: "apply_patch",
         callId: "call-1",
-        arguments: { cmd: "pnpm test" },
+        input: "*** Begin Patch\n*** Add File: note.md\n+tests passed\n*** End Patch\n",
+        status: "completed",
       },
     ]);
     expect(turns[3]?.contentParts).toEqual([
       {
         type: "tool_result",
-        name: "exec_command",
+        name: "apply_patch",
         callId: "call-1",
-        output: "tests passed",
+        output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated files\n",
       },
     ]);
 
@@ -421,20 +457,73 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(segments).toHaveLength(4);
-    expect(segments.map((segment) => segment.searchText)).toEqual([
-      "Normalize Codex transcripts.",
-      "I will parse JSONL into structured turns.",
-      'exec_command {"cmd":"pnpm test"}',
-      "exec_command tests passed",
-    ]);
-    expect(segments[0]).toMatchObject({
-      charStart: expect.any(Number),
-      charEnd: expect.any(Number),
-      metadata: {
-        codexTurnId: "turn-1",
-        normalizer: "codex-transcript-v1",
-        role: "user",
+    expect(segments).toHaveLength(0);
+  });
+
+  test("records invalid Codex JSONL parse errors in normalization metadata", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-parse-errors");
+    const rawContent = [
+      JSON.stringify({
+        timestamp: "2026-06-22T14:10:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-parse-error-session",
+        },
+      }),
+      '{"timestamp":"2026-06-22T14:10:01.000Z","type":"response_item","payload":',
+      JSON.stringify({
+        timestamp: "2026-06-22T14:10:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Keep valid records." }],
+          metadata: { turn_id: "turn-parse" },
+        },
+      }),
+      "",
+    ].join("\n");
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T14:10:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-codex-parse-errors",
+        },
+        locator: "/tmp/codex-parse-error-session.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.activityInterval.metadata).toMatchObject({
+      parseErrors: [
+        {
+          lineNumber: 1,
+          rawLine: '{"timestamp":"2026-06-22T14:10:01.000Z","type":"response_item","payload":',
+        },
+      ],
+    });
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
+      .limit(1);
+    expect(rawRecord?.metadata).toMatchObject({
+      normalization: {
+        parseErrors: [
+          {
+            lineNumber: 1,
+          },
+        ],
+        turnCount: 1,
       },
     });
   });
@@ -529,10 +618,7 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, second.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
-      "First prompt",
-      "Second answer",
-    ]);
+    expect(activeSegments).toHaveLength(0);
   });
 
   test("requires an existing bound workspace", async () => {

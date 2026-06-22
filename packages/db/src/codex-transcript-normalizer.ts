@@ -53,6 +53,11 @@ interface ParsedJsonRecord {
   value: Record<string, unknown>;
 }
 
+interface ParsedJsonRecords {
+  parseErrors: Record<string, unknown>[];
+  records: ParsedJsonRecord[];
+}
+
 interface RawSpan extends Record<string, unknown> {
   byteEnd: number;
   byteStart: number;
@@ -79,7 +84,7 @@ export function extractCodexTranscriptImportHints(input: {
   contentType: "json" | "jsonl" | "text";
   rawContent: string;
 }): CodexTranscriptImportHints {
-  const records = parseCodexJsonRecords(input);
+  const { records } = parseCodexJsonRecords(input);
   const sessionMeta = records.find((record) => record.value.type === "session_meta")?.value;
   const sessionPayload = asRecord(sessionMeta?.payload);
   const turnContext = records.find((record) => record.value.type === "turn_context")?.value;
@@ -98,7 +103,7 @@ export function normalizeCodexTranscript(input: {
   fallbackModel?: string | undefined;
   rawContent: string;
 }): CodexTranscriptNormalization | undefined {
-  const records = parseCodexJsonRecords(input);
+  const { parseErrors, records } = parseCodexJsonRecords(input);
   if (records.length === 0) return undefined;
 
   const state: TranscriptState = {
@@ -108,7 +113,7 @@ export function normalizeCodexTranscript(input: {
     cwd: undefined,
     lifecycleEvents: [],
     model: input.fallbackModel,
-    parseErrors: [],
+    parseErrors,
     responseMessageKeys: responseMessageKeys(records),
     sessionMeta: undefined,
     turnContexts: [],
@@ -286,7 +291,7 @@ function responseItemTurn(
     };
   }
 
-  if (payloadType === "function_call") {
+  if (payloadType === "function_call" || payloadType === "custom_tool_call") {
     const callId = readString(payload.call_id);
     const name = readString(payload.name) ?? "tool";
     if (callId !== undefined) {
@@ -294,11 +299,17 @@ function responseItemTurn(
       if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
     }
     const argumentsText = readString(payload.arguments);
+    const customInput = payloadType === "custom_tool_call" ? payload.input : undefined;
     const contentParts = [
       compactRecord({
-        arguments: parseJsonValue(argumentsText) ?? argumentsText,
+        arguments:
+          payloadType === "function_call"
+            ? (parseJsonValue(argumentsText) ?? argumentsText)
+            : undefined,
         callId,
+        input: customInput,
         name,
+        status: readString(payload.status),
         type: "tool_call",
       }),
     ];
@@ -318,7 +329,7 @@ function responseItemTurn(
     };
   }
 
-  if (payloadType === "function_call_output") {
+  if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
     const callId = readString(payload.call_id);
     const name = callId === undefined ? undefined : state.callIdToToolName.get(callId);
     const turnId =
@@ -391,31 +402,50 @@ function legacyTopLevelTurn(
 function parseCodexJsonRecords(input: {
   contentType: "json" | "jsonl" | "text";
   rawContent: string;
-}): ParsedJsonRecord[] {
+}): ParsedJsonRecords {
   if (input.contentType === "json") {
-    const parsed = parseJsonValue(input.rawContent);
-    const values = Array.isArray(parsed) ? parsed : [parsed];
-    return values.flatMap((value, index) =>
-      asRecord(value) === undefined
-        ? []
-        : [
-            {
-              byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
-              byteStart: 0,
-              charEnd: input.rawContent.length,
-              charStart: 0,
-              index,
-              lineNumber: index,
-              rawLine: input.rawContent,
-              value: asRecord(value) ?? {},
-            },
-          ],
-    );
+    const parsed = tryParseJson(input.rawContent);
+    if (!parsed.ok) {
+      return {
+        parseErrors: [
+          compactRecord({
+            byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+            byteStart: 0,
+            charEnd: input.rawContent.length,
+            charStart: 0,
+            lineNumber: 0,
+            message: parsed.message,
+          }),
+        ],
+        records: [],
+      };
+    }
+    const values = Array.isArray(parsed.value) ? parsed.value : [parsed.value];
+    return {
+      parseErrors: [],
+      records: values.flatMap((value, index) =>
+        asRecord(value) === undefined
+          ? []
+          : [
+              {
+                byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+                byteStart: 0,
+                charEnd: input.rawContent.length,
+                charStart: 0,
+                index,
+                lineNumber: index,
+                rawLine: input.rawContent,
+                value: asRecord(value) ?? {},
+              },
+            ],
+      ),
+    };
   }
 
-  if (input.contentType !== "jsonl") return [];
+  if (input.contentType !== "jsonl") return { parseErrors: [], records: [] };
 
   const records: ParsedJsonRecord[] = [];
+  const parseErrors: Record<string, unknown>[] = [];
   let byteOffset = 0;
   let charOffset = 0;
   let lineNumber = 0;
@@ -426,20 +456,34 @@ function parseCodexJsonRecords(input: {
     const rawLine = rawLineWithNewline.replace(/\r?\n$/u, "");
     const trimmed = rawLine.trim();
     if (trimmed !== "") {
-      const parsed = parseJsonValue(trimmed);
-      const value = asRecord(parsed);
-      if (value !== undefined) {
-        const byteLength = Buffer.byteLength(rawLine, "utf8");
-        records.push({
-          byteEnd: byteOffset + byteLength,
-          byteStart: byteOffset,
-          charEnd: charOffset + rawLine.length,
-          charStart: charOffset,
-          index: records.length,
-          lineNumber,
-          rawLine,
-          value,
-        });
+      const byteLength = Buffer.byteLength(rawLine, "utf8");
+      const parsed = tryParseJson(trimmed);
+      if (!parsed.ok) {
+        parseErrors.push(
+          compactRecord({
+            byteEnd: byteOffset + byteLength,
+            byteStart: byteOffset,
+            charEnd: charOffset + rawLine.length,
+            charStart: charOffset,
+            lineNumber,
+            message: parsed.message,
+            rawLine,
+          }),
+        );
+      } else {
+        const value = asRecord(parsed.value);
+        if (value !== undefined) {
+          records.push({
+            byteEnd: byteOffset + byteLength,
+            byteStart: byteOffset,
+            charEnd: charOffset + rawLine.length,
+            charStart: charOffset,
+            index: records.length,
+            lineNumber,
+            rawLine,
+            value,
+          });
+        }
       }
     }
     byteOffset += Buffer.byteLength(rawLineWithNewline, "utf8");
@@ -447,7 +491,7 @@ function parseCodexJsonRecords(input: {
     lineNumber += 1;
   }
 
-  return records;
+  return { parseErrors, records };
 }
 
 function responseMessageKeys(records: readonly ParsedJsonRecord[]): Set<string> {
@@ -505,7 +549,7 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
     .map((part) => {
       const type = readString(part.type);
       if (type === "tool_call") {
-        return [readString(part.name), stringifyForSearch(part.arguments)]
+        return [readString(part.name), stringifyForSearch(part.arguments ?? part.input)]
           .filter(Boolean)
           .join(" ");
       }
@@ -535,11 +579,19 @@ function collectSubagentEvidence(records: readonly ParsedJsonRecord[]): Record<s
   return records.flatMap((record) => {
     const value = JSON.stringify(record.value);
     if (!/(subagent|child)/iu.test(value)) return [];
+    const payload = asRecord(record.value.payload);
+    const source = asRecord(payload?.source) ?? asRecord(record.value.source);
+    const sourceSubagent = asRecord(source?.subagent);
     return [
       compactRecord({
+        agent_role: readString(payload?.agent_role) ?? readString(record.value.agent_role),
+        parent_thread_id:
+          readString(payload?.parent_thread_id) ?? readString(record.value.parent_thread_id),
         rawSpan: rawSpan(record),
+        source_subagent_thread_spawn: sourceSubagent?.thread_spawn,
         sourcePayloadType: readString(asRecord(record.value.payload)?.type),
         sourceRecordType: readString(record.value.type),
+        thread_source: readString(payload?.thread_source) ?? readString(record.value.thread_source),
       }),
     ];
   });
@@ -621,6 +673,20 @@ function parseJsonValue(value: string | undefined): unknown {
   } catch {
     return undefined;
   }
+}
+
+function tryParseJson(
+  value: string,
+): { ok: true; value: unknown } | { message: string; ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(value) as unknown };
+  } catch (cause) {
+    return { message: errorMessage(cause), ok: false };
+  }
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function readString(value: unknown): string | undefined {
