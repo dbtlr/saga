@@ -1484,6 +1484,10 @@ function errorMessage(cause: unknown): string {
 }
 
 function isRetryableImportConflict(cause: unknown): boolean {
+  if (cause instanceof RawSessionImportError) {
+    return cause.message === "active activity interval changed during import";
+  }
+
   const conflict = asRecord(cause);
   if (conflict.code === "40001" || conflict.code === "40P01") return true;
   if (conflict.code !== "23505") return false;

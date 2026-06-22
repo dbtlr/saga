@@ -80,6 +80,69 @@ describePostgres("raw session import", () => {
     return workspace.id;
   }
 
+  async function runWithLockedActivityInterval<T>(
+    activityIntervalId: string,
+    expectedWaiters: number,
+    runWhileLocked: () => Promise<T>,
+  ): Promise<T> {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const lockAcquired = deferred<void>();
+    const releaseLock = deferred<void>();
+    const lockTransaction = service.sql.begin(async (tx) => {
+      await tx`select id from activity_intervals where id = ${activityIntervalId} for update`;
+      lockAcquired.resolve();
+      await releaseLock.promise;
+    });
+
+    await lockAcquired.promise;
+    try {
+      const running = runWhileLocked();
+      await waitForBlockedTransactionLocks(expectedWaiters);
+      releaseLock.resolve();
+      return await running;
+    } finally {
+      releaseLock.resolve();
+      await lockTransaction;
+    }
+  }
+
+  async function waitForBlockedTransactionLocks(expectedWaiters: number): Promise<void> {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const [locks] = await service.sql<{ blocked: number }[]>`
+        select count(*)::int as blocked
+        from pg_stat_activity
+        where datname = current_database()
+          and pid <> pg_backend_pid()
+          and wait_event_type = 'Lock'
+      `;
+      if ((locks?.blocked ?? 0) >= expectedWaiters) return;
+      await sleep(20);
+    }
+
+    throw new Error(`timed out waiting for ${expectedWaiters} blocked transaction locks`);
+  }
+
+  function deferred<T>(): {
+    promise: Promise<T>;
+    reject: (reason?: unknown) => void;
+    resolve: (value: T | PromiseLike<T>) => void;
+  } {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve;
+      reject = promiseReject;
+    });
+    return { promise, reject, resolve };
+  }
+
+  function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   test("migrates lexical indexes for session segment search", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 
@@ -215,9 +278,25 @@ describePostgres("raw session import", () => {
       rawContent: '{"type":"user","text":"Concurrent duplicate first import"}\n',
       workspaceId,
     } as const;
+    const inputs = Array.from(
+      { length: 8 },
+      (_, index) =>
+        ({
+          ...input,
+          author: {
+            displayName: "Drew",
+            handle: `drew-${index}`,
+          },
+          host: {
+            ...input.host,
+            id: `host-concurrent-first-${index}`,
+            label: `concurrent-host-${index}`,
+          },
+        }) as const,
+    );
 
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => Effect.runPromise(importRawSessionRecord(db, input))),
+      inputs.map((callerInput) => Effect.runPromise(importRawSessionRecord(db, callerInput))),
     );
     const [first] = results;
     if (first === undefined) throw new Error("concurrent imports returned no results");
@@ -230,12 +309,8 @@ describePostgres("raw session import", () => {
     expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
       new Set([first.rawSessionRecord.id]),
     );
-    expect(new Set(results.map((result) => result.sourceBinding.id))).toEqual(
-      new Set([first.sourceBinding.id]),
-    );
-    expect(new Set(results.map((result) => result.authorUser.id))).toEqual(
-      new Set([first.authorUser.id]),
-    );
+    expect(new Set(results.map((result) => result.sourceBinding.id)).size).toBe(inputs.length);
+    expect(new Set(results.map((result) => result.authorUser.id)).size).toBe(inputs.length);
 
     const [counts] = await service.sql<
       {
@@ -260,8 +335,8 @@ describePostgres("raw session import", () => {
       activity_intervals: 1,
       raw_records: 1,
       sessions: 1,
-      source_bindings: 1,
-      users: 1,
+      source_bindings: inputs.length,
+      users: inputs.length,
     });
 
     const turns = await service.db
@@ -737,8 +812,24 @@ describePostgres("raw session import", () => {
       rawContent:
         '{"role":"user","content":"Before concurrent growth"}\n{"role":"assistant","content":"Concurrent growth response"}\n',
     } as const;
+    const growingInputs = Array.from(
+      { length: 8 },
+      (_, index) =>
+        ({
+          ...growingInput,
+          author: {
+            handle: `drew-growing-${index}`,
+          },
+          host: {
+            id: `host-concurrent-growing-${index}`,
+            label: `concurrent-host-${index}`,
+          },
+        }) as const,
+    );
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => Effect.runPromise(importRawSessionRecord(db, growingInput))),
+      growingInputs.map((callerInput) =>
+        Effect.runPromise(importRawSessionRecord(db, callerInput)),
+      ),
     );
     const [grown] = results;
     if (grown === undefined) throw new Error("concurrent growing imports returned no results");
@@ -1218,6 +1309,265 @@ describePostgres("raw session import", () => {
       endedAt: new Date("2026-06-22T20:30:01.000Z"),
       settlementReason: "idle_timeout",
     });
+  });
+
+  test("handles concurrent duplicate clear-context imports as one new active Activity Interval", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const db = service;
+    const workspaceId = await createBoundWorkspace("raw-import-concurrent-clear");
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      harnessSessionId: "codex-concurrent-clear-session",
+      host: {
+        id: "host-concurrent-clear-base",
+      },
+      locator: "/tmp/codex-concurrent-clear.jsonl",
+      workspaceId,
+    } as const;
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T22:00:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T22:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-concurrent-clear-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T22:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Before concurrent clear." }],
+            },
+          },
+        ]),
+      }),
+    );
+    const clearInput = {
+      ...baseInput,
+      activity: {
+        hookEventName: "SessionStart",
+        sessionStartSource: "clear",
+      },
+      capturedAt: "2026-06-22T22:05:01.000Z",
+      rawContent: codexTranscript([
+        {
+          timestamp: "2026-06-22T22:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "codex-concurrent-clear-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T22:05:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "After concurrent clear." }],
+          },
+        },
+      ]),
+    } as const;
+    const clearInputs = Array.from(
+      { length: 8 },
+      (_, index) =>
+        ({
+          ...clearInput,
+          author: {
+            handle: `drew-clear-${index}`,
+          },
+          host: {
+            id: `host-concurrent-clear-${index}`,
+          },
+        }) as const,
+    );
+
+    const results = await runWithLockedActivityInterval(
+      first.activityInterval.id,
+      clearInputs.length,
+      () =>
+        Promise.all(
+          clearInputs.map((callerInput) =>
+            Effect.runPromise(importRawSessionRecord(db, callerInput)),
+          ),
+        ),
+    );
+    const [clearResult] = results;
+    if (clearResult === undefined) throw new Error("concurrent clear imports returned no results");
+
+    expect(results.filter((result) => result.operation === "inserted")).toHaveLength(1);
+    expect(results.filter((result) => result.operation === "unchanged")).toHaveLength(
+      clearInputs.length - 1,
+    );
+    expect(new Set(results.map((result) => result.session.id))).toEqual(
+      new Set([first.session.id]),
+    );
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+      new Set([clearResult.rawSessionRecord.id]),
+    );
+    expect(new Set(results.map((result) => result.activityInterval.id))).toEqual(
+      new Set([clearResult.activityInterval.id]),
+    );
+    expect(clearResult.activityInterval.id).not.toBe(first.activityInterval.id);
+    expect(clearResult.activityInterval.ordinal).toBe(1);
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(intervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+    expect(intervals[0]).toMatchObject({
+      settlementReason: "clear_context",
+    });
+
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id))
+      .orderBy(asc(rawSessionRecords.snapshotOrdinal));
+    expect(records).toHaveLength(2);
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+      clearResult.rawSessionRecord.id,
+    ]);
+  });
+
+  test("handles concurrent duplicate idle-boundary imports as one new active Activity Interval", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const db = service;
+    const workspaceId = await createBoundWorkspace("raw-import-concurrent-idle");
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      harnessSessionId: "codex-concurrent-idle-session",
+      host: {
+        id: "host-concurrent-idle-base",
+      },
+      locator: "/tmp/codex-concurrent-idle.jsonl",
+      workspaceId,
+    } as const;
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T23:00:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T23:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-concurrent-idle-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T23:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Before concurrent idle." }],
+            },
+          },
+        ]),
+      }),
+    );
+    const idleInput = {
+      ...baseInput,
+      capturedAt: "2026-06-22T23:45:01.000Z",
+      rawContent: codexTranscript([
+        {
+          timestamp: "2026-06-22T23:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "codex-concurrent-idle-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T23:45:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "After concurrent idle." }],
+          },
+        },
+      ]),
+    } as const;
+    const idleInputs = Array.from(
+      { length: 8 },
+      (_, index) =>
+        ({
+          ...idleInput,
+          author: {
+            handle: `drew-idle-${index}`,
+          },
+          host: {
+            id: `host-concurrent-idle-${index}`,
+          },
+        }) as const,
+    );
+
+    const results = await runWithLockedActivityInterval(
+      first.activityInterval.id,
+      idleInputs.length,
+      () =>
+        Promise.all(
+          idleInputs.map((callerInput) =>
+            Effect.runPromise(importRawSessionRecord(db, callerInput)),
+          ),
+        ),
+    );
+    const [idleResult] = results;
+    if (idleResult === undefined) throw new Error("concurrent idle imports returned no results");
+
+    expect(results.filter((result) => result.operation === "inserted")).toHaveLength(1);
+    expect(results.filter((result) => result.operation === "unchanged")).toHaveLength(
+      idleInputs.length - 1,
+    );
+    expect(new Set(results.map((result) => result.session.id))).toEqual(
+      new Set([first.session.id]),
+    );
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+      new Set([idleResult.rawSessionRecord.id]),
+    );
+    expect(new Set(results.map((result) => result.activityInterval.id))).toEqual(
+      new Set([idleResult.activityInterval.id]),
+    );
+    expect(idleResult.activityInterval.id).not.toBe(first.activityInterval.id);
+    expect(idleResult.activityInterval.ordinal).toBe(1);
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(intervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+    expect(intervals[0]).toMatchObject({
+      endedAt: new Date("2026-06-22T23:30:01.000Z"),
+      settlementReason: "idle_timeout",
+    });
+
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id))
+      .orderBy(asc(rawSessionRecords.snapshotOrdinal));
+    expect(records).toHaveLength(2);
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+      idleResult.rawSessionRecord.id,
+    ]);
   });
 
   test("normalizes Codex transcript JSONL into session metadata, turns, parts, and spans", async () => {
