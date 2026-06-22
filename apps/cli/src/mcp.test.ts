@@ -26,6 +26,9 @@ describe("runMcpCommand", () => {
     expect(output[0]).toContain("get_active_context");
     expect(output[0]).toContain("search_memory");
     expect(output[0]).toContain("resolve_saga_link");
+    expect(output[0]).toContain("list_recent_sessions");
+    expect(output[0]).toContain("search_sessions");
+    expect(output[0]).toContain("get_session_context");
   });
 
   test("streams a response before stdin closes", async () => {
@@ -46,6 +49,7 @@ describe("runMcpCommand", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(output[0]).toContain("get_active_context");
+    expect(output[0]).toContain("list_recent_sessions");
     release?.();
     await running;
   });

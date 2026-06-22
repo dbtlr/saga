@@ -6,14 +6,29 @@ import {
   type ResolveConnectorContext,
   type SagaLinkIndexReference,
 } from "@saga/connectors";
-import { createSagaMcpServer, type JsonRpcRequest, type SearchMemoryInput } from "@saga/mcp";
 import {
+  createSagaMcpServer,
+  type GetSessionContextInput,
+  type JsonRpcRequest,
+  type ListRecentSessionsInput,
+  type SearchMemoryInput,
+  type SearchSessionsInput,
+} from "@saga/mcp";
+import {
+  expandRecallContext,
   listActiveContextClaims,
   listContextIndexEntries,
   listCurrentClaims,
+  listRecentSessionRecords,
   listRecentRawEvents,
   makeDatabase,
   resolveSagaLink as resolveDatabaseSagaLink,
+  searchSessionRecall,
+  type DatabaseService,
+  type RecallContextExpansion,
+  type RecallSearchResult,
+  type RecallSegmentMatch,
+  type RecentSessionRecord,
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
@@ -74,7 +89,11 @@ export function createProjectMcpServer(input: { cwd?: string } = {}) {
         markdown: renderActiveContextMarkdown(document),
       };
     },
+    getSessionContext: (input) => getProjectSessionContext(input, cwd === undefined ? {} : { cwd }),
+    listRecentSessions: (input) =>
+      listProjectRecentSessions(input, cwd === undefined ? {} : { cwd }),
     searchMemory: (search) => searchProjectMemory(search, cwd === undefined ? {} : { cwd }),
+    searchSessions: (input) => searchProjectSessions(input, cwd === undefined ? {} : { cwd }),
     resolveSagaLink: (link) => resolveProjectSagaLink(link, cwd === undefined ? {} : { cwd }),
   });
 }
@@ -265,6 +284,89 @@ export async function resolveProjectSagaLink(
         retrieval: rewritten,
       },
     };
+  } finally {
+    await Effect.runPromise(service.close());
+  }
+}
+
+export async function listProjectRecentSessions(
+  input: ListRecentSessionsInput,
+  options: { cwd?: string } = {},
+) {
+  return withProjectDatabase(options, async (service, workspaceId) => {
+    const sessions = await Effect.runPromise(
+      listRecentSessionRecords(service, {
+        activeOnly: input.activeOnly,
+        harness: input.harness,
+        limit: input.limit,
+        workspaceId,
+      }),
+    );
+    return {
+      markdown: renderRecentSessionsMarkdown(sessions),
+      sessions: sessions.map((session) => redactSourceBindingConfig(session)),
+    };
+  });
+}
+
+export async function searchProjectSessions(
+  input: SearchSessionsInput,
+  options: { cwd?: string } = {},
+) {
+  return withProjectDatabase(options, async (service, workspaceId) => {
+    const recall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        activityIntervalId: input.activityIntervalId,
+        limit: input.limit,
+        minTrigramScore: input.minTrigramScore,
+        query: input.query,
+        rawSessionRecordId: input.rawSessionRecordId,
+        sessionId: input.sessionId,
+        workspaceId,
+      }),
+    );
+    return {
+      markdown: renderSessionSearchMarkdown(recall),
+      recall: redactSourceBindingConfig(recall),
+    };
+  });
+}
+
+export async function getProjectSessionContext(
+  input: GetSessionContextInput,
+  options: { cwd?: string } = {},
+) {
+  return withProjectDatabase(options, async (service, workspaceId) => {
+    const context = await Effect.runPromise(
+      expandRecallContext(service, {
+        afterTurns: input.afterTurns,
+        beforeTurns: input.beforeTurns,
+        segmentId: input.segmentId,
+        windowTurns: input.windowTurns,
+        workspaceId,
+      }),
+    );
+    return {
+      context: redactSourceBindingConfig(context),
+      markdown: renderSessionContextMarkdown(context),
+    };
+  });
+}
+
+async function withProjectDatabase<T>(
+  options: { cwd?: string },
+  runWithService: (service: DatabaseService, workspaceId: string) => Promise<T>,
+): Promise<T> {
+  const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
+    throw new Error("workspace binding is missing; run saga init");
+  }
+
+  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  try {
+    return await runWithService(service, binding.workspace.id);
   } finally {
     await Effect.runPromise(service.close());
   }
@@ -550,6 +652,245 @@ function renderResolvedSagaLinkMarkdown(
     ...referenceLines,
     ...contentLines,
   ].join("\n");
+}
+
+function renderRecentSessionsMarkdown(sessions: readonly RecentSessionRecord[]): string {
+  if (sessions.length === 0) return "# Recent Saga Sessions\n\nNo recent sessions found.";
+
+  return [
+    "# Recent Saga Sessions",
+    "",
+    ...sessions.flatMap((entry, index) => [
+      `## Session ${String(index + 1)}`,
+      "",
+      `- Session: ${entry.session.id}`,
+      `- Raw record: ${entry.rawSessionRecord.id} (snapshot ${String(entry.rawSessionRecord.snapshotOrdinal)}, ${entry.rawSessionRecord.status}, active ${String(entry.rawSessionRecord.isActive)})`,
+      `- Title: ${entry.session.title ?? "none"}`,
+      `- Harness: ${entry.session.harness} (harness session: ${entry.session.harnessSessionId ?? "none"})`,
+      `- Model: ${entry.session.model ?? "none"}`,
+      `- Host user: ${entry.authorUser.handle} (${entry.authorUser.identitySource})`,
+      `- Status: ${entry.session.status}`,
+      `- Started: ${formatDate(entry.session.startedAt)}`,
+      `- Last activity: ${formatDate(entry.session.lastActivityAt)}`,
+      `- Captured: ${formatDate(entry.rawSessionRecord.capturedAt)}`,
+      `- Counts: ${String(entry.counts.turns)} turns, ${String(entry.counts.segments)} segments, ${String(entry.counts.rawSessionRecords)} raw records, ${String(entry.counts.activityIntervals)} Activity Intervals`,
+      `- Activity Interval: ${entry.activityInterval === null ? "none" : `${entry.activityInterval.id} (ordinal ${String(entry.activityInterval.ordinal)}, ${entry.activityInterval.status})`}`,
+      `- Source: ${formatSourceBinding(entry.sourceBinding)}`,
+      `- Provenance: session=${compactSafeJson(entry.session.provenance)} raw=${compactSafeJson(entry.rawSessionRecord.provenance)}`,
+      "",
+    ]),
+  ].join("\n");
+}
+
+function renderSessionSearchMarkdown(result: RecallSearchResult): string {
+  const lines = [
+    "# Saga Session Search",
+    "",
+    `- Query: ${result.query}`,
+    `- Workspace: ${result.workspaceId}`,
+    `- Mode: lexical-only`,
+    `- Matches: ${String(result.matchCount)}`,
+    `- Searched: ${result.searchedAt}`,
+  ];
+
+  if (result.matchCount === 0) {
+    return [...lines, "", "No matching session segments found."].join("\n");
+  }
+
+  let matchIndex = 1;
+  for (const sessionGroup of result.sessions) {
+    lines.push(
+      "",
+      `## Session ${sessionGroup.session.id}`,
+      "",
+      `- Title: ${sessionGroup.session.title ?? "none"}`,
+      `- Harness: ${sessionGroup.session.harness} (harness session: ${sessionGroup.session.harnessSessionId ?? "none"})`,
+      `- Model: ${sessionGroup.session.model ?? "none"}`,
+      `- Host user: ${sessionGroup.session.authorUser.handle} (${sessionGroup.session.authorUser.identitySource})`,
+      `- Status: ${sessionGroup.session.status}`,
+      `- Last activity: ${formatDate(sessionGroup.session.lastActivityAt)}`,
+      `- Provenance: ${compactSafeJson(sessionGroup.session.provenance)}`,
+    );
+
+    for (const intervalGroup of sessionGroup.activityIntervals) {
+      lines.push(
+        "",
+        `### Activity Interval ${String(intervalGroup.activityInterval.ordinal)}`,
+        "",
+        `- ID: ${intervalGroup.activityInterval.id}`,
+        `- Status: ${intervalGroup.activityInterval.status}`,
+        `- Started: ${formatDate(intervalGroup.activityInterval.startedAt)}`,
+        `- Ended: ${formatDate(intervalGroup.activityInterval.endedAt)}`,
+      );
+
+      for (const match of intervalGroup.matches) {
+        lines.push("", renderSessionMatchMarkdown(match, matchIndex));
+        matchIndex += 1;
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function renderSessionMatchMarkdown(match: RecallSegmentMatch, matchIndex: number): string {
+  return [
+    `#### Match ${String(matchIndex)}`,
+    "",
+    `- Segment: ${match.segment.id} (${match.segment.segmentKind}, ordinal ${String(match.segment.ordinal)})`,
+    `- Turn: ${match.turn.id} (ordinal ${String(match.turn.ordinal)}, ${match.turn.role})`,
+    `- Raw record: ${match.rawSessionRecord.id} (snapshot ${String(match.rawSessionRecord.snapshotOrdinal)}, ${match.rawSessionRecord.status})`,
+    `- Scores: ${formatScores(match.scores)}`,
+    `- Tokens: ${formatRange(match.segment.tokenStart, match.segment.tokenEnd)}`,
+    `- Characters: ${formatRange(match.segment.charStart, match.segment.charEnd)}`,
+    `- Source: ${formatSourceBinding(match.sourceBinding)}`,
+    `- Provenance: raw=${compactSafeJson(match.rawSessionRecord.provenance)}`,
+    "",
+    "Retrieved Content:",
+    "",
+    stripSearchMarkup(match.snippet),
+  ].join("\n");
+}
+
+function renderSessionContextMarkdown(result: RecallContextExpansion): string {
+  const lines = [
+    "# Saga Session Context",
+    "",
+    `- Anchor segment: ${result.anchor.segment.id}`,
+    `- Anchor turn: ${result.anchor.turn.id}`,
+    `- Window: ${String(result.beforeTurns)} before / ${String(result.afterTurns)} after`,
+    `- Session: ${result.session.id}`,
+    `- Activity Interval: ${result.activityInterval.id} (ordinal ${String(result.activityInterval.ordinal)})`,
+    `- Raw record: ${result.rawSessionRecord.id} (snapshot ${String(result.rawSessionRecord.snapshotOrdinal)}, ${result.rawSessionRecord.status})`,
+    `- Harness: ${result.session.harness} (harness session: ${result.session.harnessSessionId ?? "none"})`,
+    `- Model: ${result.session.model ?? "none"}`,
+    `- Host user: ${result.session.authorUser.handle} (${result.session.authorUser.identitySource})`,
+    `- Source: ${formatSourceBinding(result.sourceBinding)}`,
+    `- Provenance: session=${compactSafeJson(result.session.provenance)} raw=${compactSafeJson(result.rawSessionRecord.provenance)}`,
+    "",
+    "## Retrieved Context",
+  ];
+
+  for (const turn of result.turns) {
+    lines.push(
+      "",
+      `### Turn ${String(turn.ordinal)} ${turn.role}`,
+      "",
+      `- Turn: ${turn.id}`,
+      `- Actor: ${turn.actorKind}:${turn.actorLabel ?? "none"}`,
+      `- Model: ${turn.model ?? "none"}`,
+      `- Started: ${formatDate(turn.startedAt)}`,
+      `- Ended: ${formatDate(turn.endedAt)}`,
+      `- Raw events: ${turn.rawEventIds.length === 0 ? "none" : turn.rawEventIds.join(", ")}`,
+      `- Raw span: ${compactSafeJson(turn.rawSpan)}`,
+    );
+
+    for (const segment of turn.segments) {
+      const anchor = segment.id === result.anchor.segment.id ? " anchor" : "";
+      lines.push(
+        "",
+        `#### Segment ${String(segment.ordinal)}${anchor}`,
+        "",
+        `- Segment: ${segment.id}`,
+        `- Kind: ${segment.segmentKind}`,
+        `- Tokens: ${formatRange(segment.tokenStart, segment.tokenEnd)}`,
+        `- Characters: ${formatRange(segment.charStart, segment.charEnd)}`,
+        `- Snippet: ${segment.snippet ?? "none"}`,
+        "",
+        "Text:",
+        "",
+        truncate(segment.searchText, 1200),
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function redactSourceBindingConfig(value: unknown): unknown {
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((entry) => redactSourceBindingConfig(entry));
+  if (!isRecord(value)) return value;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "sourceBinding" && isRecord(entry)) {
+      const { config: _config, ...sourceBinding } = entry;
+      redacted[key] = redactSourceBindingConfig(sourceBinding);
+      continue;
+    }
+    redacted[key] = redactSourceBindingConfig(entry);
+  }
+  return redacted;
+}
+
+function formatSourceBinding(sourceBinding: {
+  displayName?: string | null | undefined;
+  enabled: boolean;
+  id: string;
+  sourceType: string;
+}): string {
+  const display = sourceBinding.displayName === undefined ? undefined : sourceBinding.displayName;
+  return `${sourceBinding.sourceType} binding=${sourceBinding.id} enabled=${String(sourceBinding.enabled)}${display === null || display === undefined ? "" : ` display=${display}`}`;
+}
+
+function formatScores(scores: RecallSegmentMatch["scores"]): string {
+  const parts = [
+    `combined ${formatScore(scores.combined)}`,
+    `lexical ${formatScore(scores.lexical)}`,
+    `trigram ${formatScore(scores.trigram)}`,
+  ];
+  if (scores.vector !== undefined) parts.push(`vector ${formatScore(scores.vector)}`);
+  return parts.join(", ");
+}
+
+function formatScore(value: number): string {
+  return value.toFixed(4).replace(/0+$/u, "").replace(/\.$/u, "");
+}
+
+function formatDate(value: Date | string | null): string {
+  if (value === null) return "none";
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function formatRange(start: number | null, end: number | null): string {
+  if (start === null && end === null) return "none";
+  return `${start === null ? "?" : String(start)}..${end === null ? "?" : String(end)}`;
+}
+
+function compactSafeJson(value: unknown): string {
+  const json = JSON.stringify(redactLocalTextValues(value));
+  return json === undefined ? "undefined" : truncate(json, 220);
+}
+
+function redactLocalTextValues(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map((entry) => redactLocalTextValues(entry));
+  if (typeof value === "string") return redactLocalPathString(value);
+  if (!isRecord(value)) return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, redactLocalTextValues(entry)]),
+  );
+}
+
+function redactLocalPathString(value: string): string {
+  if (/(?:file:\/\/|^\/(?:Users|Volumes|tmp|var\/folders)\b)/u.test(value)) {
+    return "[local-path-redacted]";
+  }
+  return value.replaceAll(
+    /(?:file:\/\/|\/(?:Users|Volumes|tmp|var\/folders)\b)[^\s"',}]*/gu,
+    "[local-path-redacted]",
+  );
+}
+
+function stripSearchMarkup(value: string): string {
+  return value.replaceAll(/<\/?b>/g, "");
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function matchedSnippet(value: string, tokens: readonly string[]): string {

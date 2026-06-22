@@ -50,10 +50,50 @@ export interface ResolveSagaLinkToolResult {
   resolved: unknown;
 }
 
+export interface ListRecentSessionsInput {
+  activeOnly?: boolean | undefined;
+  harness?: string | undefined;
+  limit?: number | undefined;
+}
+
+export interface ListRecentSessionsToolResult {
+  markdown: string;
+  sessions: unknown[];
+}
+
+export interface SearchSessionsInput {
+  activityIntervalId?: string | undefined;
+  limit?: number | undefined;
+  minTrigramScore?: number | undefined;
+  query: string;
+  rawSessionRecordId?: string | undefined;
+  sessionId?: string | undefined;
+}
+
+export interface SearchSessionsToolResult {
+  markdown: string;
+  recall: unknown;
+}
+
+export interface GetSessionContextInput {
+  afterTurns?: number | undefined;
+  beforeTurns?: number | undefined;
+  segmentId: string;
+  windowTurns?: number | undefined;
+}
+
+export interface GetSessionContextToolResult {
+  context: unknown;
+  markdown: string;
+}
+
 export interface SagaMcpHandlers {
+  getSessionContext: (input: GetSessionContextInput) => Promise<GetSessionContextToolResult>;
   getActiveContext: () => Promise<ActiveContextToolResult>;
+  listRecentSessions: (input: ListRecentSessionsInput) => Promise<ListRecentSessionsToolResult>;
   resolveSagaLink: (input: ResolveSagaLinkInput) => Promise<ResolveSagaLinkToolResult>;
   searchMemory: (input: SearchMemoryInput) => Promise<SearchMemoryToolResult>;
+  searchSessions: (input: SearchSessionsInput) => Promise<SearchSessionsToolResult>;
 }
 
 export const SAGA_MCP_TOOLS = [
@@ -98,6 +138,87 @@ export const SAGA_MCP_TOOLS = [
       type: "object",
     },
     name: "resolve_saga_link",
+  },
+  {
+    description:
+      "List recent captured Saga sessions for the current workspace with session, raw-record, host-user, harness, model, and provenance metadata.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        activeOnly: {
+          type: "boolean",
+        },
+        harness: {
+          type: "string",
+        },
+        limit: {
+          minimum: 1,
+          type: "number",
+        },
+      },
+      type: "object",
+    },
+    name: "list_recent_sessions",
+  },
+  {
+    description:
+      "Search captured Saga session segments for the current workspace using lexical recall and return snippets, scores, pointers, and provenance.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        activityIntervalId: {
+          type: "string",
+        },
+        limit: {
+          minimum: 1,
+          type: "number",
+        },
+        minTrigramScore: {
+          maximum: 1,
+          minimum: 0,
+          type: "number",
+        },
+        query: {
+          type: "string",
+        },
+        rawSessionRecordId: {
+          type: "string",
+        },
+        sessionId: {
+          type: "string",
+        },
+      },
+      required: ["query"],
+      type: "object",
+    },
+    name: "search_sessions",
+  },
+  {
+    description:
+      "Expand session context around a recalled segment for the current workspace, including surrounding turns, segment text, pointers, and provenance.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        afterTurns: {
+          minimum: 0,
+          type: "number",
+        },
+        beforeTurns: {
+          minimum: 0,
+          type: "number",
+        },
+        segmentId: {
+          type: "string",
+        },
+        windowTurns: {
+          minimum: 0,
+          type: "number",
+        },
+      },
+      required: ["segmentId"],
+      type: "object",
+    },
+    name: "get_session_context",
   },
 ] as const;
 
@@ -173,6 +294,21 @@ export async function callSagaMcpTool(
     return toolResult(result.markdown, result.resolved);
   }
 
+  if (input.name === "list_recent_sessions") {
+    const result = await handlers.listRecentSessions(parseListRecentSessionsInput(input.arguments));
+    return toolResult(result.markdown, { sessions: result.sessions });
+  }
+
+  if (input.name === "search_sessions") {
+    const result = await handlers.searchSessions(parseSearchSessionsInput(input.arguments));
+    return toolResult(result.markdown, result.recall);
+  }
+
+  if (input.name === "get_session_context") {
+    const result = await handlers.getSessionContext(parseGetSessionContextInput(input.arguments));
+    return toolResult(result.markdown, result.context);
+  }
+
   throw new Error(`unknown Saga MCP tool: ${input.name}`);
 }
 
@@ -227,6 +363,105 @@ function parseResolveSagaLinkInput(
   }
 
   return { link };
+}
+
+function parseListRecentSessionsInput(
+  input: Record<string, unknown> | undefined,
+): ListRecentSessionsInput {
+  const limit = parseOptionalPositiveInteger(input?.limit, "list_recent_sessions limit");
+  const harness = parseOptionalString(input?.harness, "list_recent_sessions harness");
+  const activeOnly = input?.activeOnly;
+  if (activeOnly !== undefined && typeof activeOnly !== "boolean") {
+    throw new Error("list_recent_sessions activeOnly must be a boolean");
+  }
+
+  return {
+    activeOnly,
+    harness,
+    limit,
+  };
+}
+
+function parseSearchSessionsInput(input: Record<string, unknown> | undefined): SearchSessionsInput {
+  const query = input?.query;
+  if (typeof query !== "string" || query.trim() === "") {
+    throw new Error("search_sessions requires a non-empty query");
+  }
+
+  const minTrigramScore = input?.minTrigramScore;
+  if (
+    minTrigramScore !== undefined &&
+    (typeof minTrigramScore !== "number" ||
+      !Number.isFinite(minTrigramScore) ||
+      minTrigramScore < 0 ||
+      minTrigramScore > 1)
+  ) {
+    throw new Error("search_sessions minTrigramScore must be between 0 and 1");
+  }
+
+  return {
+    activityIntervalId: parseOptionalString(
+      input?.activityIntervalId,
+      "search_sessions activityIntervalId",
+    ),
+    limit: parseOptionalPositiveInteger(input?.limit, "search_sessions limit"),
+    minTrigramScore,
+    query,
+    rawSessionRecordId: parseOptionalString(
+      input?.rawSessionRecordId,
+      "search_sessions rawSessionRecordId",
+    ),
+    sessionId: parseOptionalString(input?.sessionId, "search_sessions sessionId"),
+  };
+}
+
+function parseGetSessionContextInput(
+  input: Record<string, unknown> | undefined,
+): GetSessionContextInput {
+  const segmentId = input?.segmentId;
+  if (typeof segmentId !== "string" || segmentId.trim() === "") {
+    throw new Error("get_session_context requires a non-empty segmentId");
+  }
+
+  return {
+    afterTurns: parseOptionalNonNegativeInteger(
+      input?.afterTurns,
+      "get_session_context afterTurns",
+    ),
+    beforeTurns: parseOptionalNonNegativeInteger(
+      input?.beforeTurns,
+      "get_session_context beforeTurns",
+    ),
+    segmentId,
+    windowTurns: parseOptionalNonNegativeInteger(
+      input?.windowTurns,
+      "get_session_context windowTurns",
+    ),
+  };
+}
+
+function parseOptionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function parseOptionalPositiveInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return value;
+}
+
+function parseOptionalNonNegativeInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return value;
 }
 
 function response(id: number | string | null, result: unknown): JsonRpcResponse {
