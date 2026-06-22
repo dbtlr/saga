@@ -52,6 +52,11 @@ interface ToolGroupContext {
   turns: readonly SessionTurn[];
 }
 
+interface ToolEvidence {
+  callId: string;
+  partType: "tool_call" | "tool_result";
+}
+
 export async function insertDerivedSessionSegments(
   tx: DatabaseService["db"],
   input: {
@@ -545,18 +550,17 @@ function buildToolGroupContexts(turns: readonly SessionTurn[]): Map<string, Tool
     >();
 
     for (const turn of toolStream) {
-      const toolCallId = turnToolCallId(turn, "tool_call");
-      if (toolCallId !== undefined) {
-        const entries = entriesByCallId.get(toolCallId) ?? { calls: [], results: [] };
+      const evidence = unambiguousToolEvidence(turn);
+      if (evidence?.partType === "tool_call") {
+        const entries = entriesByCallId.get(evidence.callId) ?? { calls: [], results: [] };
         entries.calls.push(turn);
-        entriesByCallId.set(toolCallId, entries);
+        entriesByCallId.set(evidence.callId, entries);
       }
 
-      const toolResultId = turnToolCallId(turn, "tool_result");
-      if (toolResultId !== undefined) {
-        const entries = entriesByCallId.get(toolResultId) ?? { calls: [], results: [] };
+      if (evidence?.partType === "tool_result") {
+        const entries = entriesByCallId.get(evidence.callId) ?? { calls: [], results: [] };
         entries.results.push(turn);
-        entriesByCallId.set(toolResultId, entries);
+        entriesByCallId.set(evidence.callId, entries);
       }
     }
 
@@ -611,20 +615,25 @@ function contiguousToolStreams(turns: readonly SessionTurn[]): SessionTurn[][] {
 }
 
 function isToolGroupCandidate(turn: SessionTurn): boolean {
-  return (
-    turnToolCallId(turn, "tool_call") !== undefined ||
-    turnToolCallId(turn, "tool_result") !== undefined
-  );
+  return unambiguousToolEvidence(turn) !== undefined;
 }
 
-function turnToolCallId(turn: SessionTurn, partType: string): string | undefined {
+function unambiguousToolEvidence(turn: SessionTurn): ToolEvidence | undefined {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
-  return firstPartCallId(parts, partType);
-}
+  const toolParts = parts.filter((entry) => {
+    const type = readString(entry.type);
+    return type === "tool_call" || type === "tool_result";
+  });
+  if (toolParts.length !== 1) return undefined;
 
-function firstPartCallId(parts: readonly JsonRecord[], partType: string): string | undefined {
-  const part = parts.find((entry) => readString(entry.type) === partType);
-  return part === undefined ? undefined : readString(part.callId);
+  const [part] = toolParts;
+  if (part === undefined) return undefined;
+  const partType = readString(part.type);
+  const callId = readString(part.callId);
+  if ((partType !== "tool_call" && partType !== "tool_result") || callId === undefined) {
+    return undefined;
+  }
+  return { callId, partType };
 }
 
 function segmentMatches(
