@@ -510,7 +510,12 @@ function normalizeTranscript(
   });
 }
 
-function extractTranscriptImportHints(input: RawSessionImportInput): TranscriptImportHints {
+function extractTranscriptImportHints(
+  input: RawSessionImportInput,
+  options: {
+    fallbackHarnessSessionId?: string | undefined;
+  },
+): TranscriptImportHints {
   if (input.harness === "codex") {
     return extractCodexTranscriptImportHints({
       contentType: input.contentType,
@@ -520,6 +525,7 @@ function extractTranscriptImportHints(input: RawSessionImportInput): TranscriptI
 
   return extractClaudeTranscriptImportHints({
     contentType: input.contentType,
+    fallbackHarnessSessionId: options.fallbackHarnessSessionId,
     rawContent: input.rawContent,
     sourceLocator: input.locator,
   });
@@ -541,9 +547,14 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
     throw new RawSessionImportError({ message: "author.handle is required" });
   }
 
-  const transcriptHints = extractTranscriptImportHints(input);
+  const inputHarnessSessionId = cleanOptional(input.harnessSessionId);
+  const transcriptHints = extractTranscriptImportHints(input, {
+    fallbackHarnessSessionId: inputHarnessSessionId,
+  });
   const harnessSessionId =
-    cleanOptional(input.harnessSessionId) ?? transcriptHints?.harnessSessionId;
+    transcriptHints?.derivedSidechainHarnessSessionId ??
+    inputHarnessSessionId ??
+    transcriptHints?.harnessSessionId;
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
   if (harnessSessionId === undefined && sourceLocatorHash === undefined) {

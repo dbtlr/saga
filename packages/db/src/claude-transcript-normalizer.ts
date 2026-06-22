@@ -46,6 +46,7 @@ export type ClaudeTranscriptNormalization = TranscriptNormalization;
 
 export function extractClaudeTranscriptImportHints(input: {
   contentType: "json" | "jsonl" | "text";
+  fallbackHarnessSessionId?: string | undefined;
   rawContent: string;
   sourceLocator?: string | undefined;
 }): ClaudeTranscriptImportHints {
@@ -56,9 +57,17 @@ export function extractClaudeTranscriptImportHints(input: {
   )?.value;
   const message = asRecord(assistantRecord?.message);
 
+  const isSubagentTranscript = isClaudeSubagentTranscript(records, input.sourceLocator);
+  const harnessSessionId = deriveClaudeHarnessSessionId(
+    records,
+    input.sourceLocator,
+    input.fallbackHarnessSessionId,
+  );
+
   return {
     cwd: readString(sessionRecord?.cwd),
-    harnessSessionId: deriveClaudeHarnessSessionId(records, input.sourceLocator),
+    derivedSidechainHarnessSessionId: isSubagentTranscript ? harnessSessionId : undefined,
+    harnessSessionId,
     model: readString(message?.model),
   };
 }

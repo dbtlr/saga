@@ -1009,7 +1009,7 @@ describePostgres("raw session import", () => {
     expect(segments).toHaveLength(0);
   });
 
-  test("imports Claude sidechain subagent transcripts as separate sessions from their parent", async () => {
+  test("imports Claude sidechain subagent transcripts as separate sessions from an explicit parent id", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("claude-sidechain");
     const parentRawContent = claudeTranscript([
@@ -1101,6 +1101,7 @@ describePostgres("raw session import", () => {
         capturedAt: "2026-06-22T17:00:04.000Z",
         contentType: "jsonl",
         harness: "claude",
+        harnessSessionId: "claude-parent-session",
         host: {
           id: "host-claude-sidechain",
         },
@@ -1117,6 +1118,7 @@ describePostgres("raw session import", () => {
         capturedAt: "2026-06-22T17:00:05.000Z",
         contentType: "jsonl",
         harness: "claude",
+        harnessSessionId: "claude-parent-session",
         host: {
           id: "host-claude-sidechain",
         },

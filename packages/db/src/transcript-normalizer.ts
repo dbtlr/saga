@@ -3,6 +3,7 @@ export type NormalizedActorKind = "agent" | "harness" | "host_user" | "subagent"
 
 export interface TranscriptImportHints {
   cwd?: string | undefined;
+  derivedSidechainHarnessSessionId?: string | undefined;
   harnessSessionId?: string | undefined;
   model?: string | undefined;
 }
