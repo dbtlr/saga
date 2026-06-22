@@ -97,11 +97,16 @@ describe("installHarness", () => {
     expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(".codex/\n");
 
     const hooks = JSON.parse(readFileSync(status.hooksPath, "utf8")) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }>; matcher?: string }>>;
     };
     expect(hooks.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(hooks.hooks.SessionStart?.[0]?.matcher).toBe("startup|resume|clear|compact");
     expect(hooks.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(hooks.hooks.Stop?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(status.sessionStartCoverage).toBe("complete");
+    expect(status.sessionStartDetail).toBe(
+      "SessionStart sources configured: startup, resume, clear, compact",
+    );
 
     const commandCheck = spawnSync("/bin/sh", [
       "-n",
@@ -135,9 +140,10 @@ describe("installHarness", () => {
     );
 
     const settings = JSON.parse(readFileSync(status.hooksPath, "utf8")) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }>; matcher?: string }>>;
     };
     expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
+    expect(settings.hooks.SessionStart?.[0]?.matcher).toBe("startup|resume|clear|compact");
     expect(settings.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
 
@@ -479,12 +485,61 @@ describe("inspectHarness", () => {
     expect(status.state).toBe("pending-trust");
     expect(status.hooks).toBe("installed");
     expect(status.hooksCoverage).toBe("complete");
+    expect(status.sessionStartCoverage).toBe("complete");
+    expect(status.sessionStartDetail).toBe(
+      "SessionStart sources configured: startup, resume, clear, compact",
+    );
     expect(status.hookTrust).toBe("pending user trust");
     expect(status.stateDetail).toBe(
       "binding and hooks are installed; Codex project-local hook trust is pending explicit user approval",
     );
     expect(status.nextStep).toBe(
       "approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",
+    );
+  });
+
+  test("reports divergent state when SessionStart matcher misses continuation sources", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".codex"));
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        codex: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "codex-source-id",
+          sourceUri: `codex://host/${binding.host?.id}`,
+          target: "codex",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ matcher: "startup", hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("divergent");
+    expect(status.hooks).toBe("installed");
+    expect(status.hooksCoverage).toBe("complete");
+    expect(status.sessionStartCoverage).toBe("partial");
+    expect(status.sessionStartDetail).toBe(
+      "SessionStart sources configured: startup; missing: resume, clear, compact",
+    );
+    expect(status.stateDetail).toBe(
+      "local binding exists but SessionStart sources configured: startup; missing: resume, clear, compact",
     );
   });
 
@@ -701,6 +756,9 @@ describe("runHarnessCommand", () => {
 
     expect(output).toContain("state           pending-trust");
     expect(output).toContain("hooks           installed");
+    expect(output).toContain(
+      "session start   complete; SessionStart sources configured: startup, resume, clear, compact",
+    );
     expect(output).toContain("hook trust      pending user trust");
     expect(output).toContain(
       "next step       approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",

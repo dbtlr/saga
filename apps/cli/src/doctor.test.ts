@@ -203,6 +203,74 @@ describe("doctorProject", () => {
     );
   });
 
+  test("fails Codex harness when SessionStart matcher misses continuation sources", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const hostId = "host-id";
+    const shimPath = join(cwd, ".codex", "saga-codex-hook.sh");
+    const hooksPath = join(cwd, ".codex", "hooks.json");
+    mkdirSync(join(cwd, ".codex"));
+    writeFileSync(
+      join(cwd, ".saga.local.json"),
+      JSON.stringify({
+        harnesses: {
+          codex: {
+            hookCommand: `'${shimPath}'`,
+            hookTrust: "requires-review",
+            hooksPath,
+            installedAt: new Date().toISOString(),
+            sourceBindingId: "codex-source-id",
+            sourceUri: `codex://host/${hostId}`,
+            target: "codex",
+          },
+        },
+        host: {
+          id: hostId,
+          label: "test-host",
+        },
+        project: {
+          root: cwd,
+        },
+        schemaVersion: 1,
+        service: {
+          databaseUrl: "env:DATABASE_URL",
+        },
+        sourceBinding: {
+          id: "source-id",
+        },
+        workspace: {
+          handle: "saga",
+          id: "workspace-id",
+        },
+      }),
+    );
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            {
+              matcher: "startup|resume",
+              hooks: [{ command: shimPath, type: "command" }],
+            },
+          ],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const checks = await doctorProject({ cwd });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "divergent; local binding exists but SessionStart sources configured: startup, resume; missing: clear, compact",
+        label: "harness:codex",
+        status: "fail",
+      }),
+    );
+  });
+
   test("fails malformed harness binding even when hooks are active", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
     mkdirSync(join(cwd, ".codex"));

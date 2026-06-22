@@ -46,9 +46,11 @@ Saga installs the same command hook for each event. `SessionStart` is scoped to 
 - `divergent`: local binding and installed hook configuration disagree, such as binding without hooks or hooks without binding.
 - `invalid`: the target settings file exists but cannot be parsed as a supported hook settings shape.
 
-Status also reports `hooksCoverage`: `complete`, `partial`, or `none`. Coverage detects current shim commands, legacy direct `saga ingest <target>-hook` commands, and known Saga shim script paths so installed or configured Saga hooks are not mistaken for a missing integration.
+Status also reports `hooksCoverage`: `complete`, `partial`, or `none`. Coverage detects current shim commands, legacy direct `saga ingest <target>-hook` commands, and known Saga shim script paths so installed or configured Saga hooks are not mistaken for a missing integration. `sessionStartCoverage` is reported separately because a hook can exist for the `SessionStart` event while its matcher only covers some start sources. Saga treats startup, resume, clear, and compact as the complete configured source set.
 
 For Codex, `saga harness install codex`, `saga harness status codex`, and `saga doctor` distinguish installed hooks from trusted hooks. Saga writes `.codex/hooks.json`, writes `.codex/saga-codex-hook.sh`, and records the local source binding, but it does not silently trust project-local Codex hooks. When status is `pending-trust`, approve the project-local hooks in Codex, then restart Codex or start a new Codex session in the workspace so the host can load the hook configuration.
+
+`hooksCoverage` and `sessionStartCoverage` are configuration checks, not proof that Codex has executed each lifecycle source in the current environment. Local dogfood evidence has shown Codex `SessionStart` hooks firing for `startup` and `resume` with the current matcher, while `clear` and `compact` coverage has not yet been observed in raw events. Activation verification should report runtime evidence by lifecycle source instead of collapsing startup, resume, clear, and compact into one "hooks work" result.
 
 ## Edge Cases
 

@@ -23,6 +23,7 @@ import {
 } from "./init.js";
 
 export type HarnessTarget = "codex" | "claude";
+export type HookCoverage = "complete" | "partial" | "none";
 export type HarnessIntegrationState =
   | "configured"
   | "divergent"
@@ -36,7 +37,7 @@ export interface HarnessStatus {
   displayName: string;
   hookCommand: string;
   hookTrust: "not installed" | "pending user trust" | "requires review";
-  hooksCoverage: "complete" | "partial" | "none";
+  hooksCoverage: HookCoverage;
   hooks: "installed" | "invalid" | "missing";
   hooksError?: string;
   hooksPath: string;
@@ -44,6 +45,8 @@ export interface HarnessStatus {
   stateDetail: string;
   mcp: "deferred";
   nextStep: string | undefined;
+  sessionStartCoverage: HookCoverage;
+  sessionStartDetail: string;
   skills: "deferred";
   target: HarnessTarget;
 }
@@ -102,6 +105,7 @@ type HooksSettingsReadResult =
   | { error: HooksSettingsParseError; ok: false };
 
 const HARNESS_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
+const SESSION_START_SOURCES = ["startup", "resume", "clear", "compact"] as const;
 const LEGACY_HOOK_COMMANDS = {
   claude: "saga ingest claude-hook",
   codex: "saga ingest codex-hook",
@@ -276,6 +280,8 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hooksPath,
       mcp: "deferred",
       nextStep: undefined,
+      sessionStartCoverage: "none",
+      sessionStartDetail: "SessionStart hook configuration could not be read",
       skills: "deferred",
       state: "invalid",
       stateDetail: formatHooksSettingsParseError(hooksFile.error),
@@ -287,7 +293,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     hookCommand,
     target: adapter.target,
   });
-  const hooksInstalled = sagaHookCoverage === "complete";
+  const hooksInstalled = sagaHookCoverage.hooksCoverage === "complete";
   const bindingIssue = validateHarnessBindingSnapshot(harnessBinding);
   if (bindingIssue !== undefined) {
     return {
@@ -295,11 +301,13 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       displayName: adapter.displayName,
       hookCommand,
       hookTrust: hooksInstalled ? "requires review" : "not installed",
-      hooksCoverage: sagaHookCoverage,
+      hooksCoverage: sagaHookCoverage.hooksCoverage,
       hooks: hooksInstalled ? "installed" : "missing",
       hooksPath,
       mcp: "deferred",
       nextStep: undefined,
+      sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
+      sessionStartDetail: sagaHookCoverage.sessionStartDetail,
       skills: "deferred",
       state: "invalid",
       stateDetail: `invalid harness binding: ${bindingIssue}`,
@@ -313,19 +321,23 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     expectedSourceUri:
       binding?.host?.id === undefined ? undefined : adapter.sourceUri(binding.host.id),
     harnessBinding,
-    sagaHookCoverage,
+    sagaHookCoverage: sagaHookCoverage.hooksCoverage,
     hooksInstalled,
+    sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
+    sessionStartDetail: sagaHookCoverage.sessionStartDetail,
   });
   return {
     binding: harnessBinding === undefined ? "missing" : "installed",
     displayName: adapter.displayName,
     hookCommand,
     hookTrust: hookTrustDisplay(adapter.target, hooksInstalled, state.state),
-    hooksCoverage: sagaHookCoverage,
+    hooksCoverage: sagaHookCoverage.hooksCoverage,
     hooks: hooksInstalled ? "installed" : "missing",
     hooksPath,
     mcp: "deferred",
     nextStep: nextStepForHarnessState(adapter.target, state.state),
+    sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
+    sessionStartDetail: sagaHookCoverage.sessionStartDetail,
     skills: "deferred",
     state: state.state,
     stateDetail: state.detail,
@@ -359,8 +371,10 @@ function classifyHarnessState(input: {
   expectedHooksPath: string;
   expectedSourceUri: HarnessSourceUri | undefined;
   harnessBinding: HarnessBindingSnapshot | undefined;
-  sagaHookCoverage: "complete" | "partial" | "none";
+  sagaHookCoverage: HookCoverage;
   hooksInstalled: boolean;
+  sessionStartCoverage: HookCoverage;
+  sessionStartDetail: string;
 }): { detail: string; state: HarnessIntegrationState } {
   const bindingInstalled = input.harnessBinding !== undefined;
   if (!bindingInstalled && input.sagaHookCoverage === "none") {
@@ -383,6 +397,13 @@ function classifyHarnessState(input: {
     return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: "divergent" };
   }
 
+  if (input.sessionStartCoverage !== "complete") {
+    return {
+      detail: `local binding exists but ${input.sessionStartDetail}`,
+      state: "divergent",
+    };
+  }
+
   if (input.adapter.target === "codex" && input.harnessBinding?.hookTrust === "requires-review") {
     return {
       detail:
@@ -394,12 +415,12 @@ function classifyHarnessState(input: {
   return { detail: "binding is valid and complete Saga hooks are active", state: "configured" };
 }
 
-function activeHooksWithoutBindingDetail(coverage: "complete" | "partial" | "none"): string {
+function activeHooksWithoutBindingDetail(coverage: HookCoverage): string {
   if (coverage === "complete") return "hooks are installed but local binding is missing";
   return "Saga hooks are partially installed but local binding is missing";
 }
 
-function bindingHookDivergenceDetail(coverage: "complete" | "partial" | "none"): string {
+function bindingHookDivergenceDetail(coverage: HookCoverage): string {
   if (coverage === "partial")
     return "local binding exists but Saga hooks are only partially installed";
   return "local binding exists but hooks are missing";
@@ -482,6 +503,10 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
       ...(status.hooksError === undefined
         ? []
         : [{ label: "hooks error", value: status.hooksError }]),
+      {
+        label: "session start",
+        value: `${status.sessionStartCoverage}; ${status.sessionStartDetail}`,
+      },
       { label: "hook trust", value: status.hookTrust },
       ...(status.nextStep === undefined ? [] : [{ label: "next step", value: status.nextStep }]),
       { label: "hooks path", value: status.hooksPath },
@@ -732,7 +757,11 @@ function inspectSagaHookCoverage(
     hookCommand: string;
     target: HarnessTarget;
   },
-): "complete" | "partial" | "none" {
+): {
+  hooksCoverage: HookCoverage;
+  sessionStartCoverage: HookCoverage;
+  sessionStartDetail: string;
+} {
   const legacyCommands = [LEGACY_HOOK_COMMANDS[input.target]];
   const hookScripts = [getHarnessAdapter(input.target).shimScriptName];
   const installedEvents = HARNESS_HOOK_EVENTS.filter((event) =>
@@ -742,9 +771,77 @@ function inspectSagaHookCoverage(
       ),
     ),
   );
+  const sessionStartCoverage = inspectSessionStartSourceCoverage(file, {
+    hookCommand: input.hookCommand,
+    hookScripts,
+    legacyCommands,
+  });
 
-  if (installedEvents.length === HARNESS_HOOK_EVENTS.length) return "complete";
-  return installedEvents.length > 0 ? "partial" : "none";
+  return {
+    hooksCoverage:
+      installedEvents.length === HARNESS_HOOK_EVENTS.length
+        ? "complete"
+        : installedEvents.length > 0
+          ? "partial"
+          : "none",
+    sessionStartCoverage: sessionStartCoverage.coverage,
+    sessionStartDetail: sessionStartCoverage.detail,
+  };
+}
+
+function inspectSessionStartSourceCoverage(
+  file: HooksSettingsFile,
+  input: {
+    hookCommand: string;
+    legacyCommands: readonly string[];
+    hookScripts: readonly string[];
+  },
+): { coverage: HookCoverage; detail: string } {
+  const coveredSources = new Set<string>();
+  const matchers = file.hooks?.SessionStart ?? [];
+
+  for (const matcher of matchers) {
+    const hasSagaHook = (matcher.hooks ?? []).some((hook) =>
+      isSagaHookCommand(hook, input.hookCommand, input.legacyCommands, input.hookScripts),
+    );
+    if (!hasSagaHook) continue;
+
+    for (const source of sourcesCoveredBySessionStartMatcher(matcher.matcher)) {
+      coveredSources.add(source);
+    }
+  }
+
+  if (coveredSources.size === 0) {
+    return {
+      coverage: "none",
+      detail: "no recognized Saga SessionStart hook source coverage is configured",
+    };
+  }
+
+  const missingSources = SESSION_START_SOURCES.filter((source) => !coveredSources.has(source));
+  const configuredSources = SESSION_START_SOURCES.filter((source) => coveredSources.has(source));
+  if (missingSources.length === 0) {
+    return {
+      coverage: "complete",
+      detail: `SessionStart sources configured: ${configuredSources.join(", ")}`,
+    };
+  }
+
+  return {
+    coverage: "partial",
+    detail: `SessionStart sources configured: ${configuredSources.join(", ")}; missing: ${missingSources.join(", ")}`,
+  };
+}
+
+function sourcesCoveredBySessionStartMatcher(matcher: string | undefined): readonly string[] {
+  if (matcher === undefined || matcher.trim() === "") return SESSION_START_SOURCES;
+
+  try {
+    const expression = new RegExp(`^(?:${matcher})$`, "u");
+    return SESSION_START_SOURCES.filter((source) => expression.test(source));
+  } catch {
+    return [];
+  }
 }
 
 function withoutSagaHooks(
