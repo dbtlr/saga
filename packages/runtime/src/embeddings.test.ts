@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { embeddingWorkflowFromCodexAuth } from "./embeddings.js";
+import { embeddingWorkflowFromCodexAuth, inspectEmbeddingWorkflow } from "./embeddings.js";
 
 describe("embeddingWorkflowFromCodexAuth", () => {
   test("represents the default OpenAI embedding provider when Codex has a cached API key", () => {
@@ -51,5 +54,33 @@ describe("embeddingWorkflowFromCodexAuth", () => {
       detail: "Lexical recall remains available while embedding generation is skipped.",
       state: "active",
     });
+  });
+
+  test("keeps malformed auth parser text and source excerpts out of workflow status", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-embedding-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      join(codexHome, "auth.json"),
+      '{"OPENAI_API_KEY":"sk-workflow-leak","tokens":{"access_token":"tok-workflow-leak",}',
+    );
+
+    const workflow = inspectEmbeddingWorkflow({
+      env: { CODEX_HOME: codexHome },
+      homeDir: join(cwd, "home"),
+    });
+    const publicStatus = JSON.stringify(workflow);
+
+    expect(workflow.availability).toMatchObject({
+      reason: "malformed-auth-file",
+      state: "skipped",
+    });
+    expect(workflow.availability.credential.detail).toBe("could not parse CODEX_HOME/auth.json");
+    expect(publicStatus).not.toContain("sk-workflow-leak");
+    expect(publicStatus).not.toContain("tok-workflow-leak");
+    expect(publicStatus).not.toContain("OPENAI_API_KEY");
+    expect(publicStatus).not.toContain("access_token");
+    expect(publicStatus).not.toContain("Unexpected");
+    expect(publicStatus).not.toContain("JSON");
   });
 });

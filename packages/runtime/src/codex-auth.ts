@@ -118,9 +118,9 @@ export function resolveCodexAuth(options: CodexAuthResolutionOptions = {}): Code
     if (parsed.status === "malformed") {
       return unavailable({
         checkedFiles,
-        detail: `could not parse ${candidate.displayPath}: ${parsed.error}`,
+        detail: `could not parse ${candidate.displayPath}`,
         guidance:
-          "Embedding generation is skipped; repair Codex auth JSON or provide a cached OPENAI_API_KEY. Lexical recall remains available.",
+          "Embedding generation is skipped; repair Codex auth or provide valid embedding credentials. Lexical recall remains available.",
         mode: "malformed",
         reason: "malformed-auth-file",
       });
@@ -227,7 +227,6 @@ function parseAuthJson(rawAuth: string):
       value: unknown;
     }
   | {
-      error: string;
       status: "malformed";
     } {
   try {
@@ -235,9 +234,8 @@ function parseAuthJson(rawAuth: string):
       status: "ok",
       value: JSON.parse(rawAuth) as unknown,
     };
-  } catch (error) {
+  } catch {
     return {
-      error: errorMessage(error),
       status: "malformed",
     };
   }

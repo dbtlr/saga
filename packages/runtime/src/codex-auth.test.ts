@@ -183,6 +183,35 @@ describe("resolveCodexAuth", () => {
     expect(auth.guidance).toContain("Lexical recall remains available");
   });
 
+  test("reports malformed auth files without parser text or source excerpts", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      join(codexHome, "auth.json"),
+      '{"OPENAI_API_KEY":"sk-leaked-fragment","tokens":{"access_token":"tok-leaked-fragment",}',
+    );
+
+    const auth = resolveCodexAuth({
+      env: { CODEX_HOME: codexHome },
+      homeDir: join(cwd, "home"),
+    });
+    const publicStatus = JSON.stringify(auth);
+
+    expect(auth).toMatchObject({
+      detail: "could not parse CODEX_HOME/auth.json",
+      mode: "malformed",
+      reason: "malformed-auth-file",
+      status: "unavailable",
+    });
+    expect(publicStatus).not.toContain("sk-leaked-fragment");
+    expect(publicStatus).not.toContain("tok-leaked-fragment");
+    expect(publicStatus).not.toContain("OPENAI_API_KEY");
+    expect(publicStatus).not.toContain("access_token");
+    expect(publicStatus).not.toContain("Unexpected");
+    expect(publicStatus).not.toContain("JSON");
+  });
+
   test("reports unreadable auth files as unavailable without trying to mutate them", () => {
     const userHome = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
     mkdirSync(join(userHome, ".codex", "auth.json"), { recursive: true });

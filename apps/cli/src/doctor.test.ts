@@ -157,6 +157,46 @@ describe("doctorProject", () => {
     );
   });
 
+  test("does not expose malformed auth parser text or source excerpts in embeddings output", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const codexHome = join(cwd, "codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      join(codexHome, "auth.json"),
+      '{"OPENAI_API_KEY":"sk-doctor-leak","tokens":{"access_token":"tok-doctor-leak",}',
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: { CODEX_HOME: codexHome },
+        homeDir: join(cwd, "home"),
+      },
+    });
+    const output = renderDoctor(checks, {
+      ascii: true,
+      color: "never",
+      format: "records",
+      isTty: false,
+    });
+    const publicStatus = `${JSON.stringify(checks)}\n${output}`;
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "openai/text-embedding-3-small (1536 dimensions) skipped; could not parse CODEX_HOME/auth.json; Embedding generation is skipped; repair Codex auth or provide valid embedding credentials. Lexical recall remains available.",
+        label: "embeddings",
+        status: "warn",
+      }),
+    );
+    expect(publicStatus).not.toContain("sk-doctor-leak");
+    expect(publicStatus).not.toContain("tok-doctor-leak");
+    expect(publicStatus).not.toContain("OPENAI_API_KEY");
+    expect(publicStatus).not.toContain("access_token");
+    expect(publicStatus).not.toContain("Unexpected");
+    expect(publicStatus).not.toContain("JSON");
+  });
+
   test("reports harness target states", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
 
