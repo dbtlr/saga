@@ -599,7 +599,7 @@ function contiguousToolStreams(turns: readonly SessionTurn[]): SessionTurn[][] {
   let current: SessionTurn[] = [];
 
   for (const turn of turns) {
-    if (isToolGroupCandidate(turn)) {
+    if (isToolBearingTurn(turn)) {
       current.push(turn);
       continue;
     }
@@ -614,8 +614,12 @@ function contiguousToolStreams(turns: readonly SessionTurn[]): SessionTurn[][] {
   return streams;
 }
 
-function isToolGroupCandidate(turn: SessionTurn): boolean {
-  return unambiguousToolEvidence(turn) !== undefined;
+function isToolBearingTurn(turn: SessionTurn): boolean {
+  const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
+  return parts.some((part) => {
+    const type = readString(part.type);
+    return type === "tool_call" || type === "tool_result";
+  });
 }
 
 function unambiguousToolEvidence(turn: SessionTurn): ToolEvidence | undefined {

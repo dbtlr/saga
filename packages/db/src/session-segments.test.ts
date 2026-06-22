@@ -169,6 +169,91 @@ describe("deriveSessionSegmentsFromTurns", () => {
       "call-b",
     ]);
   });
+
+  test("keeps ambiguous tool-bearing turns in the grouping window without grouping them", () => {
+    const turns = [
+      makeTurn(0, [
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-a",
+          arguments: { command: "printf alpha-call" },
+        },
+      ]),
+      makeTurn(1, [
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-ambiguous-one",
+          arguments: { command: "printf ambiguous-one" },
+        },
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-ambiguous-two",
+          arguments: { command: "printf ambiguous-two" },
+        },
+      ]),
+      makeTurn(2, [
+        {
+          type: "tool_result",
+          name: "shell",
+          callId: "call-a",
+          output: "ALPHA_RESULT_NEEDLE",
+        },
+      ]),
+    ];
+
+    const segments = deriveSessionSegmentsFromTurns(turns);
+    const segmentsByTurnId = new Map(segments.map((segment) => [segment.turnId, segment]));
+
+    expect(segments).toHaveLength(3);
+    expect(segments.map((segment) => segment.ordinal)).toEqual([0, 1, 2]);
+    expect(segments.map((segment) => segment.turnId)).toEqual(turns.map((turn) => turn.id));
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "tool_group_call",
+      "turn",
+      "tool_group_result",
+    ]);
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata)?.callId)).toEqual([
+      "call-a",
+      undefined,
+      "call-a",
+    ]);
+    expect(segments[0]?.metadata).toMatchObject({
+      groupedTurnIds: [turns[0]?.id, turns[2]?.id],
+      groupedTurnOrdinals: [0, 2],
+      toolGroup: {
+        callId: "call-a",
+        memberIndex: 0,
+        turnIds: [turns[0]?.id, turns[2]?.id],
+        turnOrdinals: [0, 2],
+      },
+    });
+    expect(segments[1]?.metadata).toMatchObject({
+      groupedTurnIds: [turns[1]?.id],
+      groupedTurnOrdinals: [1],
+      segmentTurnId: turns[1]?.id,
+    });
+    expect(metadataToolGroup(segments[1]?.metadata)).toBeUndefined();
+    expect(segments[2]?.metadata).toMatchObject({
+      segmentTurnId: turns[2]?.id,
+      toolGroup: {
+        callId: "call-a",
+        memberIndex: 1,
+      },
+    });
+
+    expect(segmentsByTurnId.get(turns[0]?.id ?? "")?.ordinal).toBe(0);
+    expect(segmentsByTurnId.get(turns[1]?.id ?? "")?.ordinal).toBe(1);
+    expect(segmentsByTurnId.get(turns[2]?.id ?? "")?.ordinal).toBe(2);
+    expect(segmentsByTurnId.get(turns[0]?.id ?? "")?.searchText).toContain("printf alpha-call");
+    expect(segmentsByTurnId.get(turns[0]?.id ?? "")?.searchText).not.toContain(
+      "ALPHA_RESULT_NEEDLE",
+    );
+    expect(segmentsByTurnId.get(turns[1]?.id ?? "")?.searchText).toContain("printf ambiguous-one");
+    expect(segmentsByTurnId.get(turns[2]?.id ?? "")?.searchText).toContain("ALPHA_RESULT_NEEDLE");
+  });
 });
 
 function makeTurn(ordinal: number, contentParts: unknown[]): SessionTurn {
