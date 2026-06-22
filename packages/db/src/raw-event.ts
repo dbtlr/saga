@@ -1,5 +1,5 @@
 import type { RawEventEnvelope } from "@saga/contracts";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { rawEvents, sourceBindings, type RawEvent } from "./schema.js";
@@ -91,6 +91,33 @@ export function listRecentRawEvents(
         .where(and(eq(rawEvents.workspaceId, input.workspaceId)))
         .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
         .limit(input.limit ?? 10),
+    catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
+  });
+}
+
+export function listCodexActivationRawEvents(
+  service: DatabaseService,
+  input: {
+    limit?: number | undefined;
+    sourceBindingId: string;
+    workspaceId: string;
+  },
+): Effect.Effect<RawEvent[], RawEventInsertError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db
+        .select()
+        .from(rawEvents)
+        .where(
+          and(
+            eq(rawEvents.workspaceId, input.workspaceId),
+            eq(rawEvents.sourceBindingId, input.sourceBindingId),
+            eq(rawEvents.sourceType, "codex"),
+            inArray(rawEvents.eventType, ["codex.SessionStart", "codex.UserPromptSubmit"]),
+          ),
+        )
+        .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
+        .limit(input.limit ?? 50),
     catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
   });
 }

@@ -11,11 +11,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  classifyCodexActivationEvidence,
   installHarness,
   inspectHarness,
+  inspectHarnessWithActivation,
   listHarnessAdapters,
   runHarnessCommand,
   uninstallHarness,
+  type HarnessActivationStatus,
 } from "./harness.js";
 import { readBindingFile, writeBindingFile } from "./init.js";
 
@@ -713,6 +716,132 @@ describe("inspectHarness", () => {
   });
 });
 
+describe("classifyCodexActivationEvidence", () => {
+  const checkedAt = new Date("2026-06-22T12:00:00.000Z");
+
+  test("proves activation from recent real Codex hook events", () => {
+    const status = classifyCodexActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "codex.SessionStart",
+          occurredAt: "2026-06-22T11:00:00.000Z",
+          payload: { hook_event_name: "SessionStart", source: "resume" },
+          provenance: { hookEventName: "SessionStart" },
+        }),
+        rawActivationEvent({
+          eventType: "codex.UserPromptSubmit",
+          occurredAt: "2026-06-22T11:15:00.000Z",
+          payload: { hook_event_name: "UserPromptSubmit" },
+          provenance: { hookEventName: "UserPromptSubmit" },
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("active");
+    expect(status.detail).toContain("recent Codex hook raw_event found");
+    expect(status.sessionStartSources.observed).toEqual(["resume"]);
+    expect(status.sessionStartSources.unproven).toEqual(["startup", "clear", "compact"]);
+  });
+
+  test("distinguishes stale real hook evidence", () => {
+    const status = classifyCodexActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "codex.UserPromptSubmit",
+          occurredAt: "2026-06-20T11:15:00.000Z",
+          payload: { hook_event_name: "UserPromptSubmit" },
+          provenance: { hookEventName: "UserPromptSubmit" },
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("stale");
+    expect(status.detail).toContain("latest real Codex hook raw_event is stale");
+    expect(status.nextStep).toContain("restart Codex");
+  });
+
+  test("distinguishes manual or synthetic raw events from hook activation proof", () => {
+    const status = classifyCodexActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "codex.UserPromptSubmit",
+          occurredAt: "2026-06-22T11:15:00.000Z",
+          payload: { hook_event_name: "UserPromptSubmit", synthetic: true },
+          provenance: { hookEventName: "UserPromptSubmit" },
+        }),
+        rawActivationEvent({
+          eventType: "codex.SessionStart",
+          occurredAt: "2026-06-22T11:00:00.000Z",
+          payload: {},
+          provenance: {},
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("manual-only");
+    expect(status.detail).toContain("manual/synthetic or lack hook provenance");
+  });
+
+  test("reports no evidence when no matching rows are present", () => {
+    const status = classifyCodexActivationEvidence({
+      checkedAt,
+      events: [],
+    });
+
+    expect(status.state).toBe("no-evidence");
+    expect(status.detail).toContain("no Codex SessionStart/UserPromptSubmit raw_events found");
+    expect(status.nextStep).toContain("approve Codex project-local hooks");
+  });
+});
+
+describe("inspectHarnessWithActivation", () => {
+  test("promotes Codex pending trust to configured when recent hook evidence proves activation", async () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".codex"));
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        codex: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "codex-source-id",
+          sourceUri: `codex://host/${binding.host?.id}`,
+          target: "codex",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = await inspectHarnessWithActivation({
+      cwd: projectRoot,
+      target: "codex",
+      verifyActivation: async () => activeActivation(),
+    });
+
+    expect(status.state).toBe("configured");
+    expect(status.hookTrust).toBe("trusted by evidence");
+    expect(status.nextStep).toBeUndefined();
+    expect(status.stateDetail).toContain("recent Codex hook raw_event found");
+  });
+});
+
 describe("runHarnessCommand", () => {
   test("renders Codex pending-trust next step in status records", async () => {
     const projectRoot = realpathSync(boundProject());
@@ -745,13 +874,15 @@ describe("runHarnessCommand", () => {
       }),
     );
 
-    const output = await withCwd(projectRoot, () =>
-      runHarnessCommand(["status", "codex"], {
-        ascii: true,
-        color: "never",
-        format: "records",
-        isTty: false,
-      }),
+    const output = await withoutDatabaseUrl(() =>
+      withCwd(projectRoot, () =>
+        runHarnessCommand(["status", "codex"], {
+          ascii: true,
+          color: "never",
+          format: "records",
+          isTty: false,
+        }),
+      ),
     );
 
     expect(output).toContain("state           pending-trust");
@@ -759,21 +890,26 @@ describe("runHarnessCommand", () => {
     expect(output).toContain(
       "session start   complete; SessionStart sources configured: startup, resume, clear, compact",
     );
+    expect(output).toContain(
+      "activation      missing-database; DATABASE_URL is not set; activation verification cannot query raw_events",
+    );
     expect(output).toContain("hook trust      pending user trust");
     expect(output).toContain(
-      "next step       approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here",
+      "next step       set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status codex again",
     );
   });
 
   test("reports all harness targets when status target is omitted", async () => {
     const projectRoot = boundProject();
-    const output = await withCwd(projectRoot, () =>
-      runHarnessCommand(["status"], {
-        ascii: true,
-        color: "never",
-        format: "json",
-        isTty: false,
-      }),
+    const output = await withoutDatabaseUrl(() =>
+      withCwd(projectRoot, () =>
+        runHarnessCommand(["status"], {
+          ascii: true,
+          color: "never",
+          format: "json",
+          isTty: false,
+        }),
+      ),
     );
 
     const statuses = JSON.parse(output) as Array<{ state: string; target: string }>;
@@ -828,4 +964,63 @@ function withCwd<T>(cwd: string, callback: () => T): T {
   } finally {
     process.chdir(previous);
   }
+}
+
+async function withoutDatabaseUrl<T>(callback: () => Promise<T>): Promise<T> {
+  const previous = process.env.DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  try {
+    return await callback();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previous;
+    }
+  }
+}
+
+function activeActivation(): HarnessActivationStatus {
+  return {
+    checkedAt: "2026-06-22T12:00:00.000Z",
+    detail:
+      "recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact",
+    lastEvent: {
+      eventType: "codex.UserPromptSubmit",
+      occurredAt: "2026-06-22T11:15:00.000Z",
+    },
+    recentWithinHours: 24,
+    sessionStartSources: {
+      observed: ["startup"],
+      unproven: ["resume", "clear", "compact"],
+    },
+    state: "active",
+  };
+}
+
+function rawActivationEvent(input: {
+  eventType: "codex.SessionStart" | "codex.UserPromptSubmit";
+  occurredAt: string;
+  payload: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+}): any {
+  return {
+    actorId: "codex",
+    createdAt: new Date(input.occurredAt),
+    eventType: input.eventType,
+    externalEventId: `${input.eventType}:${input.occurredAt}`,
+    id: `${input.eventType}:${input.occurredAt}`,
+    ingestedAt: new Date(input.occurredAt),
+    occurredAt: new Date(input.occurredAt),
+    payload: input.payload,
+    provenance: input.provenance,
+    sessionId: "session-id",
+    sourceBindingId: "codex-source-id",
+    sourceId: "codex:local",
+    sourceType: "codex",
+    traceId: "turn-id",
+    trustLevel: "raw",
+    updatedAt: new Date(input.occurredAt),
+    workspaceId: "workspace-id",
+  };
 }

@@ -9,7 +9,13 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertMigrationsCurrent, makeDatabase, registerSourceBinding } from "@saga/db";
+import {
+  assertMigrationsCurrent,
+  listCodexActivationRawEvents,
+  makeDatabase,
+  registerSourceBinding,
+  type RawEvent,
+} from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import { formatCommandOutput } from "./output.js";
@@ -32,11 +38,38 @@ export type HarnessIntegrationState =
   | "pending-trust"
   | "stale";
 
+export type HarnessActivationState =
+  | "active"
+  | "manual-only"
+  | "missing-binding"
+  | "missing-database"
+  | "no-evidence"
+  | "not-applicable"
+  | "stale"
+  | "unavailable";
+
+export interface HarnessActivationStatus {
+  checkedAt: string;
+  detail: string;
+  lastEvent?: {
+    eventType: string;
+    occurredAt: string;
+  };
+  nextStep?: string;
+  recentWithinHours: number;
+  sessionStartSources: {
+    observed: readonly string[];
+    unproven: readonly string[];
+  };
+  state: HarnessActivationState;
+}
+
 export interface HarnessStatus {
+  activation: HarnessActivationStatus;
   binding: "installed" | "missing";
   displayName: string;
   hookCommand: string;
-  hookTrust: "not installed" | "pending user trust" | "requires review";
+  hookTrust: "not installed" | "pending user trust" | "requires review" | "trusted by evidence";
   hooksCoverage: HookCoverage;
   hooks: "installed" | "invalid" | "missing";
   hooksError?: string;
@@ -106,6 +139,8 @@ type HooksSettingsReadResult =
 
 const HARNESS_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
 const SESSION_START_SOURCES = ["startup", "resume", "clear", "compact"] as const;
+const ACTIVATION_RECENT_WINDOW_HOURS = 24;
+const ACTIVATION_RECENT_WINDOW_MS = ACTIVATION_RECENT_WINDOW_HOURS * 60 * 60 * 1000;
 const LEGACY_HOOK_COMMANDS = {
   claude: "saga ingest claude-hook",
   codex: "saga ingest codex-hook",
@@ -160,7 +195,10 @@ export async function runHarnessCommand(
 
   if (subcommand === "status") {
     const target = args[1] === undefined ? undefined : parseTarget(args[1]);
-    const result = target === undefined ? inspectHarnesses() : [inspectHarness({ target })];
+    const result =
+      target === undefined
+        ? await inspectHarnessesWithActivation()
+        : [await inspectHarnessWithActivation({ target })];
     return formatHarnessResults("Harness status", result, options);
   }
 
@@ -261,6 +299,40 @@ export function inspectHarnesses(input: { cwd?: string } = {}): HarnessStatus[] 
   return listHarnessAdapters().map((adapter) => inspectTargetHarness(projectRoot, adapter));
 }
 
+export type HarnessActivationVerifier = (input: {
+  projectRoot: string;
+  status: HarnessStatus;
+}) => Promise<HarnessActivationStatus>;
+
+export async function inspectHarnessWithActivation(input: {
+  cwd?: string;
+  target: HarnessTarget;
+  verifyActivation?: HarnessActivationVerifier;
+}): Promise<HarnessStatus> {
+  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
+  const status = inspectTargetHarness(projectRoot, getHarnessAdapter(input.target));
+  const verifier = input.verifyActivation ?? verifyHarnessActivation;
+  return applyActivationStatus(status, await verifier({ projectRoot, status }));
+}
+
+export async function inspectHarnessesWithActivation(
+  input: {
+    cwd?: string;
+    verifyActivation?: HarnessActivationVerifier;
+  } = {},
+): Promise<HarnessStatus[]> {
+  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
+  const verifier = input.verifyActivation ?? verifyHarnessActivation;
+  const statuses = listHarnessAdapters().map((adapter) =>
+    inspectTargetHarness(projectRoot, adapter),
+  );
+  return Promise.all(
+    statuses.map(async (status) =>
+      applyActivationStatus(status, await verifier({ projectRoot, status })),
+    ),
+  );
+}
+
 function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): HarnessStatus {
   const hooksPath = adapter.hooksPath(projectRoot);
   const binding = readBindingFile(projectRoot);
@@ -270,6 +342,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
   const hooksFile = tryReadHooksSettingsFile(hooksPath, adapter);
   if (!hooksFile.ok) {
     return {
+      activation: activationNotChecked(adapter.target),
       binding: harnessBinding === undefined ? "missing" : "installed",
       displayName: adapter.displayName,
       hookCommand,
@@ -297,6 +370,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
   const bindingIssue = validateHarnessBindingSnapshot(harnessBinding);
   if (bindingIssue !== undefined) {
     return {
+      activation: activationNotChecked(adapter.target),
       binding: "installed",
       displayName: adapter.displayName,
       hookCommand,
@@ -327,6 +401,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     sessionStartDetail: sagaHookCoverage.sessionStartDetail,
   });
   return {
+    activation: activationNotChecked(adapter.target),
     binding: harnessBinding === undefined ? "missing" : "installed",
     displayName: adapter.displayName,
     hookCommand,
@@ -446,6 +521,303 @@ function nextStepForHarnessState(
   return undefined;
 }
 
+function activationNotChecked(target: HarnessTarget): HarnessActivationStatus {
+  return {
+    checkedAt: new Date(0).toISOString(),
+    detail:
+      target === "codex"
+        ? "activation evidence was not checked"
+        : "runtime activation verification is not implemented for this harness",
+    recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
+    sessionStartSources: {
+      observed: [],
+      unproven: [...SESSION_START_SOURCES],
+    },
+    state: target === "codex" ? "unavailable" : "not-applicable",
+  };
+}
+
+async function verifyHarnessActivation(input: {
+  projectRoot: string;
+  status: HarnessStatus;
+}): Promise<HarnessActivationStatus> {
+  const checkedAt = new Date();
+  if (input.status.target !== "codex") {
+    return {
+      checkedAt: checkedAt.toISOString(),
+      detail: "runtime activation verification is currently implemented for Codex only",
+      recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
+      sessionStartSources: {
+        observed: [],
+        unproven: [],
+      },
+      state: "not-applicable",
+    };
+  }
+
+  try {
+    const binding = readBindingFile(input.projectRoot);
+    if (binding === undefined) {
+      return missingBindingActivation(checkedAt, "workspace binding is missing; run saga init");
+    }
+
+    const harnessBinding = binding.harnesses?.codex;
+    if (harnessBinding?.sourceBindingId === undefined || harnessBinding.sourceBindingId === "") {
+      return missingBindingActivation(
+        checkedAt,
+        "Codex harness source binding is missing; run saga harness install codex",
+      );
+    }
+
+    const config = await Effect.runPromise(loadRuntimeConfig({ cwd: input.projectRoot }));
+    if (config.databaseUrl === undefined) {
+      return {
+        checkedAt: checkedAt.toISOString(),
+        detail: "DATABASE_URL is not set; activation verification cannot query raw_events",
+        nextStep:
+          "set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status codex again",
+        recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
+        sessionStartSources: {
+          observed: [],
+          unproven: [...SESSION_START_SOURCES],
+        },
+        state: "missing-database",
+      };
+    }
+
+    const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+    try {
+      await Effect.runPromise(assertMigrationsCurrent(service));
+      const events = await Effect.runPromise(
+        listCodexActivationRawEvents(service, {
+          sourceBindingId: harnessBinding.sourceBindingId,
+          workspaceId: binding.workspace.id,
+        }),
+      );
+      return classifyCodexActivationEvidence({ checkedAt, events });
+    } finally {
+      await Effect.runPromise(service.close());
+    }
+  } catch (error) {
+    return {
+      checkedAt: checkedAt.toISOString(),
+      detail: `could not query Codex activation evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      nextStep:
+        "fix database connectivity and migrations, then run saga harness status codex again",
+      recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
+      sessionStartSources: {
+        observed: [],
+        unproven: [...SESSION_START_SOURCES],
+      },
+      state: "unavailable",
+    };
+  }
+}
+
+function missingBindingActivation(checkedAt: Date, detail: string): HarnessActivationStatus {
+  return {
+    checkedAt: checkedAt.toISOString(),
+    detail,
+    nextStep: "run saga init and saga harness install codex before checking activation",
+    recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
+    sessionStartSources: {
+      observed: [],
+      unproven: [...SESSION_START_SOURCES],
+    },
+    state: "missing-binding",
+  };
+}
+
+export function classifyCodexActivationEvidence(input: {
+  checkedAt?: Date;
+  events: readonly RawEvent[];
+  recentWindowMs?: number;
+}): HarnessActivationStatus {
+  const checkedAt = input.checkedAt ?? new Date();
+  const recentWindowMs = input.recentWindowMs ?? ACTIVATION_RECENT_WINDOW_MS;
+  const recentWithinHours = Math.round(recentWindowMs / (60 * 60 * 1000));
+  const ordered = [...input.events].sort(
+    (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
+  );
+  const realHookEvents = ordered.filter(isRealCodexActivationEvent);
+  const latestRealHookEvent = realHookEvents[0];
+  const recentCutoff = checkedAt.getTime() - recentWindowMs;
+  const recentRealHookEvent = realHookEvents.find(
+    (event) => event.occurredAt.getTime() >= recentCutoff,
+  );
+  const observedSources = sessionStartSourcesFor(realHookEvents);
+  const unprovenSources = SESSION_START_SOURCES.filter(
+    (source) => !observedSources.includes(source),
+  );
+
+  if (recentRealHookEvent !== undefined) {
+    return {
+      checkedAt: checkedAt.toISOString(),
+      detail: `recent Codex hook raw_event found: ${eventSummary(
+        recentRealHookEvent,
+      )}; ${sessionStartSourceDetail(observedSources, unprovenSources)}`,
+      lastEvent: rawEventPointer(recentRealHookEvent),
+      recentWithinHours,
+      sessionStartSources: {
+        observed: observedSources,
+        unproven: unprovenSources,
+      },
+      state: "active",
+    };
+  }
+
+  if (latestRealHookEvent !== undefined) {
+    return {
+      checkedAt: checkedAt.toISOString(),
+      detail: `latest real Codex hook raw_event is stale: ${eventSummary(
+        latestRealHookEvent,
+      )}; no real Codex SessionStart/UserPromptSubmit raw_event was observed in the last ${String(
+        recentWithinHours,
+      )}h`,
+      lastEvent: rawEventPointer(latestRealHookEvent),
+      nextStep:
+        "restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again",
+      recentWithinHours,
+      sessionStartSources: {
+        observed: observedSources,
+        unproven: unprovenSources,
+      },
+      state: "stale",
+    };
+  }
+
+  if (ordered.length > 0) {
+    return {
+      checkedAt: checkedAt.toISOString(),
+      detail:
+        "matching Codex raw_events exist, but they are manual/synthetic or lack hook provenance; real Codex hook activation is not proven",
+      lastEvent: rawEventPointer(ordered[0]!),
+      nextStep:
+        "use an interactive Codex session in this workspace, approve hooks if prompted, submit a prompt, then run saga harness status codex again",
+      recentWithinHours,
+      sessionStartSources: {
+        observed: [],
+        unproven: [...SESSION_START_SOURCES],
+      },
+      state: "manual-only",
+    };
+  }
+
+  return {
+    checkedAt: checkedAt.toISOString(),
+    detail: `no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last ${String(
+      recentWithinHours,
+    )}h`,
+    nextStep:
+      "approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again",
+    recentWithinHours,
+    sessionStartSources: {
+      observed: [],
+      unproven: [...SESSION_START_SOURCES],
+    },
+    state: "no-evidence",
+  };
+}
+
+function applyActivationStatus(
+  status: HarnessStatus,
+  activation: HarnessActivationStatus,
+): HarnessStatus {
+  if (status.target !== "codex") return { ...status, activation };
+  if (status.state === "pending-trust" && activation.state === "active") {
+    return {
+      ...status,
+      activation,
+      hookTrust: "trusted by evidence",
+      nextStep: undefined,
+      state: "configured",
+      stateDetail: `binding and hooks are installed; ${activation.detail}`,
+    };
+  }
+  if (status.state === "pending-trust" && activation.state !== "not-applicable") {
+    return {
+      ...status,
+      activation,
+      nextStep: activation.nextStep ?? status.nextStep,
+      stateDetail: `binding and hooks are installed, but ${activation.detail}`,
+    };
+  }
+  return { ...status, activation };
+}
+
+function isRealCodexActivationEvent(event: RawEvent): boolean {
+  if (event.sourceType !== "codex") return false;
+  if (event.eventType !== "codex.SessionStart" && event.eventType !== "codex.UserPromptSubmit") {
+    return false;
+  }
+  if (hasManualSyntheticMarker(event.payload) || hasManualSyntheticMarker(event.provenance)) {
+    return false;
+  }
+
+  const hookEventName =
+    stringValue(event.provenance.hookEventName) ?? stringValue(event.payload.hook_event_name);
+  return event.eventType === `codex.${hookEventName}`;
+}
+
+function hasManualSyntheticMarker(value: Record<string, unknown>): boolean {
+  const markerKeys = ["manual", "synthetic", "isManual", "isSynthetic"];
+  if (markerKeys.some((key) => value[key] === true)) return true;
+  const markerValues = ["manual", "synthetic"];
+  return ["origin", "source", "mode", "captureMode"].some((key) => {
+    const marker = stringValue(value[key]);
+    return marker !== undefined && markerValues.includes(marker.toLowerCase());
+  });
+}
+
+function sessionStartSourcesFor(events: readonly RawEvent[]): readonly string[] {
+  const observed = new Set<string>();
+  for (const event of events) {
+    if (event.eventType !== "codex.SessionStart") continue;
+    const source =
+      stringValue(event.payload.source) ??
+      stringValue(event.payload.session_start_source) ??
+      stringValue(event.provenance.source) ??
+      stringValue(event.provenance.sessionStartSource);
+    if (
+      source !== undefined &&
+      SESSION_START_SOURCES.includes(source as (typeof SESSION_START_SOURCES)[number])
+    ) {
+      observed.add(source);
+    }
+  }
+  return SESSION_START_SOURCES.filter((source) => observed.has(source));
+}
+
+function sessionStartSourceDetail(
+  observedSources: readonly string[],
+  unprovenSources: readonly string[],
+): string {
+  if (observedSources.length === 0) {
+    return "SessionStart lifecycle source evidence is not yet observed";
+  }
+  if (unprovenSources.length === 0) {
+    return `SessionStart sources observed: ${observedSources.join(", ")}`;
+  }
+  return `SessionStart sources observed: ${observedSources.join(", ")}; unproven: ${unprovenSources.join(", ")}`;
+}
+
+function eventSummary(event: RawEvent): string {
+  return `${event.eventType} at ${event.occurredAt.toISOString()}`;
+}
+
+function rawEventPointer(event: RawEvent): NonNullable<HarnessActivationStatus["lastEvent"]> {
+  return {
+    eventType: event.eventType,
+    occurredAt: event.occurredAt.toISOString(),
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
 function staleHarnessBindingReasons(input: {
   adapter: HarnessAdapter;
   expectedHookCommand: string;
@@ -506,6 +878,10 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
       {
         label: "session start",
         value: `${status.sessionStartCoverage}; ${status.sessionStartDetail}`,
+      },
+      {
+        label: "activation",
+        value: `${status.activation.state}; ${status.activation.detail}`,
       },
       { label: "hook trust", value: status.hookTrust },
       ...(status.nextStep === undefined ? [] : [{ label: "next step", value: status.nextStep }]),

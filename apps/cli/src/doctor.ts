@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
-import { inspectHarnesses, type HarnessIntegrationState } from "./harness.js";
+import {
+  inspectHarnessesWithActivation,
+  type HarnessActivationState,
+  type HarnessActivationVerifier,
+  type HarnessIntegrationState,
+} from "./harness.js";
 import { bindingPathFor, findProjectRoot, readBindingFile } from "./init.js";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
@@ -30,7 +35,12 @@ export async function runDoctor(_args: readonly string[], options: RenderOptions
   );
 }
 
-export async function doctorProject(input: { cwd?: string } = {}): Promise<DoctorCheck[]> {
+export async function doctorProject(
+  input: {
+    cwd?: string;
+    verifyHarnessActivation?: HarnessActivationVerifier;
+  } = {},
+): Promise<DoctorCheck[]> {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const checks: DoctorCheck[] = [
     checkNodeVersion(projectRoot),
@@ -45,7 +55,7 @@ export async function doctorProject(input: { cwd?: string } = {}): Promise<Docto
     label: "service",
     status: serviceDoctorStatus(service),
   });
-  checks.push(...checkHarnesses(projectRoot));
+  checks.push(...(await checkHarnesses(projectRoot, input.verifyHarnessActivation)));
 
   return checks;
 }
@@ -275,15 +285,23 @@ async function inspectService(): Promise<{
   }
 }
 
-function checkHarnesses(projectRoot: string): DoctorCheck[] {
+async function checkHarnesses(
+  projectRoot: string,
+  verifyActivation?: HarnessActivationVerifier,
+): Promise<DoctorCheck[]> {
   try {
-    return inspectHarnesses({ cwd: projectRoot }).map((harness) => ({
+    const statuses = await inspectHarnessesWithActivation(
+      verifyActivation === undefined
+        ? { cwd: projectRoot }
+        : { cwd: projectRoot, verifyActivation },
+    );
+    return statuses.map((harness) => ({
       detail:
         harness.nextStep === undefined
-          ? `${harness.state}; ${harness.stateDetail}`
-          : `${harness.state}; ${harness.stateDetail}; next step: ${harness.nextStep}`,
+          ? `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}`
+          : `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}; next step: ${harness.nextStep}`,
       label: `harness:${harness.target}`,
-      status: harnessDoctorStatus(harness.state),
+      status: harnessDoctorStatus(harness.state, harness.activation.state),
     }));
   } catch (error) {
     return [
@@ -305,9 +323,13 @@ export function serviceDoctorStatus(service: {
   return service.process === "running" && service.health.startsWith("ok ") ? "ok" : "warn";
 }
 
-function harnessDoctorStatus(state: HarnessIntegrationState): DoctorStatus {
+function harnessDoctorStatus(
+  state: HarnessIntegrationState,
+  activation: HarnessActivationState,
+): DoctorStatus {
   if (state === "configured") return "ok";
   if (state === "divergent" || state === "invalid") return "fail";
+  if (activation === "active") return "ok";
   return "warn";
 }
 

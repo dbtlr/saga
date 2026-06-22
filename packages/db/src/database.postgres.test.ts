@@ -12,7 +12,7 @@ import {
   listCurrentClaims,
 } from "./claim.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { insertRawEvent, listRecentRawEvents } from "./raw-event.js";
+import { insertRawEvent, listCodexActivationRawEvents, listRecentRawEvents } from "./raw-event.js";
 import {
   listActiveContextIndexEntries,
   listContextIndexEntries,
@@ -660,6 +660,86 @@ describePostgres("postgres integration", () => {
       }),
     );
     expect(recent[0]?.id).toBe(event.id);
+  });
+
+  test("lists Codex activation raw events for a workspace source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const first = await createWorkspaceWithCodexSource("activation-first");
+    const second = await createWorkspaceWithCodexSource("activation-second");
+
+    const sessionStart = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.SessionStart",
+        externalEventId: `codex:activation:${first.workspace.id}:start`,
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: { hook_event_name: "SessionStart", source: "startup" },
+        provenance: { hookEventName: "SessionStart" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    const prompt = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:activation:${first.workspace.id}:prompt`,
+        occurredAt: "2026-06-19T20:01:00.000Z",
+        payload: { hook_event_name: "UserPromptSubmit" },
+        provenance: { hookEventName: "UserPromptSubmit" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.Stop",
+        externalEventId: `codex:activation:${first.workspace.id}:stop`,
+        occurredAt: "2026-06-19T20:02:00.000Z",
+        payload: { hook_event_name: "Stop" },
+        provenance: { hookEventName: "Stop" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "codex",
+        eventType: "codex.UserPromptSubmit",
+        externalEventId: `codex:activation:${second.workspace.id}:prompt`,
+        occurredAt: "2026-06-19T20:03:00.000Z",
+        payload: { hook_event_name: "UserPromptSubmit" },
+        provenance: { hookEventName: "UserPromptSubmit" },
+        sessionId: "session-id",
+        sourceBindingId: second.sourceBinding.id,
+        sourceId: "codex:local",
+        sourceType: "codex",
+        trustLevel: "raw",
+        workspaceId: second.workspace.id,
+      }),
+    );
+
+    const activationEvents = await Effect.runPromise(
+      listCodexActivationRawEvents(service, {
+        sourceBindingId: first.sourceBinding.id,
+        workspaceId: first.workspace.id,
+      }),
+    );
+
+    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
   });
 
   test("rejects raw events that reference another workspace source binding", async () => {
