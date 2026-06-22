@@ -804,6 +804,7 @@ async function resolveRawSessionSourceBinding(
       set: {
         config,
         displayName,
+        enabled: true,
         updatedAt: input.now,
       },
       target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],

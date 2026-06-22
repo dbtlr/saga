@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { and, eq } from "drizzle-orm";
 import {
   activityIntervals,
@@ -196,6 +197,140 @@ describePostgres("ambient hook ingest postgres integration", () => {
     expect(segmentRows).toHaveLength(1);
     expect(segmentRows[0]?.searchText).toBe("Ambient Codex import sentinel.");
     expect(rawEventRows).toHaveLength(1);
+  });
+
+  test("reports raw-session import failure as captured after raw event insertion", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-stale-source-"));
+    await initProject({ cwd: projectRoot, handle: "Ambient Stale Source" });
+    await installHarness({ cwd: projectRoot, target: "codex" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+    const sourceBindingId = binding.harnesses?.codex?.sourceBindingId;
+    if (sourceBindingId === undefined) throw new Error("codex source binding was not initialized");
+
+    await service.db
+      .update(sourceBindings)
+      .set({
+        sourceUri: `codex://host/${binding.host.id}-stale`,
+      })
+      .where(eq(sourceBindings.id, sourceBindingId));
+
+    const transcriptPath = join(projectRoot, "codex-stale-source.jsonl");
+    writeFileSync(
+      transcriptPath,
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T21:15:00.000Z",
+          type: "session_meta",
+          payload: {
+            cwd: projectRoot,
+            id: "codex-stale-source-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T21:15:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Keep raw event even if import fails." }],
+          },
+        },
+      ]),
+    );
+
+    const result = await captureHook("codex", {
+      cwd: projectRoot,
+      hook_event_name: "UserPromptSubmit",
+      session_id: "codex-stale-source-session",
+      transcript_path: transcriptPath,
+    });
+
+    expect(result).toMatchObject({
+      mode: "captured",
+      rawSessionImport: "skipped",
+      source: "codex",
+    });
+    expect(result.eventId).toEqual(expect.any(String));
+    expect(result.rawSessionRecordId).toBeUndefined();
+    expect(result.error).toContain("source binding does not match the requested harness and host");
+    expect(result.error?.length).toBeLessThanOrEqual(500);
+
+    const rawEventRows = await service.db
+      .select()
+      .from(rawEvents)
+      .where(eq(rawEvents.workspaceId, binding.workspace.id));
+    const rawSessionRows = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.workspaceId, binding.workspace.id));
+    expect(rawEventRows.map((event) => event.id)).toEqual([result.eventId]);
+    expect(rawSessionRows).toHaveLength(0);
+  });
+
+  test("resolves relative transcript paths against the hook cwd", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-relative-"));
+    await initProject({ cwd: projectRoot, handle: "Ambient Relative Path" });
+    await installHarness({ cwd: projectRoot, target: "codex" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+    const transcriptPath = join(projectRoot, "codex-relative.jsonl");
+    writeFileSync(
+      transcriptPath,
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T21:17:00.000Z",
+          type: "session_meta",
+          payload: {
+            cwd: projectRoot,
+            id: "codex-relative-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T21:17:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Resolve transcript relative to hook cwd." }],
+          },
+        },
+      ]),
+    );
+
+    expect(process.cwd()).not.toBe(projectRoot);
+    const result = await captureHook("codex", {
+      cwd: projectRoot,
+      hook_event_name: "UserPromptSubmit",
+      session_id: "codex-relative-session",
+      transcript_path: "codex-relative.jsonl",
+    });
+
+    expect(result).toMatchObject({
+      mode: "captured",
+      rawSessionImport: "inserted",
+      source: "codex",
+    });
+
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecordId ?? ""))
+      .limit(1);
+    expect(rawRecord?.sourceLocator).toBe(pathToFileURL(transcriptPath).href);
+    expect(rawRecord?.provenance).toMatchObject({
+      transcriptPath,
+    });
+
+    const segmentRows = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.workspaceId, binding.workspace.id));
+    expect(segmentRows.map((segment) => segment.searchText)).toEqual([
+      "Resolve transcript relative to hook cwd.",
+    ]);
   });
 
   test("imports and settles Claude transcript snapshots through ambient Stop hooks", async () => {

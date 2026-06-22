@@ -609,6 +609,67 @@ describePostgres("raw session import", () => {
     expect(storedBinding?.enabled).toBe(false);
   });
 
+  test("implicit manual imports re-enable an existing disabled harness source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-manual-enabled-source");
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        config: {
+          hostId: "host-manual-enabled-source",
+        },
+        enabled: false,
+        sourceType: "codex",
+        sourceUri: "codex://host/host-manual-enabled-source",
+        workspaceId,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-manual-enabled-source",
+        },
+        locator: "/tmp/codex-manual-enabled-source.jsonl",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:10:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-manual-enabled-source-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:10:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Import and make manual source visible." }],
+            },
+          },
+        ]),
+        workspaceId,
+      }),
+    );
+
+    expect(result.sourceBinding.id).toBe(sourceBinding.id);
+    expect(result.sourceBinding.enabled).toBe(true);
+
+    const [storedBinding] = await service.db
+      .select()
+      .from(sourceBindings)
+      .where(eq(sourceBindings.id, sourceBinding.id))
+      .limit(1);
+    expect(storedBinding?.enabled).toBe(true);
+  });
+
   test("settles the active Activity Interval from ambient Stop lifecycle input", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-stop-interval");

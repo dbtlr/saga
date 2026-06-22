@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { extname, resolve } from "node:path";
+import { extname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { extractCandidateClaimsFromRawEvents } from "@saga/claims";
 import {
@@ -266,34 +266,46 @@ export async function captureHook(
               workspace: binding.workspace,
             });
       const row = await Effect.runPromise(insertRawEvent(service, event));
-      const rawSessionImportInput = buildAmbientRawSessionImportInput({
-        binding: bindingWithHost,
-        hookInput: input,
-        projectRoot,
-        rawEventId: row.id,
-        rawEventOccurredAt: row.occurredAt,
-        source,
-        sourceBindingId: sourceBinding.sourceBindingId,
-      });
-      const rawSessionImport =
-        rawSessionImportInput === undefined
-          ? undefined
-          : await Effect.runPromise(importRawSessionRecord(service, rawSessionImportInput));
-      return {
-        accepted: true,
-        eventId: row.id,
-        mode: "captured",
-        rawSessionImport: rawSessionImport === undefined ? "skipped" : rawSessionImport.operation,
-        rawSessionRecordId: rawSessionImport?.rawSessionRecord.id,
-        source,
-      };
+      try {
+        const rawSessionImportInput = buildAmbientRawSessionImportInput({
+          binding: bindingWithHost,
+          hookCwd: input.cwd,
+          hookInput: input,
+          projectRoot,
+          rawEventId: row.id,
+          rawEventOccurredAt: row.occurredAt,
+          source,
+          sourceBindingId: sourceBinding.sourceBindingId,
+        });
+        const rawSessionImport =
+          rawSessionImportInput === undefined
+            ? undefined
+            : await Effect.runPromise(importRawSessionRecord(service, rawSessionImportInput));
+        return {
+          accepted: true,
+          eventId: row.id,
+          mode: "captured",
+          rawSessionImport: rawSessionImport === undefined ? "skipped" : rawSessionImport.operation,
+          rawSessionRecordId: rawSessionImport?.rawSessionRecord.id,
+          source,
+        };
+      } catch (error) {
+        return {
+          accepted: true,
+          error: boundedErrorMessage(error),
+          eventId: row.id,
+          mode: "captured",
+          rawSessionImport: "skipped",
+          source,
+        };
+      }
     } finally {
       await Effect.runPromise(service.close());
     }
   } catch (error) {
     return {
       accepted: true,
-      error: error instanceof Error ? error.message : String(error),
+      error: boundedErrorMessage(error),
       mode: "skipped",
       source,
     };
@@ -302,6 +314,7 @@ export async function captureHook(
 
 function buildAmbientRawSessionImportInput(input: {
   binding: WorkspaceBindingFileWithHost;
+  hookCwd?: string | undefined;
   hookInput: HarnessHookInput;
   projectRoot: string;
   rawEventId: string;
@@ -314,9 +327,13 @@ function buildAmbientRawSessionImportInput(input: {
     input.hookInput.transcript_path.trim() !== ""
       ? input.hookInput.transcript_path
       : undefined;
-  if (transcriptPath === undefined || !existsSync(transcriptPath)) return undefined;
+  if (transcriptPath === undefined) return undefined;
+  const resolvedTranscriptPath = isAbsolute(transcriptPath)
+    ? transcriptPath
+    : resolve(input.hookCwd ?? input.projectRoot, transcriptPath);
+  if (!existsSync(resolvedTranscriptPath)) return undefined;
 
-  const rawContent = readFileSync(transcriptPath, "utf8");
+  const rawContent = readFileSync(resolvedTranscriptPath, "utf8");
   const hookEventName =
     typeof input.hookInput.hook_event_name === "string"
       ? input.hookInput.hook_event_name
@@ -333,7 +350,7 @@ function buildAmbientRawSessionImportInput(input: {
     },
     author,
     capturedAt: input.rawEventOccurredAt,
-    contentType: inferSessionContentType(transcriptPath, rawContent),
+    contentType: inferSessionContentType(resolvedTranscriptPath, rawContent),
     harness: input.source,
     harnessMetadata: {
       hookEventName,
@@ -346,7 +363,7 @@ function buildAmbientRawSessionImportInput(input: {
       label: input.binding.host.label,
       projectRoot: input.projectRoot,
     },
-    locator: pathToFileURL(resolve(transcriptPath)).href,
+    locator: pathToFileURL(resolvedTranscriptPath).href,
     metadata: {
       importMode: "ambient_hook",
       triggerRawEventId: input.rawEventId,
@@ -356,13 +373,18 @@ function buildAmbientRawSessionImportInput(input: {
       hookEventName,
       importedBy: `saga ingest ${input.source}-hook`,
       rawEventId: input.rawEventId,
-      transcriptPath,
+      transcriptPath: resolvedTranscriptPath,
     },
     rawContent,
     sourceBindingId: input.sourceBindingId,
     status: hookEventName === "Stop" ? "completed" : "active",
     workspaceId: input.binding.workspace.id,
   };
+}
+
+function boundedErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length <= 500 ? message : `${message.slice(0, 497)}...`;
 }
 
 function inferSessionContentType(path: string, rawContent: string): RawSessionContentType {
