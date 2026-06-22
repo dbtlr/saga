@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -161,6 +162,15 @@ describePostgres("session recall", () => {
     expect(typoMatch?.scores.lexical).toBe(0);
     expect(typoMatch?.scores.trigram).toBeGreaterThan(0.1);
     expect(typoMatch?.snippet).toContain("Authentication cache invalidation");
+
+    const highThresholdResult = await Effect.runPromise(
+      searchSessionRecall(service, {
+        minTrigramScore: 0.95,
+        query: "authentcation",
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(highThresholdResult.matchCount).toBe(0);
   });
 
   test("scopes recall to the workspace and only searches filtered segment text", async () => {
@@ -191,6 +201,60 @@ describePostgres("session recall", () => {
       }),
     );
     expect(filteredSecretResult.matchCount).toBe(0);
+  });
+
+  test("excludes disabled source bindings from search and context expansion", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const corpus = await seedRecallCorpus(service, "disabled-source");
+
+    await service.db
+      .update(sourceBindings)
+      .set({ enabled: false })
+      .where(eq(sourceBindings.id, corpus.primary.sourceBindingId));
+
+    const result = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "Authentication cache invalidation",
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(result.matchCount).toBe(0);
+
+    await expect(
+      Effect.runPromise(
+        expandRecallContext(service, {
+          segmentId: corpus.primary.segmentIds.authentication,
+          workspaceId: corpus.workspaceId,
+        }),
+      ),
+    ).rejects.toThrow("recall segment was not found in workspace");
+  });
+
+  test("excludes inactive raw session snapshots from search and context expansion", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const corpus = await seedRecallCorpus(service, "inactive-raw");
+
+    await service.db
+      .update(rawSessionRecords)
+      .set({ isActive: false })
+      .where(eq(rawSessionRecords.id, corpus.primary.rawSessionRecordId));
+
+    const result = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "Authentication cache invalidation",
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(result.matchCount).toBe(0);
+
+    await expect(
+      Effect.runPromise(
+        expandRecallContext(service, {
+          segmentId: corpus.primary.segmentIds.authentication,
+          workspaceId: corpus.workspaceId,
+        }),
+      ),
+    ).rejects.toThrow("recall segment was not found in workspace");
   });
 
   test("expands deterministic turn context around a matched segment within interval and raw record bounds", async () => {
@@ -262,6 +326,8 @@ interface SeededCorpus {
       secondInterval: string;
     };
     sessionId: string;
+    rawSessionRecordId: string;
+    sourceBindingId: string;
     turnIds: {
       authentication: string;
       filtered: string;
@@ -444,7 +510,9 @@ async function seedRecallCorpus(service: DatabaseService, suffix: string): Promi
         lexicalExact: primary.segmentIds.lexicalExact?.[0] ?? "",
         secondInterval: primary.segmentIds.secondInterval?.[0] ?? "",
       },
+      rawSessionRecordId: primary.rawSessionRecordId,
       sessionId: primary.sessionId,
+      sourceBindingId: primaryWorkspace.sourceBindingId,
       turnIds: {
         authentication: primary.turnIds.authentication ?? "",
         filtered: primary.turnIds.filtered ?? "",
@@ -541,6 +609,7 @@ async function insertSessionFixture(
   input: SessionFixtureInput,
 ): Promise<{
   segmentIds: Record<string, string[]>;
+  rawSessionRecordId: string;
   sessionId: string;
   turnIds: Record<string, string>;
 }> {
@@ -673,6 +742,7 @@ async function insertSessionFixture(
   }
 
   return {
+    rawSessionRecordId: rawRecord.id,
     segmentIds,
     sessionId: session.id,
     turnIds,

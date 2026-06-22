@@ -282,52 +282,51 @@ export function searchSessionRecall(
       const limit = normalizeLimit(input.limit);
       const minTrigramScore = normalizeTrigramScore(input.minTrigramScore);
       const rows = await service.sql<RecallSearchRow[]>`
-        with recall_query as (
+        with recall_settings as (
+          select
+            set_config('pg_trgm.similarity_threshold', ${minTrigramScore.toString()}, true),
+            set_config('pg_trgm.word_similarity_threshold', ${minTrigramScore.toString()}, true)
+        ),
+        recall_query as (
           select
             websearch_to_tsquery('english', ${query}) as ts_query,
-            ${query}::text as query_text
+            ${query}::text as query_text,
+            ${minTrigramScore}::double precision as min_trigram_score
+          from recall_settings
         ),
-        scored as (
+        candidate_segments as (
           select
-            ss.id as segment_id,
-            ss.workspace_id as segment_workspace_id,
-            ss.session_id as segment_session_id,
-            ss.activity_interval_id as segment_activity_interval_id,
-            ss.turn_id as segment_turn_id,
-            ss.raw_session_record_id as segment_raw_session_record_id,
-            ss.ordinal as segment_ordinal,
-            ss.segment_kind as segment_kind,
-            ss.search_text as segment_search_text,
-            ss.snippet as segment_snippet,
-            ss.token_start as segment_token_start,
-            ss.token_end as segment_token_end,
-            ss.char_start as segment_char_start,
-            ss.char_end as segment_char_end,
-            to_tsvector('english', ss.search_text) @@ recall_query.ts_query as lexical_match,
-            ts_rank_cd(to_tsvector('english', ss.search_text), recall_query.ts_query)::double precision as lexical_score,
-            greatest(
-              similarity(ss.search_text, recall_query.query_text),
-              word_similarity(recall_query.query_text, ss.search_text)
-            )::double precision as trigram_score,
-            case
-              when to_tsvector('english', ss.search_text) @@ recall_query.ts_query then
-                ts_headline(
-                  'english',
-                  ss.search_text,
-                  recall_query.ts_query,
-                  'MaxWords=24, MinWords=8, ShortWord=3, HighlightAll=false'
-                )
-              else coalesce(
-                ss.snippet,
-                substring(
-                  ss.search_text
-                  from greatest(1, strpos(lower(ss.search_text), lower(recall_query.query_text)) - 80)
-                  for 280
-                )
-              )
-            end as match_snippet
+            ss.id,
+            ss.workspace_id,
+            ss.session_id,
+            ss.activity_interval_id,
+            ss.turn_id,
+            ss.raw_session_record_id,
+            ss.ordinal,
+            ss.segment_kind,
+            ss.search_text,
+            ss.snippet,
+            ss.token_start,
+            ss.token_end,
+            ss.char_start,
+            ss.char_end,
+            recall_query.ts_query,
+            recall_query.query_text,
+            recall_query.min_trigram_score,
+            to_tsvector('english', ss.search_text) @@ recall_query.ts_query as lexical_match
           from session_segments ss
           cross join recall_query
+          inner join sessions s
+            on s.id = ss.session_id
+            and s.workspace_id = ss.workspace_id
+          inner join source_bindings sb
+            on sb.id = s.source_binding_id
+            and sb.workspace_id = s.workspace_id
+            and sb.enabled = true
+          inner join raw_session_records r
+            on r.id = ss.raw_session_record_id
+            and r.workspace_id = ss.workspace_id
+            and r.is_active = true
           where ss.workspace_id = ${input.workspaceId}
             and (${input.sessionId ?? null}::uuid is null or ss.session_id = ${input.sessionId ?? null}::uuid)
             and (${input.activityIntervalId ?? null}::uuid is null or ss.activity_interval_id = ${input.activityIntervalId ?? null}::uuid)
@@ -335,8 +334,49 @@ export function searchSessionRecall(
             and (
               to_tsvector('english', ss.search_text) @@ recall_query.ts_query
               or ss.search_text % recall_query.query_text
-              or word_similarity(recall_query.query_text, ss.search_text) >= ${minTrigramScore}
+              or recall_query.query_text <% ss.search_text
             )
+        ),
+        scored as (
+          select
+            candidate_segments.id as segment_id,
+            candidate_segments.workspace_id as segment_workspace_id,
+            candidate_segments.session_id as segment_session_id,
+            candidate_segments.activity_interval_id as segment_activity_interval_id,
+            candidate_segments.turn_id as segment_turn_id,
+            candidate_segments.raw_session_record_id as segment_raw_session_record_id,
+            candidate_segments.ordinal as segment_ordinal,
+            candidate_segments.segment_kind as segment_kind,
+            candidate_segments.search_text as segment_search_text,
+            candidate_segments.snippet as segment_snippet,
+            candidate_segments.token_start as segment_token_start,
+            candidate_segments.token_end as segment_token_end,
+            candidate_segments.char_start as segment_char_start,
+            candidate_segments.char_end as segment_char_end,
+            candidate_segments.lexical_match,
+            ts_rank_cd(to_tsvector('english', candidate_segments.search_text), candidate_segments.ts_query)::double precision as lexical_score,
+            greatest(
+              similarity(candidate_segments.search_text, candidate_segments.query_text),
+              word_similarity(candidate_segments.query_text, candidate_segments.search_text)
+            )::double precision as trigram_score,
+            case
+              when candidate_segments.lexical_match then
+                ts_headline(
+                  'english',
+                  candidate_segments.search_text,
+                  candidate_segments.ts_query,
+                  'MaxWords=24, MinWords=8, ShortWord=3, HighlightAll=false'
+                )
+              else coalesce(
+                candidate_segments.snippet,
+                substring(
+                  candidate_segments.search_text
+                  from greatest(1, strpos(lower(candidate_segments.search_text), lower(candidate_segments.query_text)) - 80)
+                  for 280
+                )
+              )
+            end as match_snippet
+          from candidate_segments
         )
         select
           s.id as session_id,
@@ -413,15 +453,19 @@ export function searchSessionRecall(
         inner join source_bindings sb
           on sb.id = s.source_binding_id
           and sb.workspace_id = s.workspace_id
+          and sb.enabled = true
         inner join activity_intervals ai
           on ai.id = scored.segment_activity_interval_id
           and ai.workspace_id = scored.segment_workspace_id
         inner join raw_session_records r
           on r.id = scored.segment_raw_session_record_id
           and r.workspace_id = scored.segment_workspace_id
+          and r.is_active = true
         inner join session_turns st
           on st.id = scored.segment_turn_id
           and st.workspace_id = scored.segment_workspace_id
+        where scored.lexical_match
+          or scored.trigram_score >= ${minTrigramScore}
         order by
           (scored.lexical_score + (scored.trigram_score * 0.35)) desc,
           scored.lexical_score desc,
@@ -476,6 +520,17 @@ export function expandRecallContext(
           inner join session_turns st
             on st.id = ss.turn_id
             and st.workspace_id = ss.workspace_id
+          inner join sessions s
+            on s.id = ss.session_id
+            and s.workspace_id = ss.workspace_id
+          inner join source_bindings sb
+            on sb.id = s.source_binding_id
+            and sb.workspace_id = s.workspace_id
+            and sb.enabled = true
+          inner join raw_session_records r
+            on r.id = ss.raw_session_record_id
+            and r.workspace_id = ss.workspace_id
+            and r.is_active = true
           where ss.workspace_id = ${input.workspaceId}
             and ss.id = ${input.segmentId}
           limit 1
@@ -589,12 +644,14 @@ export function expandRecallContext(
         inner join source_bindings sb
           on sb.id = s.source_binding_id
           and sb.workspace_id = s.workspace_id
+          and sb.enabled = true
         inner join activity_intervals ai
           on ai.id = anchor.segment_activity_interval_id
           and ai.workspace_id = anchor.segment_workspace_id
         inner join raw_session_records r
           on r.id = anchor.segment_raw_session_record_id
           and r.workspace_id = anchor.segment_workspace_id
+          and r.is_active = true
         inner join session_turns anchor_turn
           on anchor_turn.id = anchor.segment_turn_id
           and anchor_turn.workspace_id = anchor.segment_workspace_id
