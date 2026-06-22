@@ -365,6 +365,40 @@ function responseItemTurn(
     };
   }
 
+  if (payloadType === "tool_search_call") {
+    const callId = readString(payload.call_id) ?? readString(payload.id);
+    const name = "tool_search";
+    if (callId !== undefined) {
+      state.callIdToToolName.set(callId, name);
+      if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
+    }
+    const contentParts = [
+      compactRecord({
+        arguments: normalizeToolArguments(payload.arguments),
+        callId,
+        execution: payload.execution,
+        name,
+        status: readString(payload.status),
+        tools: payload.tools,
+        type: "tool_call",
+      }),
+    ];
+    return {
+      actorKind: "tool",
+      actorLabel: name,
+      codexTurnId,
+      contentParts,
+      harnessTurnId:
+        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, "tool", codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+      model: state.model,
+      rawSpan: rawSpan(record),
+      role: "tool",
+      searchText: contentPartsToSearchText(contentParts),
+      startedAt: timestamp,
+    };
+  }
+
   if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
     const callId = readString(payload.call_id);
     const name = callId === undefined ? undefined : state.callIdToToolName.get(callId);
@@ -375,6 +409,37 @@ function responseItemTurn(
         callId,
         name,
         output: normalizeToolOutput(payload.output),
+        type: "tool_result",
+      }),
+    ];
+    return {
+      actorKind: "tool",
+      actorLabel: name,
+      codexTurnId: turnId,
+      contentParts,
+      harnessTurnId: stableHarnessTurnId(record, "tool", callId ?? turnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+      rawSpan: rawSpan(record),
+      role: "tool",
+      searchText: contentPartsToSearchText(contentParts),
+      startedAt: timestamp,
+    };
+  }
+
+  if (payloadType === "tool_search_output") {
+    const callId = readString(payload.call_id) ?? readString(payload.id);
+    const name =
+      callId === undefined ? "tool_search" : (state.callIdToToolName.get(callId) ?? "tool_search");
+    const turnId =
+      callId === undefined ? codexTurnId : (state.callIdToTurnId.get(callId) ?? codexTurnId);
+    const contentParts = [
+      compactRecord({
+        callId,
+        execution: payload.execution,
+        name,
+        output: normalizeToolOutput(payload.output),
+        status: readString(payload.status),
+        tools: payload.tools,
         type: "tool_result",
       }),
     ];
@@ -597,12 +662,23 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
         return [
           readString(part.name),
           stringifyForSearch(part.arguments ?? part.input ?? part.action),
+          stringifyForSearch(part.execution),
+          stringifyForSearch(part.status),
+          stringifyForSearch(part.tools),
         ]
           .filter(Boolean)
           .join(" ");
       }
       if (type === "tool_result") {
-        return [readString(part.name), stringifyForSearch(part.output)].filter(Boolean).join(" ");
+        return [
+          readString(part.name),
+          stringifyForSearch(part.output),
+          stringifyForSearch(part.execution),
+          stringifyForSearch(part.status),
+          stringifyForSearch(part.tools),
+        ]
+          .filter(Boolean)
+          .join(" ");
       }
       if (typeof part.text === "string") return part.text;
       if (typeof part.output === "string") return part.output;
@@ -715,6 +791,12 @@ function stringifyForSearch(value: unknown): string {
 }
 
 function normalizeToolOutput(value: unknown): unknown {
+  if (typeof value === "string") return parseJsonValue(value) ?? value;
+  if (value === undefined) return undefined;
+  return value;
+}
+
+function normalizeToolArguments(value: unknown): unknown {
   if (typeof value === "string") return parseJsonValue(value) ?? value;
   if (value === undefined) return undefined;
   return value;

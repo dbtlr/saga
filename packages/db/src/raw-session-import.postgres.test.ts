@@ -350,6 +350,55 @@ describePostgres("raw session import", () => {
           metadata: { turn_id: "turn-1" },
         },
       },
+      {
+        timestamp: "2026-06-22T14:00:10.000Z",
+        type: "response_item",
+        payload: {
+          type: "tool_search_call",
+          id: "ts-call-1",
+          status: "completed",
+          arguments: JSON.stringify({
+            query: "tool search normalization fixture",
+          }),
+          execution: {
+            duration_ms: 37,
+            status: "completed",
+          },
+          tools: [
+            {
+              description: "Searches deferred tool metadata",
+              name: "tool_search_tool",
+            },
+          ],
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:11.000Z",
+        type: "response_item",
+        payload: {
+          type: "tool_search_output",
+          call_id: "ts-call-1",
+          status: "completed",
+          execution: {
+            status: "completed",
+          },
+          tools: [
+            {
+              name: "functions.exec_command",
+              recipient_name: "functions.exec_command",
+            },
+          ],
+          output: {
+            matches: [
+              {
+                name: "functions.exec_command",
+                text: "Runs a command in a PTY",
+              },
+            ],
+          },
+        },
+      },
     ]);
 
     const normalized = normalizeCodexTranscript({
@@ -359,6 +408,10 @@ describePostgres("raw session import", () => {
     expect(normalized?.turns[5]?.searchText).toContain("Structured array output needle");
     expect(normalized?.turns[5]?.searchText).toContain("codex-output.png");
     expect(normalized?.turns[6]?.searchText).toContain("SGA-121 Codex web_search_call fixture");
+    expect(normalized?.turns[7]?.searchText).toContain("tool search normalization fixture");
+    expect(normalized?.turns[7]?.searchText).toContain("tool_search_tool");
+    expect(normalized?.turns[8]?.searchText).toContain("functions.exec_command");
+    expect(normalized?.turns[8]?.searchText).toContain("Runs a command in a PTY");
 
     const result = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -383,7 +436,7 @@ describePostgres("raw session import", () => {
     expect(result.operation).toBe("inserted");
     expect(result.session.harnessSessionId).toBe("codex-transcript-session-1");
     expect(result.session).toMatchObject({
-      lastActivityAt: new Date("2026-06-22T14:00:09.000Z"),
+      lastActivityAt: new Date("2026-06-22T14:00:11.000Z"),
       model: "gpt-5-codex",
       startedAt: new Date("2026-06-22T14:00:03.000Z"),
     });
@@ -392,7 +445,7 @@ describePostgres("raw session import", () => {
       cwd: "/work/saga",
       detectedHarnessSessionId: "codex-transcript-session-1",
       normalizer: "codex-transcript-v1",
-      turnCount: 7,
+      turnCount: 9,
     });
     expect(result.activityInterval.startedAt).toEqual(new Date("2026-06-22T14:00:03.000Z"));
     expect(result.activityInterval.metadata).toMatchObject({
@@ -427,7 +480,7 @@ describePostgres("raw session import", () => {
           thread_source: "subagent",
         },
       ],
-      turnCount: 7,
+      turnCount: 9,
     });
 
     const [rawRecord] = await service.db
@@ -454,7 +507,7 @@ describePostgres("raw session import", () => {
             thread_source: "subagent",
           },
         ],
-        turnCount: 7,
+        turnCount: 9,
       },
     });
 
@@ -466,6 +519,8 @@ describePostgres("raw session import", () => {
     expect(turns.map((turn) => turn.role)).toEqual([
       "user",
       "assistant",
+      "tool",
+      "tool",
       "tool",
       "tool",
       "tool",
@@ -541,6 +596,60 @@ describePostgres("raw session import", () => {
     ]);
     expect(turns[6]?.metadata).toMatchObject({
       sourcePayloadType: "web_search_call",
+      sourceRecordType: "response_item",
+    });
+    expect(turns[7]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "tool_search",
+        callId: "ts-call-1",
+        arguments: {
+          query: "tool search normalization fixture",
+        },
+        execution: {
+          duration_ms: 37,
+          status: "completed",
+        },
+        status: "completed",
+        tools: [
+          {
+            description: "Searches deferred tool metadata",
+            name: "tool_search_tool",
+          },
+        ],
+      },
+    ]);
+    expect(turns[7]?.metadata).toMatchObject({
+      sourcePayloadType: "tool_search_call",
+      sourceRecordType: "response_item",
+    });
+    expect(turns[8]?.contentParts).toEqual([
+      {
+        type: "tool_result",
+        name: "tool_search",
+        callId: "ts-call-1",
+        output: {
+          matches: [
+            {
+              name: "functions.exec_command",
+              text: "Runs a command in a PTY",
+            },
+          ],
+        },
+        execution: {
+          status: "completed",
+        },
+        status: "completed",
+        tools: [
+          {
+            name: "functions.exec_command",
+            recipient_name: "functions.exec_command",
+          },
+        ],
+      },
+    ]);
+    expect(turns[8]?.metadata).toMatchObject({
+      sourcePayloadType: "tool_search_output",
       sourceRecordType: "response_item",
     });
 
