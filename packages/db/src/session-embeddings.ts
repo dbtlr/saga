@@ -339,7 +339,8 @@ function resolveEmbeddingGenerator(
     return {
       generator: input.generator,
       lexicalFallback: {
-        detail: "Lexical recall remains available as a fallback if embedding generation fails later.",
+        detail:
+          "Lexical recall remains available as a fallback if embedding generation fails later.",
         state: "standby",
       },
       provider: input.generator.provider,
@@ -404,7 +405,9 @@ function embeddingMetadata(input: {
 
 function parseOpenAiEmbeddingResponse(value: unknown): number[][] {
   if (value === null || typeof value !== "object") {
-    throw new SessionEmbeddingIndexError({ message: "OpenAI embeddings response was not an object" });
+    throw new SessionEmbeddingIndexError({
+      message: "OpenAI embeddings response was not an object",
+    });
   }
   const data = (value as { data?: unknown }).data;
   if (!Array.isArray(data)) {
@@ -441,7 +444,9 @@ function validateEmbedding(
 function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
-    throw new SessionEmbeddingIndexError({ message: "embedding index limit must be a positive integer" });
+    throw new SessionEmbeddingIndexError({
+      message: "embedding index limit must be a positive integer",
+    });
   }
   return Math.min(limit, MAX_LIMIT);
 }

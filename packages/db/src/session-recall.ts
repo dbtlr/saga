@@ -1259,7 +1259,9 @@ function normalizeVectorCandidateLimit(limit: number | undefined, searchLimit: n
 
 function validateRecallEmbeddingVector(vector: readonly number[], dimensions: number): void {
   if (!Number.isInteger(dimensions) || dimensions < 1) {
-    throw new RecallSearchError({ message: "query embedding dimensions must be a positive integer" });
+    throw new RecallSearchError({
+      message: "query embedding dimensions must be a positive integer",
+    });
   }
   if (vector.length !== dimensions) {
     throw new RecallSearchError({

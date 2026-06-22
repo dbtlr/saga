@@ -89,10 +89,7 @@ describePostgres("session segment embeddings", () => {
       staleCount: 0,
       status: "completed",
     });
-    expect(embeddedTexts).toEqual([
-      "Alpha vector recall target",
-      "Beta lexical fallback target",
-    ]);
+    expect(embeddedTexts).toEqual(["Alpha vector recall target", "Beta lexical fallback target"]);
     await expectEmbeddingRows(service, {
       count: 2,
       provider: generator.provider.id,
@@ -245,11 +242,7 @@ async function seedEmbeddingFixture(
   const active = await insertSessionWithSegments(service, bundle, {
     activeRawRecord: true,
     harnessSessionId: `${suffix}-active`,
-    searchTexts: [
-      "Alpha vector recall target",
-      "Beta lexical fallback target",
-      "   ",
-    ],
+    searchTexts: ["Alpha vector recall target", "Beta lexical fallback target", "   "],
   });
 
   const disabledBundle = await createBundle(service, `${suffix}-disabled`, {
