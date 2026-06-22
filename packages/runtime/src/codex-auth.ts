@@ -96,6 +96,7 @@ export function codexAuthFileCandidates(
 export function resolveCodexAuth(options: CodexAuthResolutionOptions = {}): CodexAuthStatus {
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
   const checkedFiles = codexAuthFileCandidates(options);
+  let fallbackUnavailable: CodexAuthUnavailable | undefined;
 
   for (const candidate of checkedFiles) {
     let rawAuth: string;
@@ -142,25 +143,34 @@ export function resolveCodexAuth(options: CodexAuthResolutionOptions = {}): Code
     }
 
     if (hasLoginIndicators(parsed.value)) {
-      return unavailable({
-        checkedFiles,
-        detail: `Codex login/account tokens found in ${candidate.displayPath}, but no cached OPENAI_API_KEY is present`,
-        guidance:
-          "Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.",
-        mode: "login",
-        reason: "login-without-api-key",
-      });
+      fallbackUnavailable = mostRelevantUnavailable(
+        fallbackUnavailable,
+        unavailable({
+          checkedFiles,
+          detail: `Codex login/account tokens found in ${candidate.displayPath}, but no cached OPENAI_API_KEY is present`,
+          guidance:
+            "Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.",
+          mode: "login",
+          reason: "login-without-api-key",
+        }),
+      );
+      continue;
     }
 
-    return unavailable({
-      checkedFiles,
-      detail: `${candidate.displayPath} does not contain a cached OPENAI_API_KEY`,
-      guidance:
-        "Embedding generation is skipped until Codex auth includes OPENAI_API_KEY. Lexical recall remains available.",
-      mode: "unknown",
-      reason: "openai-api-key-missing",
-    });
+    fallbackUnavailable = mostRelevantUnavailable(
+      fallbackUnavailable,
+      unavailable({
+        checkedFiles,
+        detail: `${candidate.displayPath} does not contain a cached OPENAI_API_KEY`,
+        guidance:
+          "Embedding generation is skipped until Codex auth includes OPENAI_API_KEY. Lexical recall remains available.",
+        mode: "unknown",
+        reason: "openai-api-key-missing",
+      }),
+    );
   }
+
+  if (fallbackUnavailable !== undefined) return fallbackUnavailable;
 
   return unavailable({
     checkedFiles,
@@ -187,6 +197,28 @@ function unavailable(input: Omit<CodexAuthUnavailable, "status">): CodexAuthUnav
     ...input,
     status: "unavailable",
   };
+}
+
+function mostRelevantUnavailable(
+  current: CodexAuthUnavailable | undefined,
+  candidate: CodexAuthUnavailable,
+): CodexAuthUnavailable {
+  if (current === undefined) return candidate;
+  return unavailableRank(candidate) > unavailableRank(current) ? candidate : current;
+}
+
+function unavailableRank(status: CodexAuthUnavailable): number {
+  switch (status.reason) {
+    case "login-without-api-key":
+      return 3;
+    case "openai-api-key-missing":
+      return 2;
+    case "missing-auth-file":
+      return 1;
+    case "malformed-auth-file":
+    case "unreadable-auth-file":
+      return 0;
+  }
 }
 
 function parseAuthJson(rawAuth: string):

@@ -57,6 +57,71 @@ describe("resolveCodexAuth", () => {
     expect(auth.status === "available" ? auth.openaiApiKey : undefined).toBe("sk-home");
   });
 
+  test("falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has login tokens without an API key", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    const userHome = join(cwd, "home");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(
+      join(codexHome, "auth.json"),
+      JSON.stringify({
+        account_id: "acct_123",
+        tokens: {
+          access_token: "token",
+          refresh_token: "refresh",
+        },
+      }),
+    );
+    writeFileSync(
+      join(userHome, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-home" }),
+    );
+
+    const auth = resolveCodexAuth({
+      env: { CODEX_HOME: codexHome },
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      displayPath: "~/.codex/auth.json",
+      mode: "api-key",
+      source: "user-home",
+      status: "available",
+    });
+    expect(auth.status === "available" ? auth.openaiApiKey : undefined).toBe("sk-home");
+    expect(auth.detail).not.toContain("sk-home");
+    expect(auth.detail).not.toContain("token");
+    expect(auth.detail).not.toContain("refresh");
+  });
+
+  test("falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has an unknown shape without an API key", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    const userHome = join(cwd, "home");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ preference: "local" }));
+    writeFileSync(
+      join(userHome, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-home" }),
+    );
+
+    const auth = resolveCodexAuth({
+      env: { CODEX_HOME: codexHome },
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      displayPath: "~/.codex/auth.json",
+      mode: "api-key",
+      source: "user-home",
+      status: "available",
+    });
+    expect(auth.status === "available" ? auth.openaiApiKey : undefined).toBe("sk-home");
+    expect(auth.detail).not.toContain("sk-home");
+  });
+
   test("reports Codex login tokens without treating them as embedding credentials", () => {
     const userHome = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
     mkdirSync(join(userHome, ".codex"), { recursive: true });
