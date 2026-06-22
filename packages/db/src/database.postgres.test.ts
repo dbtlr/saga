@@ -21,11 +21,19 @@ import {
   upsertContextIndexEntry,
 } from "./context-index.js";
 import {
+  activityIntervals,
   claimEvents,
   contextIndexEntries,
   currentClaims,
   rawEvents,
+  rawSessionRecords,
+  sessionRelationships,
+  sessionSegmentEmbeddings,
+  sessionSegments,
+  sessionTurns,
+  sessions,
   sourceBindings,
+  users,
   workspaceProfiles,
   workspaces,
 } from "./schema.js";
@@ -163,6 +171,282 @@ describePostgres("postgres integration", () => {
     expect(profile?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.enabled).toBe(true);
+  });
+
+  test("persists phase-one session capture records and enforces one active raw snapshot", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `session-schema-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        config: { hostId: "host-1" },
+        sourceType: "codex",
+        sourceUri: "codex://host/host-1",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const [author] = await service.db
+      .insert(users)
+      .values({
+        handle: "drew",
+        identitySource: "host",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (author === undefined) throw new Error("user insert returned no row");
+
+    const [otherWorkspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `session-schema-other-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (otherWorkspace === undefined) throw new Error("other workspace insert returned no row");
+
+    const [otherSourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        config: { hostId: "host-2" },
+        sourceType: "codex",
+        sourceUri: "codex://host/host-2",
+        workspaceId: otherWorkspace.id,
+      })
+      .returning();
+    if (otherSourceBinding === undefined) throw new Error("other source insert returned no row");
+
+    const [otherAuthor] = await service.db
+      .insert(users)
+      .values({
+        handle: "other",
+        identitySource: "host",
+        workspaceId: otherWorkspace.id,
+      })
+      .returning();
+    if (otherAuthor === undefined) throw new Error("other user insert returned no row");
+
+    await expect(
+      service.db.insert(sessions).values({
+        authorUserId: author.id,
+        harness: "codex",
+        harnessSessionId: "cross-source",
+        sourceBindingId: otherSourceBinding.id,
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      service.db.insert(sessions).values({
+        authorUserId: otherAuthor.id,
+        harness: "codex",
+        harnessSessionId: "cross-author",
+        sourceBindingId: sourceBinding.id,
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    const [session] = await service.db
+      .insert(sessions)
+      .values({
+        authorUserId: author.id,
+        harness: "codex",
+        harnessSessionId: "codex-session-1",
+        model: "gpt-5-codex",
+        sourceBindingId: sourceBinding.id,
+        startedAt: new Date("2026-06-22T00:00:00.000Z"),
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (session === undefined) throw new Error("session insert returned no row");
+
+    const [interval] = await service.db
+      .insert(activityIntervals)
+      .values({
+        metadata: { idleTimeoutMinutes: 30 },
+        ordinal: 0,
+        sessionId: session.id,
+        settlementReason: "stop_event",
+        settledAt: new Date("2026-06-22T00:30:00.000Z"),
+        startedAt: new Date("2026-06-22T00:00:00.000Z"),
+        status: "settled",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (interval === undefined) throw new Error("interval insert returned no row");
+
+    const [rawRecord] = await service.db
+      .insert(rawSessionRecords)
+      .values({
+        activityIntervalId: interval.id,
+        authorUserId: author.id,
+        bodyJson: [{ type: "user", text: "Build SGA-119" }],
+        bodyText: '{"type":"user","text":"Build SGA-119"}\n',
+        contentHash: "sha256:first",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "codex-session-1",
+        sessionId: session.id,
+        snapshotOrdinal: 0,
+        sourceBindingId: sourceBinding.id,
+        sourceLocator: "/tmp/codex-session.jsonl",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (rawRecord === undefined) throw new Error("raw session record insert returned no row");
+
+    await expect(
+      service.db.insert(rawSessionRecords).values({
+        authorUserId: otherAuthor.id,
+        contentHash: "sha256:cross-raw",
+        contentType: "jsonl",
+        harness: "codex",
+        sessionId: session.id,
+        snapshotOrdinal: 0,
+        sourceBindingId: otherSourceBinding.id,
+        workspaceId: otherWorkspace.id,
+      }),
+    ).rejects.toThrow();
+
+    const [turn] = await service.db
+      .insert(sessionTurns)
+      .values({
+        activityIntervalId: interval.id,
+        actorKind: "host_user",
+        actorLabel: "drew",
+        contentParts: [{ text: "Build SGA-119", type: "text" }],
+        ordinal: 0,
+        rawEventIds: [],
+        rawSessionRecordId: rawRecord.id,
+        role: "user",
+        sessionId: session.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (turn === undefined) throw new Error("turn insert returned no row");
+
+    const [segment] = await service.db
+      .insert(sessionSegments)
+      .values({
+        activityIntervalId: interval.id,
+        ordinal: 0,
+        rawSessionRecordId: rawRecord.id,
+        searchText: "Build SGA-119 session capture schema",
+        sessionId: session.id,
+        turnId: turn.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (segment === undefined) throw new Error("segment insert returned no row");
+
+    await expect(
+      service.db.insert(sessionSegments).values({
+        activityIntervalId: interval.id,
+        ordinal: 0,
+        rawSessionRecordId: rawRecord.id,
+        searchText: "cross workspace segment",
+        sessionId: session.id,
+        turnId: turn.id,
+        workspaceId: otherWorkspace.id,
+      }),
+    ).rejects.toThrow();
+
+    const [embedding] = await service.db
+      .insert(sessionSegmentEmbeddings)
+      .values({
+        dimensions: 1536,
+        embedding: Array.from({ length: 1536 }, () => 0),
+        inputHash: "sha256:segment",
+        model: "text-embedding-3-small",
+        provider: "openai",
+        rawSessionRecordId: rawRecord.id,
+        segmentId: segment.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    expect(embedding?.segmentId).toBe(segment.id);
+
+    await expect(
+      service.db.insert(sessionSegmentEmbeddings).values({
+        dimensions: 2,
+        embedding: [0, 0, 0],
+        inputHash: "sha256:dimension-mismatch",
+        model: "text-embedding-3-small",
+        provider: "openai",
+        rawSessionRecordId: rawRecord.id,
+        segmentId: segment.id,
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    const [childSession] = await service.db
+      .insert(sessions)
+      .values({
+        authorUserId: author.id,
+        harness: "codex",
+        harnessSessionId: "codex-child-1",
+        sourceBindingId: sourceBinding.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (childSession === undefined) throw new Error("child session insert returned no row");
+
+    const [relationship] = await service.db
+      .insert(sessionRelationships)
+      .values({
+        confidence: "inferred",
+        evidence: { reason: "subagent transcript" },
+        relationshipType: "child",
+        sourceSessionId: session.id,
+        sourceTurnId: turn.id,
+        targetSessionId: childSession.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    expect(relationship?.sourceTurnId).toBe(turn.id);
+
+    await expect(
+      service.db.insert(rawSessionRecords).values({
+        authorUserId: author.id,
+        contentHash: "sha256:second",
+        contentType: "jsonl",
+        harness: "codex",
+        isActive: true,
+        sessionId: session.id,
+        snapshotOrdinal: 1,
+        sourceBindingId: sourceBinding.id,
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    await service.db
+      .update(rawSessionRecords)
+      .set({ isActive: false })
+      .where(eq(rawSessionRecords.id, rawRecord.id));
+
+    const [replacement] = await service.db
+      .insert(rawSessionRecords)
+      .values({
+        authorUserId: author.id,
+        contentHash: "sha256:second",
+        contentType: "jsonl",
+        harness: "codex",
+        isActive: true,
+        sessionId: session.id,
+        snapshotOrdinal: 1,
+        sourceBindingId: sourceBinding.id,
+        workspaceId: workspace.id,
+      })
+      .returning();
+    expect(replacement?.isActive).toBe(true);
   });
 
   test("persists Context Index entries and resolves Saga Links through source bindings", async () => {

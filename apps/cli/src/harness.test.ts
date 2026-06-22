@@ -42,20 +42,20 @@ describe("listHarnessAdapters", () => {
       listHarnessAdapters().map((adapter) => ({
         hooksPath: adapter.hooksPath(projectRoot),
         ingestCommand: adapter.ingestCommand,
-        sourceUri: adapter.sourceUri,
+        sourceUri: adapter.sourceUri("host-id"),
         target: adapter.target,
       })),
     ).toEqual([
       {
         hooksPath: join(projectRoot, ".codex", "hooks.json"),
         ingestCommand: "codex-hook",
-        sourceUri: "codex://local",
+        sourceUri: "codex://host/host-id",
         target: "codex",
       },
       {
         hooksPath: join(projectRoot, ".claude", "settings.local.json"),
         ingestCommand: "claude-hook",
-        sourceUri: "claude://local",
+        sourceUri: "claude://host/host-id",
         target: "claude",
       },
     ]);
@@ -76,8 +76,9 @@ describe("installHarness", () => {
     expect(status.hooks).toBe("installed");
     expect(status.hookTrust).toBe("requires review");
     expect(status.hooksPath).toBe(join(projectRoot, ".codex", "hooks.json"));
-    const binding = readBindingFile(projectRoot);
+    const binding = readBindingFile(projectRoot)!;
     expect(binding?.harnesses?.codex?.sourceBindingId).toBe("codex-source-id");
+    expect(binding?.harnesses?.codex?.sourceUri).toBe(`codex://host/${binding.host?.id}`);
     expect(binding?.harnesses?.codex?.hookTrust).toBe("requires-review");
     expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(".codex/\n");
 
@@ -109,9 +110,9 @@ describe("installHarness", () => {
     expect(status.hookTrust).toBe("requires review");
     expect(status.hooksPath).toBe(join(projectRoot, ".claude", "settings.local.json"));
     expect(status.skills).toBe("deferred");
-    const binding = readBindingFile(projectRoot);
+    const binding = readBindingFile(projectRoot)!;
     expect(binding?.harnesses?.claude?.sourceBindingId).toBe("claude-source-id");
-    expect(binding?.harnesses?.claude?.sourceUri).toBe("claude://local");
+    expect(binding?.harnesses?.claude?.sourceUri).toBe(`claude://host/${binding.host?.id}`);
     expect(readFileSync(join(projectRoot, ".gitignore"), "utf8")).toContain(
       ".claude/settings.local.json\n",
     );
@@ -353,8 +354,9 @@ describe("inspectHarness", () => {
 
   test("reports divergent harness state when binding exists without hooks", () => {
     const projectRoot = boundProject();
+    const binding = readBindingFile(projectRoot)!;
     writeBindingFile(projectRoot, {
-      ...readBindingFile(projectRoot)!,
+      ...binding,
       harnesses: {
         codex: {
           hookCommand: `'${join(projectRoot, ".codex", "saga-codex-hook.sh")}'`,
@@ -362,7 +364,7 @@ describe("inspectHarness", () => {
           hooksPath: join(projectRoot, ".codex", "hooks.json"),
           installedAt: new Date().toISOString(),
           sourceBindingId: "codex-source-id",
-          sourceUri: "codex://local",
+          sourceUri: `codex://host/${binding.host?.id}`,
           target: "codex",
         },
       },
@@ -431,9 +433,10 @@ describe("inspectHarness", () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, ".codex", "hooks.json");
     const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
     mkdirSync(join(projectRoot, ".codex"));
     writeBindingFile(projectRoot, {
-      ...readBindingFile(projectRoot)!,
+      ...binding,
       harnesses: {
         codex: {
           hookCommand: `'${shimPath}'`,
@@ -441,7 +444,7 @@ describe("inspectHarness", () => {
           hooksPath,
           installedAt: new Date().toISOString(),
           sourceBindingId: "codex-source-id",
-          sourceUri: "codex://local",
+          sourceUri: `codex://host/${binding.host?.id}`,
           target: "codex",
         },
       },
@@ -463,6 +466,46 @@ describe("inspectHarness", () => {
     expect(status.hooks).toBe("installed");
     expect(status.hooksCoverage).toBe("complete");
     expect(status.stateDetail).toBe("binding is valid and complete Saga hooks are active");
+  });
+
+  test("reports stale harness state for legacy unhosted local source bindings", () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    mkdirSync(join(projectRoot, ".codex"));
+    const { host: _host, ...legacyBinding } = readBindingFile(projectRoot)!;
+    writeFileSync(
+      join(projectRoot, ".saga.local.json"),
+      `${JSON.stringify({
+        ...legacyBinding,
+        harnesses: {
+          codex: {
+            hookCommand: `'${shimPath}'`,
+            hookTrust: "requires-review",
+            hooksPath,
+            installedAt: new Date().toISOString(),
+            sourceBindingId: "codex-source-id",
+            sourceUri: "codex://local",
+            target: "codex",
+          },
+        },
+      })}\n`,
+    );
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: "codex" });
+
+    expect(status.state).toBe("stale");
+    expect(status.stateDetail).toContain("local binding host id is missing");
   });
 
   test("reports invalid harness state for malformed local harness binding", () => {

@@ -15,6 +15,7 @@ import { Effect } from "effect";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
 import {
+  ensureLocalHostBinding,
   findProjectRoot,
   readBindingFile,
   writeBindingFile,
@@ -42,7 +43,7 @@ export interface HarnessStatus {
 
 export type CodexHarnessStatus = HarnessStatus & { target: "codex" };
 
-type HarnessSourceUri = "codex://local" | "claude://local";
+type HarnessSourceUri = `codex://host/${string}` | `claude://host/${string}`;
 
 export interface HarnessAdapter {
   displayName: string;
@@ -52,8 +53,8 @@ export interface HarnessAdapter {
   settingsLabel: string;
   shimScriptName: string;
   shimPath(projectRoot: string): string;
+  sourceUri(hostId: string): HarnessSourceUri;
   sourceType: HarnessTarget;
-  sourceUri: HarnessSourceUri;
   target: HarnessTarget;
 }
 
@@ -110,8 +111,8 @@ const HARNESS_ADAPTERS = {
     settingsLabel: "Claude settings file",
     shimScriptName: "saga-claude-hook.sh",
     shimPath: (projectRoot: string) => join(projectRoot, ".claude", "saga-claude-hook.sh"),
+    sourceUri: (hostId: string) => `claude://host/${hostId}`,
     sourceType: "claude",
-    sourceUri: "claude://local",
     target: "claude",
   },
   codex: {
@@ -122,8 +123,8 @@ const HARNESS_ADAPTERS = {
     settingsLabel: "Codex hooks file",
     shimScriptName: "saga-codex-hook.sh",
     shimPath: (projectRoot: string) => join(projectRoot, ".codex", "saga-codex-hook.sh"),
+    sourceUri: (hostId: string) => `codex://host/${hostId}`,
     sourceType: "codex",
-    sourceUri: "codex://local",
     target: "codex",
   },
 } as const satisfies Record<HarnessTarget, HarnessAdapter>;
@@ -163,10 +164,11 @@ export async function installHarness(input: {
 }): Promise<HarnessStatus> {
   const adapter = getHarnessAdapter(input.target);
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
-  const binding = readBindingFile(projectRoot);
-  if (binding === undefined) {
+  const rawBinding = readBindingFile(projectRoot);
+  if (rawBinding === undefined) {
     throw new Error(`run saga init before installing the ${input.target} harness`);
   }
+  const binding = ensureLocalHostBinding(rawBinding);
 
   const hooksPath = adapter.hooksPath(projectRoot);
   const hookCommand = hookShimCommand(projectRoot, adapter);
@@ -174,7 +176,10 @@ export async function installHarness(input: {
   const sourceBinding = await registerHarnessSourceBinding(input)(
     projectRoot,
     binding.workspace.id,
+    binding.host.id,
+    binding.host.label,
   );
+  const sourceUri = adapter.sourceUri(binding.host.id);
 
   const installedAt = new Date().toISOString();
   const nextBinding: WorkspaceBindingFile = {
@@ -187,7 +192,7 @@ export async function installHarness(input: {
         hooksPath,
         installedAt,
         sourceBindingId: sourceBinding.id,
-        sourceUri: adapter.sourceUri,
+        sourceUri,
         target: input.target,
       },
     },
@@ -296,6 +301,8 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     adapter,
     expectedHookCommand,
     expectedHooksPath: hooksPath,
+    expectedSourceUri:
+      binding?.host?.id === undefined ? undefined : adapter.sourceUri(binding.host.id),
     harnessBinding,
     sagaHookCoverage,
     hooksInstalled,
@@ -340,6 +347,7 @@ function classifyHarnessState(input: {
   adapter: HarnessAdapter;
   expectedHookCommand: string;
   expectedHooksPath: string;
+  expectedSourceUri: HarnessSourceUri | undefined;
   harnessBinding: HarnessBindingSnapshot | undefined;
   sagaHookCoverage: "complete" | "partial" | "none";
   hooksInstalled: boolean;
@@ -383,6 +391,7 @@ function staleHarnessBindingReasons(input: {
   adapter: HarnessAdapter;
   expectedHookCommand: string;
   expectedHooksPath: string;
+  expectedSourceUri: HarnessSourceUri | undefined;
   harnessBinding: HarnessBindingSnapshot | undefined;
 }): string[] {
   const binding = input.harnessBinding;
@@ -392,8 +401,11 @@ function staleHarnessBindingReasons(input: {
   if (binding.target !== input.adapter.target) {
     reasons.push(`binding target is ${binding.target}, expected ${input.adapter.target}`);
   }
-  if (binding.sourceUri !== input.adapter.sourceUri) {
-    reasons.push(`binding source URI is ${binding.sourceUri}, expected ${input.adapter.sourceUri}`);
+  if (input.expectedSourceUri === undefined) {
+    reasons.push("local binding host id is missing");
+  }
+  if (input.expectedSourceUri !== undefined && binding.sourceUri !== input.expectedSourceUri) {
+    reasons.push(`binding source URI is ${binding.sourceUri}, expected ${input.expectedSourceUri}`);
   }
   if (binding.hooksPath !== input.expectedHooksPath) {
     reasons.push("binding hooks path does not match the current adapter");
@@ -482,22 +494,39 @@ function registerHarnessSourceBinding(input: {
   registerClaudeSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
   registerCodexSource?: (projectRoot: string, workspaceId: string) => Promise<{ id: string }>;
   target: HarnessTarget;
-}): (projectRoot: string, workspaceId: string) => Promise<{ id: string }> {
+}): (
+  projectRoot: string,
+  workspaceId: string,
+  hostId: string,
+  hostLabel: string,
+) => Promise<{ id: string }> {
   if (input.target === "claude") return input.registerClaudeSource ?? registerClaudeSourceBinding;
   return input.registerCodexSource ?? registerCodexSourceBinding;
 }
 
-async function registerClaudeSourceBinding(projectRoot: string, workspaceId: string) {
-  return registerAgentSourceBinding(projectRoot, workspaceId, "claude");
+async function registerClaudeSourceBinding(
+  projectRoot: string,
+  workspaceId: string,
+  hostId: string,
+  hostLabel: string,
+) {
+  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, "claude");
 }
 
-async function registerCodexSourceBinding(projectRoot: string, workspaceId: string) {
-  return registerAgentSourceBinding(projectRoot, workspaceId, "codex");
+async function registerCodexSourceBinding(
+  projectRoot: string,
+  workspaceId: string,
+  hostId: string,
+  hostLabel: string,
+) {
+  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, "codex");
 }
 
 async function registerAgentSourceBinding(
   projectRoot: string,
   workspaceId: string,
+  hostId: string,
+  hostLabel: string,
   target: HarnessTarget,
 ) {
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
@@ -505,14 +534,17 @@ async function registerAgentSourceBinding(
   const adapter = getHarnessAdapter(target);
   try {
     await Effect.runPromise(assertMigrationsCurrent(service));
+    const sourceUri = adapter.sourceUri(hostId);
     return await Effect.runPromise(
       registerSourceBinding(service, {
         config: {
+          hostId,
+          hostLabel,
           projectRoot,
         },
-        displayName: adapter.displayName,
+        displayName: `${adapter.displayName} on ${hostLabel}`,
         sourceType: adapter.sourceType,
-        sourceUri: adapter.sourceUri,
+        sourceUri,
         workspaceId,
       }),
     );

@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -22,7 +24,11 @@ export interface InitResult {
 }
 
 type WorkspaceHarnessTarget = "codex" | "claude";
-type WorkspaceHarnessSourceUri = "codex://local" | "claude://local";
+type WorkspaceHarnessSourceUri =
+  | "claude://local"
+  | "codex://local"
+  | `claude://host/${string}`
+  | `codex://host/${string}`;
 
 interface WorkspaceHarnessBinding {
   hookCommand: string;
@@ -36,6 +42,11 @@ interface WorkspaceHarnessBinding {
 
 export interface WorkspaceBindingFile {
   harnesses?: Partial<Record<WorkspaceHarnessTarget, WorkspaceHarnessBinding>>;
+  host?: {
+    generatedAt: string;
+    id: string;
+    label: string;
+  };
   project: {
     gitRemote: string | undefined;
     root: string;
@@ -52,6 +63,10 @@ export interface WorkspaceBindingFile {
     id: string;
   };
 }
+
+export type WorkspaceBindingFileWithHost = WorkspaceBindingFile & {
+  host: NonNullable<WorkspaceBindingFile["host"]>;
+};
 
 export async function runInit(args: readonly string[], options: RenderOptions): Promise<string> {
   const result = await initProject({ handle: args[0] });
@@ -110,6 +125,7 @@ export async function initProject(input: {
       }),
     );
     const bindingPath = writeBindingFile(projectRoot, {
+      host: createLocalHostBinding(),
       project: {
         gitRemote,
         root: projectRoot,
@@ -171,10 +187,34 @@ export function normalizeHandle(value: string): string {
   return normalized === "" ? "workspace" : normalized;
 }
 
+export function createLocalHostBinding(): WorkspaceBindingFileWithHost["host"] {
+  return {
+    generatedAt: new Date().toISOString(),
+    id: randomUUID(),
+    label: hostname(),
+  };
+}
+
+export function ensureLocalHostBinding(
+  binding: WorkspaceBindingFile,
+): WorkspaceBindingFileWithHost {
+  if (
+    binding.host !== undefined &&
+    typeof binding.host.id === "string" &&
+    binding.host.id.trim() !== ""
+  ) {
+    return binding as WorkspaceBindingFileWithHost;
+  }
+  return {
+    ...binding,
+    host: createLocalHostBinding(),
+  };
+}
+
 export function writeBindingFile(projectRoot: string, binding: WorkspaceBindingFile): string {
   mkdirSync(projectRoot, { recursive: true });
   const bindingPath = join(projectRoot, BINDING_FILE_NAME);
-  writeFileSync(bindingPath, `${JSON.stringify(binding, null, 2)}\n`);
+  writeFileSync(bindingPath, `${JSON.stringify(ensureLocalHostBinding(binding), null, 2)}\n`);
   return bindingPath;
 }
 

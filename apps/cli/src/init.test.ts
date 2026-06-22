@@ -37,6 +37,11 @@ describe("writeBindingFile", () => {
 
     expect(bindingPath).toBe(join(projectRoot, BINDING_FILE_NAME));
     expect(JSON.parse(readFileSync(bindingPath, "utf8"))).toEqual({
+      host: expect.objectContaining({
+        generatedAt: expect.any(String),
+        id: expect.any(String),
+        label: expect.any(String),
+      }),
       project: {
         gitRemote: "git@github.com:dbtlr/saga.git",
         root: projectRoot,

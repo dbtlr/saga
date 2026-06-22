@@ -2,11 +2,19 @@ import { describe, expect, test } from "vitest";
 import { getTableName } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm/utils";
 import {
+  activityIntervals,
   claimEvents,
   contextIndexEntries,
   currentClaims,
   rawEvents,
+  rawSessionRecords,
+  sessionRelationships,
+  sessionSegmentEmbeddings,
+  sessionSegments,
+  sessionTurns,
+  sessions,
   sourceBindings,
+  users,
   workspaceProfiles,
   workspaces,
 } from "./schema.js";
@@ -16,10 +24,18 @@ describe("schema", () => {
     expect(getTableName(workspaces)).toBe("workspaces");
     expect(getTableName(workspaceProfiles)).toBe("workspace_profiles");
     expect(getTableName(sourceBindings)).toBe("source_bindings");
+    expect(getTableName(users)).toBe("users");
     expect(getTableName(rawEvents)).toBe("raw_events");
     expect(getTableName(claimEvents)).toBe("claim_events");
     expect(getTableName(currentClaims)).toBe("current_claims");
     expect(getTableName(contextIndexEntries)).toBe("context_index_entries");
+    expect(getTableName(sessions)).toBe("sessions");
+    expect(getTableName(activityIntervals)).toBe("activity_intervals");
+    expect(getTableName(rawSessionRecords)).toBe("raw_session_records");
+    expect(getTableName(sessionTurns)).toBe("session_turns");
+    expect(getTableName(sessionRelationships)).toBe("session_relationships");
+    expect(getTableName(sessionSegments)).toBe("session_segments");
+    expect(getTableName(sessionSegmentEmbeddings)).toBe("session_segment_embeddings");
   });
 
   test("keeps workspace profile one-to-one with workspace", () => {
@@ -72,5 +88,82 @@ describe("schema", () => {
     expect(columns.sagaLink.notNull).toBe(true);
     expect(columns.includePolicy.notNull).toBe(true);
     expect(columns.importance.notNull).toBe(true);
+  });
+
+  test("keeps host-user attribution separate from authorization", () => {
+    const columns = getTableColumns(users);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.handle.notNull).toBe(true);
+    expect(columns.identitySource.notNull).toBe(true);
+    expect(columns.externalSubject.notNull).toBe(false);
+  });
+
+  test("keeps sessions tied to workspace, source, and author provenance", () => {
+    const columns = getTableColumns(sessions);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.sourceBindingId.notNull).toBe(true);
+    expect(columns.authorUserId.notNull).toBe(true);
+    expect(columns.harness.notNull).toBe(true);
+    expect(columns.harnessSessionId.notNull).toBe(false);
+    expect(columns.sourceLocatorHash.notNull).toBe(false);
+  });
+
+  test("persists settlement state on activity intervals", () => {
+    const columns = getTableColumns(activityIntervals);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.sessionId.notNull).toBe(true);
+    expect(columns.ordinal.notNull).toBe(true);
+    expect(columns.status.notNull).toBe(true);
+    expect(columns.settlementReason.notNull).toBe(false);
+    expect(columns.settlementTriggerRawEventId.notNull).toBe(false);
+  });
+
+  test("stores raw session snapshots as durable evidence", () => {
+    const columns = getTableColumns(rawSessionRecords);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.sessionId.notNull).toBe(true);
+    expect(columns.sourceBindingId.notNull).toBe(true);
+    expect(columns.authorUserId.notNull).toBe(true);
+    expect(columns.snapshotOrdinal.notNull).toBe(true);
+    expect(columns.isActive.notNull).toBe(true);
+    expect(columns.contentType.notNull).toBe(true);
+    expect(columns.bodyText.notNull).toBe(false);
+    expect(columns.bodyJson.notNull).toBe(false);
+    expect(columns.contentHash.notNull).toBe(true);
+  });
+
+  test("keeps normalized turns structured and traceable to raw snapshots", () => {
+    const columns = getTableColumns(sessionTurns);
+
+    expect(columns.workspaceId.notNull).toBe(true);
+    expect(columns.sessionId.notNull).toBe(true);
+    expect(columns.activityIntervalId.notNull).toBe(true);
+    expect(columns.rawSessionRecordId.notNull).toBe(true);
+    expect(columns.role.notNull).toBe(true);
+    expect(columns.actorKind.notNull).toBe(true);
+    expect(columns.contentParts.notNull).toBe(true);
+    expect(columns.rawEventIds.notNull).toBe(true);
+  });
+
+  test("keeps recall segments positioned and embedding-backed", () => {
+    const segmentColumns = getTableColumns(sessionSegments);
+    const embeddingColumns = getTableColumns(sessionSegmentEmbeddings);
+
+    expect(segmentColumns.workspaceId.notNull).toBe(true);
+    expect(segmentColumns.sessionId.notNull).toBe(true);
+    expect(segmentColumns.activityIntervalId.notNull).toBe(true);
+    expect(segmentColumns.turnId.notNull).toBe(true);
+    expect(segmentColumns.rawSessionRecordId.notNull).toBe(true);
+    expect(segmentColumns.searchText.notNull).toBe(true);
+    expect(embeddingColumns.segmentId.notNull).toBe(true);
+    expect(embeddingColumns.rawSessionRecordId.notNull).toBe(true);
+    expect(embeddingColumns.provider.notNull).toBe(true);
+    expect(embeddingColumns.model.notNull).toBe(true);
+    expect(embeddingColumns.dimensions.notNull).toBe(true);
+    expect(embeddingColumns.embedding.notNull).toBe(true);
   });
 });
