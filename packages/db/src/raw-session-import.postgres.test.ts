@@ -200,7 +200,13 @@ describePostgres("raw session import", () => {
       .select()
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id));
-    expect(oldTurns).toHaveLength(1);
+    expect(oldTurns).toHaveLength(0);
+    const oldSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id));
+    expect(oldSegments).toHaveLength(0);
+
     const newTurns = await service.db
       .select()
       .from(sessionTurns)

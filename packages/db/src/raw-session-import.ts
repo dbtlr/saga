@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import {
@@ -454,15 +454,41 @@ async function regenerateDerivedSessionRecords(
     sessionId: string;
   },
 ): Promise<void> {
-  await tx
-    .delete(sessionSegmentEmbeddings)
-    .where(eq(sessionSegmentEmbeddings.rawSessionRecordId, input.rawSessionRecordId));
+  const rawSessionRecordIds = await tx
+    .select({ id: rawSessionRecords.id })
+    .from(rawSessionRecords)
+    .where(
+      and(
+        eq(rawSessionRecords.sessionId, input.sessionId),
+        eq(rawSessionRecords.workspaceId, input.input.workspaceId),
+      ),
+    );
+
+  if (rawSessionRecordIds.length > 0) {
+    await tx.delete(sessionSegmentEmbeddings).where(
+      inArray(
+        sessionSegmentEmbeddings.rawSessionRecordId,
+        rawSessionRecordIds.map((record) => record.id),
+      ),
+    );
+  }
+
   await tx
     .delete(sessionSegments)
-    .where(eq(sessionSegments.rawSessionRecordId, input.rawSessionRecordId));
+    .where(
+      and(
+        eq(sessionSegments.sessionId, input.sessionId),
+        eq(sessionSegments.workspaceId, input.input.workspaceId),
+      ),
+    );
   await tx
     .delete(sessionTurns)
-    .where(eq(sessionTurns.rawSessionRecordId, input.rawSessionRecordId));
+    .where(
+      and(
+        eq(sessionTurns.sessionId, input.sessionId),
+        eq(sessionTurns.workspaceId, input.input.workspaceId),
+      ),
+    );
 
   const searchText = deriveSearchText(input.input);
   if (searchText === "") return;
