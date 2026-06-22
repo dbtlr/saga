@@ -95,19 +95,10 @@ export async function sessionSegmentsAreCurrent(
 
 export function deriveSessionSegmentsFromTurns(turns: readonly SessionTurn[]): NewSessionSegment[] {
   const drafts: SegmentDraft[] = [];
+  const toolGroups = buildToolGroupContexts(turns);
 
-  for (let index = 0; index < turns.length; index += 1) {
-    const turn = turns[index];
-    if (turn === undefined) continue;
-
-    const nextTurn = turns[index + 1];
-    if (nextTurn !== undefined && isCompactToolGroup(turn, nextTurn)) {
-      drafts.push(...deriveDraftsForTurnGroup(turn, nextTurn));
-      index += 1;
-      continue;
-    }
-
-    drafts.push(...deriveDraftsForTurnGroup(turn));
+  for (const turn of turns) {
+    drafts.push(...deriveDraftsForSingleTurn(turn, toolGroups.get(turn.id)));
   }
 
   return drafts.map((draft, ordinal) => ({
@@ -147,30 +138,6 @@ async function selectSegmentSourceTurns(
       ),
     )
     .orderBy(asc(sessionTurns.ordinal));
-}
-
-function deriveDraftsForTurnGroup(turn: SessionTurn, groupedTurn?: SessionTurn): SegmentDraft[] {
-  if (groupedTurn !== undefined) {
-    const turns = [turn, groupedTurn] as const;
-    const turnParts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
-    const groupExtraction = extractGroupSearchText(turns);
-    const groupContext = {
-      callId: firstPartCallId(turnParts, "tool_call"),
-      contentPartTypes: groupExtraction.contentPartTypes,
-      filters: groupExtraction.filters,
-      memberCount: turns.length,
-      skippedPartCount: groupExtraction.skippedPartCount,
-      turns,
-    };
-    return turns.flatMap((memberTurn, memberIndex) =>
-      deriveDraftsForSingleTurn(memberTurn, {
-        ...groupContext,
-        memberIndex,
-      }),
-    );
-  }
-
-  return deriveDraftsForSingleTurn(turn);
 }
 
 function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext): SegmentDraft[] {
@@ -565,12 +532,94 @@ function segmentRawSpan(
   };
 }
 
-function isCompactToolGroup(turn: SessionTurn, nextTurn: SessionTurn): boolean {
-  const turnParts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
-  const nextParts = Array.isArray(nextTurn.contentParts) ? nextTurn.contentParts.map(asRecord) : [];
-  const callId = firstPartCallId(turnParts, "tool_call");
-  const resultCallId = firstPartCallId(nextParts, "tool_result");
-  return callId !== undefined && callId === resultCallId;
+function buildToolGroupContexts(turns: readonly SessionTurn[]): Map<string, ToolGroupContext> {
+  const contexts = new Map<string, ToolGroupContext>();
+
+  for (const toolStream of contiguousToolStreams(turns)) {
+    const entriesByCallId = new Map<
+      string,
+      {
+        calls: SessionTurn[];
+        results: SessionTurn[];
+      }
+    >();
+
+    for (const turn of toolStream) {
+      const toolCallId = turnToolCallId(turn, "tool_call");
+      if (toolCallId !== undefined) {
+        const entries = entriesByCallId.get(toolCallId) ?? { calls: [], results: [] };
+        entries.calls.push(turn);
+        entriesByCallId.set(toolCallId, entries);
+      }
+
+      const toolResultId = turnToolCallId(turn, "tool_result");
+      if (toolResultId !== undefined) {
+        const entries = entriesByCallId.get(toolResultId) ?? { calls: [], results: [] };
+        entries.results.push(turn);
+        entriesByCallId.set(toolResultId, entries);
+      }
+    }
+
+    for (const [callId, entries] of entriesByCallId) {
+      if (entries.calls.length !== 1 || entries.results.length !== 1) continue;
+      const callTurn = entries.calls[0];
+      const resultTurn = entries.results[0];
+      if (callTurn === undefined || resultTurn === undefined) continue;
+      if (callTurn.ordinal >= resultTurn.ordinal) continue;
+
+      const groupTurns = [callTurn, resultTurn] as const;
+      const groupExtraction = extractGroupSearchText(groupTurns);
+      const groupContext = {
+        callId,
+        contentPartTypes: groupExtraction.contentPartTypes,
+        filters: groupExtraction.filters,
+        memberCount: groupTurns.length,
+        skippedPartCount: groupExtraction.skippedPartCount,
+        turns: groupTurns,
+      };
+
+      groupTurns.forEach((turn, memberIndex) => {
+        contexts.set(turn.id, {
+          ...groupContext,
+          memberIndex,
+        });
+      });
+    }
+  }
+
+  return contexts;
+}
+
+function contiguousToolStreams(turns: readonly SessionTurn[]): SessionTurn[][] {
+  const streams: SessionTurn[][] = [];
+  let current: SessionTurn[] = [];
+
+  for (const turn of turns) {
+    if (isToolGroupCandidate(turn)) {
+      current.push(turn);
+      continue;
+    }
+
+    if (current.length > 0) {
+      streams.push(current);
+      current = [];
+    }
+  }
+
+  if (current.length > 0) streams.push(current);
+  return streams;
+}
+
+function isToolGroupCandidate(turn: SessionTurn): boolean {
+  return (
+    turnToolCallId(turn, "tool_call") !== undefined ||
+    turnToolCallId(turn, "tool_result") !== undefined
+  );
+}
+
+function turnToolCallId(turn: SessionTurn, partType: string): string | undefined {
+  const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
+  return firstPartCallId(parts, partType);
 }
 
 function firstPartCallId(parts: readonly JsonRecord[], partType: string): string | undefined {

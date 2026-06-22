@@ -2504,6 +2504,204 @@ describePostgres("raw session import", () => {
     expect(resultTurnSegments[0]?.searchText).toContain("Structured array output needle");
   });
 
+  test("groups interleaved tool call and result segments by call id", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-interleaved-tool-segments");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:10:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-interleaved-tool-segment-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:10:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-interleaved-tools",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:10:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-a",
+          name: "shell",
+          arguments: JSON.stringify({ command: "printf alpha-call" }),
+          metadata: { turn_id: "turn-interleaved-tools" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:10:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-b",
+          name: "shell",
+          arguments: JSON.stringify({ command: "printf beta-call" }),
+          metadata: { turn_id: "turn-interleaved-tools" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:10:04.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-a",
+          output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nALPHA_RESULT_NEEDLE\n",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:10:05.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-b",
+          output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nBETA_RESULT_NEEDLE\n",
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T14:10:06.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-codex-interleaved-tool-segments",
+          projectRoot: "/work/saga",
+        },
+        locator: "/tmp/codex-interleaved-tool-segments.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+
+    expect(turns.map((turn) => turn.contentParts)).toEqual([
+      [
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-a",
+          arguments: { command: "printf alpha-call" },
+          status: "completed",
+        },
+      ],
+      [
+        {
+          type: "tool_call",
+          name: "shell",
+          callId: "call-b",
+          arguments: { command: "printf beta-call" },
+          status: "completed",
+        },
+      ],
+      [
+        {
+          type: "tool_result",
+          name: "shell",
+          callId: "call-a",
+          output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nALPHA_RESULT_NEEDLE\n",
+        },
+      ],
+      [
+        {
+          type: "tool_result",
+          name: "shell",
+          callId: "call-b",
+          output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nBETA_RESULT_NEEDLE\n",
+        },
+      ],
+    ]);
+    expect(segments).toHaveLength(4);
+    expect(segments.map((segment) => segment.ordinal)).toEqual([0, 1, 2, 3]);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "tool_group_call",
+      "tool_group_call",
+      "tool_group_result",
+      "tool_group_result",
+    ]);
+    expect(segments.map((segment) => segment.turnId)).toEqual(turns.map((turn) => turn.id));
+    expect(segments[0]?.searchText).toContain("printf alpha-call");
+    expect(segments[1]?.searchText).toContain("printf beta-call");
+    expect(segments[2]?.searchText).toContain("ALPHA_RESULT_NEEDLE");
+    expect(segments[3]?.searchText).toContain("BETA_RESULT_NEEDLE");
+
+    expect(segments[0]?.metadata).toMatchObject({
+      groupedContentPartTypes: [["tool_call"], ["tool_result"]],
+      groupedTurnIds: [turns[0]?.id, turns[2]?.id],
+      groupedTurnOrdinals: [0, 2],
+      toolGroup: {
+        callId: "call-a",
+        memberCount: 2,
+        memberIndex: 0,
+        turnIds: [turns[0]?.id, turns[2]?.id],
+        turnOrdinals: [0, 2],
+      },
+    });
+    expect(segments[1]?.metadata).toMatchObject({
+      groupedContentPartTypes: [["tool_call"], ["tool_result"]],
+      groupedTurnIds: [turns[1]?.id, turns[3]?.id],
+      groupedTurnOrdinals: [1, 3],
+      toolGroup: {
+        callId: "call-b",
+        memberIndex: 0,
+        turnIds: [turns[1]?.id, turns[3]?.id],
+        turnOrdinals: [1, 3],
+      },
+    });
+    expect(segments[2]?.metadata).toMatchObject({
+      segmentTurnId: turns[2]?.id,
+      toolGroup: {
+        callId: "call-a",
+        memberIndex: 1,
+      },
+    });
+    expect(segments[3]?.metadata).toMatchObject({
+      segmentTurnId: turns[3]?.id,
+      toolGroup: {
+        callId: "call-b",
+        memberIndex: 1,
+      },
+    });
+
+    const alphaSegments = segments.filter((segment) =>
+      segment.searchText.includes("ALPHA_RESULT_NEEDLE"),
+    );
+    const betaSegments = segments.filter((segment) =>
+      segment.searchText.includes("BETA_RESULT_NEEDLE"),
+    );
+    expect(alphaSegments.map((segment) => segment.turnId)).toEqual([turns[2]?.id]);
+    expect(betaSegments.map((segment) => segment.turnId)).toEqual([turns[3]?.id]);
+
+    const callATurnSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.turnId, turns[0]?.id ?? "00000000-0000-0000-0000-000000000000"));
+    expect(callATurnSegments).toHaveLength(1);
+    expect(callATurnSegments[0]?.searchText).not.toContain("ALPHA_RESULT_NEEDLE");
+  });
+
   test("derives Codex subagent child relationships when the parent session is present later", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("codex-subagent-relationships");
