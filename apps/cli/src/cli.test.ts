@@ -22,6 +22,13 @@ describe("parseArgs", () => {
   test("rejects unknown options", () => {
     expect(() => parseArgs(["--bad"])).toThrow("unknown option: --bad");
   });
+
+  test("leaves command-specific options for command handlers", () => {
+    expect(parseArgs(["sessions", "recent", "--limit", "5"])).toMatchObject({
+      args: ["recent", "--limit", "5"],
+      command: "sessions",
+    });
+  });
 });
 
 describe("run", () => {
@@ -37,6 +44,7 @@ describe("run", () => {
       "mcp",
       "context",
       "ingest",
+      "sessions",
     ]);
   });
 
@@ -74,6 +82,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async (_args, _options, write) => {
         write("start launched");
         return 0;
@@ -94,6 +103,7 @@ describe("run", () => {
       init: async (args) => `init ${args.join(",")}`,
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -111,6 +121,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -128,6 +139,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async (args) => `service ${args.join(",")}`,
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -147,6 +159,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -166,6 +179,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -173,6 +187,26 @@ describe("run", () => {
       run(["ingest", "codex-hook"], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
     expect(output).toEqual(["ingest codex-hook"]);
+  });
+
+  test("dispatches sessions through the sessions handler", async () => {
+    const output: string[] = [];
+    const handlers: CommandHandlers = {
+      context: async () => "context",
+      doctor: async () => "doctor",
+      harness: async () => "harness",
+      ingest: async () => "ingest",
+      init: async () => "init",
+      mcp: async () => "mcp",
+      service: async () => "service",
+      sessions: async (args) => `sessions ${args.join(",")}`,
+      start: async () => 0,
+    };
+
+    await expect(
+      run(["sessions", "recent", "--limit", "5"], (text) => output.push(text), handlers),
+    ).resolves.toBe(0);
+    expect(output).toEqual(["sessions recent,--limit,5"]);
   });
 
   test("dispatches context through the context handler", async () => {
@@ -185,6 +219,7 @@ describe("run", () => {
       init: async () => "init",
       mcp: async () => "mcp",
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 
@@ -205,6 +240,7 @@ describe("run", () => {
         return undefined;
       },
       service: async () => "service",
+      sessions: async () => "sessions",
       start: async () => 0,
     };
 

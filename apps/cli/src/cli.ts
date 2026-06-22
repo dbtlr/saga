@@ -5,6 +5,7 @@ import { runIngestCommand } from "./ingest.js";
 import { runInit } from "./init.js";
 import { runMcpCommand } from "./mcp.js";
 import { runServiceCommand } from "./service.js";
+import { runSessionsCommand } from "./sessions.js";
 import { runStartCommand } from "./start.js";
 import { errorLine, renderOptionsFromGlobals } from "./render.js";
 
@@ -48,6 +49,10 @@ export const COMMANDS = {
     description: "manually ingest source data for debugging",
     subcommands: ["claude-hook", "codex-hook", "recent", "claims"],
   },
+  sessions: {
+    description: "import and inspect raw session records",
+    subcommands: ["import", "recent", "show"],
+  },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -82,6 +87,7 @@ export interface CommandHandlers {
   init: typeof runInit;
   mcp: typeof runMcpCommand;
   service: typeof runServiceCommand;
+  sessions: typeof runSessionsCommand;
   start: typeof runStartCommand;
 }
 
@@ -93,6 +99,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   init: runInit,
   mcp: runMcpCommand,
   service: runServiceCommand,
+  sessions: runSessionsCommand,
   start: runStartCommand,
 };
 
@@ -149,6 +156,11 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === undefined) continue;
+
+    if (positionals.length > 0) {
+      positionals.push(arg);
+      continue;
+    }
 
     if (arg === "--") {
       positionals.push(...argv.slice(index + 1));
@@ -253,6 +265,10 @@ export async function run(
     }
     if (parsed.command === "service") {
       write(await handlers.service(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === "sessions") {
+      write(await handlers.sessions(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === "start") {
