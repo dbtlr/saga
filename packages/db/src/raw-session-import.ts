@@ -151,6 +151,23 @@ async function importRawSessionRecordUnsafe(
     }
 
     const now = new Date();
+    const transcriptNormalization = normalizeTranscript(input);
+    const noopImport = await findCurrentNoopRawSessionImport(tx, {
+      input,
+      now,
+      transcriptNormalization,
+    });
+    if (noopImport !== undefined) {
+      const relationshipSession = await deriveSessionRelationships(tx, {
+        input,
+        session: noopImport.session,
+      });
+      return {
+        ...noopImport,
+        session: relationshipSession,
+      };
+    }
+
     const [authorUser] = await tx
       .insert(users)
       .values({
@@ -188,8 +205,6 @@ async function importRawSessionRecordUnsafe(
       input,
       sourceBindingId: sourceBinding.id,
     });
-
-    const transcriptNormalization = normalizeTranscript(input);
 
     const [activeRecord] = await tx
       .select()
@@ -410,6 +425,106 @@ async function importRawSessionRecordUnsafe(
       sourceBinding,
     };
   });
+}
+
+async function findCurrentNoopRawSessionImport(
+  tx: DatabaseService["db"],
+  input: {
+    input: NormalizedRawSessionImportInput;
+    now: Date;
+    transcriptNormalization?: TranscriptNormalization | undefined;
+  },
+): Promise<RawSessionImportResult | undefined> {
+  const session = await findSessionWithoutAdoption(tx, input.input);
+  if (session === undefined) return undefined;
+
+  const [activeRecord] = await tx
+    .select()
+    .from(rawSessionRecords)
+    .where(
+      and(
+        eq(rawSessionRecords.workspaceId, input.input.workspaceId),
+        eq(rawSessionRecords.sessionId, session.id),
+        eq(rawSessionRecords.isActive, true),
+      ),
+    )
+    .limit(1);
+  assertExpectedActiveRawSessionRecord(input.input, activeRecord);
+
+  const existingRecord = await findRawSessionRecordByContentHash(tx, {
+    contentHash: input.input.contentHash,
+    sessionId: session.id,
+  });
+  if (
+    existingRecord === undefined ||
+    !existingRecord.isActive ||
+    activeRecord?.id !== existingRecord.id ||
+    existingRecord.activityIntervalId === null
+  ) {
+    return undefined;
+  }
+
+  const activityInterval = await findActivityIntervalById(tx, {
+    id: existingRecord.activityIntervalId,
+    workspaceId: input.input.workspaceId,
+  });
+  const authorUser = await findCurrentHostUser(tx, input.input);
+  if (authorUser === undefined || session.authorUserId !== authorUser.id) return undefined;
+
+  const sourceBinding = await findCurrentRawSessionSourceBinding(tx, input.input);
+  if (
+    sourceBinding === undefined ||
+    session.sourceBindingId !== sourceBinding.id ||
+    existingRecord.sourceBindingId !== sourceBinding.id ||
+    existingRecord.authorUserId !== authorUser.id
+  ) {
+    return undefined;
+  }
+
+  if (
+    !(await rawSessionRecordIsCurrent(tx, {
+      activityIntervalId: activityInterval.id,
+      existingRecord,
+      input: input.input,
+      sessionId: session.id,
+      transcriptNormalization: input.transcriptNormalization,
+    }))
+  ) {
+    return undefined;
+  }
+
+  const settlement = settlementForExistingRawSessionRecord({
+    activityInterval,
+    input: input.input,
+    now: input.now,
+    transcriptNormalization: input.transcriptNormalization,
+  });
+  if (
+    !sessionIsCurrentForRefresh({
+      input: input.input,
+      rawSessionRecordId: existingRecord.id,
+      session,
+      settlement,
+      transcriptNormalization: input.transcriptNormalization,
+    }) ||
+    !activityIntervalIsCurrentForRefresh({
+      activityInterval,
+      settlement,
+      transcriptNormalization: input.transcriptNormalization,
+    })
+  ) {
+    return undefined;
+  }
+
+  return {
+    activityInterval,
+    authorUser,
+    contentHash: input.input.contentHash,
+    operation: "unchanged",
+    rawSessionRecord: existingRecord,
+    session,
+    sourceBinding,
+  };
 }
 
 async function reuseExistingRawSessionRecord(
@@ -890,6 +1005,85 @@ async function refreshSessionAndActivityInterval(
   return { activityInterval: updatedActivityInterval, session: updatedSession };
 }
 
+function sessionIsCurrentForRefresh(input: {
+  input: NormalizedRawSessionImportInput;
+  rawSessionRecordId: string;
+  session: Session;
+  settlement?: ActivityIntervalSettlement | undefined;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): boolean {
+  const expectedEndedAt =
+    input.transcriptNormalization?.session.endedAt ??
+    (input.settlement?.reason === "stop_event" ? input.settlement.endedAt : input.session.endedAt);
+  const expectedMetadata = {
+    ...sessionMetadataBaseForRefresh({
+      existingMetadata: input.session.metadata,
+      transcriptNormalization: input.transcriptNormalization,
+    }),
+    ...input.transcriptNormalization?.session.metadata,
+    latestRawSessionRecordId: input.rawSessionRecordId,
+  };
+
+  return (
+    nullableDatesEqual(input.session.endedAt, expectedEndedAt) &&
+    nullableDatesEqual(
+      input.session.lastActivityAt,
+      input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
+    ) &&
+    jsonEqual(input.session.metadata, expectedMetadata) &&
+    input.session.model ===
+      (input.transcriptNormalization?.session.model ?? input.input.model ?? input.session.model) &&
+    nullableDatesEqual(
+      input.session.startedAt,
+      input.transcriptNormalization?.session.startedAt ?? input.session.startedAt,
+    ) &&
+    input.session.status ===
+      (input.transcriptNormalization?.session.status ??
+        input.input.status ??
+        (input.settlement?.reason === "stop_event" ? "completed" : input.session.status)) &&
+    input.session.title ===
+      (input.transcriptNormalization?.session.title ?? input.input.title ?? input.session.title)
+  );
+}
+
+function activityIntervalIsCurrentForRefresh(input: {
+  activityInterval: ActivityInterval;
+  settlement?: ActivityIntervalSettlement | undefined;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): boolean {
+  const expectedEndedAt =
+    input.settlement?.endedAt ??
+    input.transcriptNormalization?.activityInterval.endedAt ??
+    input.activityInterval.endedAt;
+  const expectedSettledAt = input.settlement?.settledAt ?? input.activityInterval.settledAt;
+  const expectedSettlementReason =
+    input.settlement?.reason ?? input.activityInterval.settlementReason;
+  const expectedSettlementTriggerRawEventId =
+    input.settlement?.triggerRawEventId ?? input.activityInterval.settlementTriggerRawEventId;
+  const expectedMetadata = {
+    ...asRecord(input.activityInterval.metadata),
+    ...input.transcriptNormalization?.activityInterval.metadata,
+    ...input.settlement?.metadata,
+  };
+
+  return (
+    nullableDatesEqual(input.activityInterval.endedAt, expectedEndedAt) &&
+    jsonEqual(input.activityInterval.metadata, expectedMetadata) &&
+    nullableDatesEqual(input.activityInterval.settledAt, expectedSettledAt) &&
+    input.activityInterval.settlementReason === expectedSettlementReason &&
+    input.activityInterval.settlementTriggerRawEventId === expectedSettlementTriggerRawEventId &&
+    input.activityInterval.startedAt.getTime() ===
+      (
+        input.transcriptNormalization?.activityInterval.startedAt ??
+        input.activityInterval.startedAt
+      ).getTime() &&
+    input.activityInterval.status ===
+      (input.settlement === undefined
+        ? (input.transcriptNormalization?.activityInterval.status ?? input.activityInterval.status)
+        : "settled")
+  );
+}
+
 function sessionMetadataBaseForRefresh(input: {
   existingMetadata: unknown;
   transcriptNormalization?: TranscriptNormalization | undefined;
@@ -901,6 +1095,41 @@ function sessionMetadataBaseForRefresh(input: {
   delete refreshedMetadata.parentHarnessSessionId;
   delete refreshedMetadata.subagentEvidence;
   return refreshedMetadata;
+}
+
+async function rawSessionRecordIsCurrent(
+  tx: DatabaseService["db"],
+  input: {
+    activityIntervalId: string;
+    existingRecord: RawSessionRecord;
+    input: NormalizedRawSessionImportInput;
+    sessionId: string;
+    transcriptNormalization?: TranscriptNormalization | undefined;
+  },
+): Promise<boolean> {
+  const rawRecordMetadata = asRecord(input.existingRecord.metadata);
+  const rawRecordCurrent =
+    (input.input.harnessSessionId === undefined ||
+      input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
+    (input.transcriptNormalization === undefined ||
+      jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata));
+  if (!rawRecordCurrent) return false;
+
+  if (input.transcriptNormalization !== undefined) {
+    return transcriptDerivedRowsAreCurrent(tx, {
+      activityIntervalId: input.activityIntervalId,
+      input: input.input,
+      rawSessionRecordId: input.existingRecord.id,
+      sessionId: input.sessionId,
+      transcriptNormalization: input.transcriptNormalization,
+    });
+  }
+
+  return sessionSegmentsAreCurrent(tx, {
+    rawSessionRecordId: input.existingRecord.id,
+    sessionId: input.sessionId,
+    workspaceId: input.input.workspaceId,
+  });
 }
 
 async function repairActiveRawSessionRecordDerivedRows(
@@ -1130,6 +1359,41 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
   };
 }
 
+async function findSessionWithoutAdoption(
+  tx: DatabaseService["db"],
+  input: NormalizedRawSessionImportInput,
+): Promise<Session | undefined> {
+  if (input.harnessSessionId !== undefined) {
+    const [session] = await tx
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, input.workspaceId),
+          eq(sessions.harness, input.harness),
+          eq(sessions.harnessSessionId, input.harnessSessionId),
+        ),
+      )
+      .limit(1);
+    if (session !== undefined) return session;
+  }
+
+  if (input.sourceLocatorHash === undefined) return undefined;
+  const [session] = await tx
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.workspaceId, input.workspaceId),
+        eq(sessions.harness, input.harness),
+        isNull(sessions.harnessSessionId),
+        eq(sessions.sourceLocatorHash, input.sourceLocatorHash),
+      ),
+    )
+    .limit(1);
+  return session;
+}
+
 async function findSession(
   tx: DatabaseService["db"],
   input: NormalizedRawSessionImportInput,
@@ -1256,14 +1520,8 @@ async function resolveRawSessionSourceBinding(
   },
 ): Promise<SourceBinding> {
   const sourceUri = harnessSourceUri(input.input.harness, input.input.host.id);
-  const config = {
-    hostId: input.input.host.id,
-    hostLabel: input.input.host.label,
-    projectRoot: input.input.host.projectRoot,
-  };
-  const displayName = `${harnessDisplayName(input.input.harness)} on ${
-    input.input.host.label ?? input.input.host.id
-  }`;
+  const config = sourceBindingConfig(input.input);
+  const displayName = sourceBindingDisplayName(input.input);
 
   if (input.input.sourceBindingId !== undefined) {
     const [sourceBinding] = await tx
@@ -1313,6 +1571,52 @@ async function resolveRawSessionSourceBinding(
     throw new RawSessionImportError({ message: "source binding returned no row" });
   }
   return sourceBinding;
+}
+
+async function findCurrentRawSessionSourceBinding(
+  tx: DatabaseService["db"],
+  input: NormalizedRawSessionImportInput,
+): Promise<SourceBinding | undefined> {
+  const sourceUri = harnessSourceUri(input.harness, input.host.id);
+  const config = sourceBindingConfig(input);
+  const displayName = sourceBindingDisplayName(input);
+
+  if (input.sourceBindingId !== undefined) {
+    const [sourceBinding] = await tx
+      .select()
+      .from(sourceBindings)
+      .where(
+        and(
+          eq(sourceBindings.workspaceId, input.workspaceId),
+          eq(sourceBindings.id, input.sourceBindingId),
+          eq(sourceBindings.sourceType, input.harness),
+          eq(sourceBindings.sourceUri, sourceUri),
+        ),
+      )
+      .limit(1);
+    if (sourceBinding === undefined) return undefined;
+    return sourceBinding.displayName === displayName && jsonEqual(sourceBinding.config, config)
+      ? sourceBinding
+      : undefined;
+  }
+
+  const [sourceBinding] = await tx
+    .select()
+    .from(sourceBindings)
+    .where(
+      and(
+        eq(sourceBindings.workspaceId, input.workspaceId),
+        eq(sourceBindings.sourceType, input.harness),
+        eq(sourceBindings.sourceUri, sourceUri),
+      ),
+    )
+    .limit(1);
+  if (sourceBinding === undefined) return undefined;
+  return sourceBinding.enabled &&
+    sourceBinding.displayName === displayName &&
+    jsonEqual(sourceBinding.config, config)
+    ? sourceBinding
+    : undefined;
 }
 
 async function resolveActivityInterval(
@@ -1808,6 +2112,46 @@ function harnessDisplayName(harness: RawSessionHarness): string {
   return harness === "claude" ? "Claude Code" : "Codex";
 }
 
+function sourceBindingConfig(input: NormalizedRawSessionImportInput): Record<string, unknown> {
+  return compactRecord({
+    hostId: input.host.id,
+    hostLabel: input.host.label,
+    projectRoot: input.host.projectRoot,
+  });
+}
+
+function sourceBindingDisplayName(input: NormalizedRawSessionImportInput): string {
+  return `${harnessDisplayName(input.harness)} on ${input.host.label ?? input.host.id}`;
+}
+
+async function findCurrentHostUser(
+  tx: DatabaseService["db"],
+  input: NormalizedRawSessionImportInput,
+): Promise<User | undefined> {
+  const [user] = await tx
+    .select()
+    .from(users)
+    .where(
+      and(
+        eq(users.workspaceId, input.workspaceId),
+        eq(users.identitySource, "host"),
+        eq(users.handle, input.author.handle),
+        eq(users.externalSubject, input.author.externalSubject ?? input.host.id),
+      ),
+    )
+    .limit(1);
+  if (user === undefined) return undefined;
+
+  const metadata = compactRecord({
+    hostId: input.host.id,
+    hostLabel: input.host.label,
+  });
+  return user.displayName === (input.author.displayName ?? null) &&
+    jsonEqual(user.metadata, metadata)
+    ? user
+    : undefined;
+}
+
 function normalizeLocator(locator: string): string {
   return locator.trim().replaceAll(/\\/g, "/");
 }
@@ -1863,6 +2207,11 @@ function compactRecord(value: Record<string, unknown>): Record<string, unknown> 
 
 function datesEqual(actual: Date | null, expected: Date | undefined): boolean {
   if (actual === null || expected === undefined) return actual === null && expected === undefined;
+  return actual.getTime() === expected.getTime();
+}
+
+function nullableDatesEqual(actual: Date | null, expected: Date | null): boolean {
+  if (actual === null || expected === null) return actual === null && expected === null;
   return actual.getTime() === expected.getTime();
 }
 

@@ -255,6 +255,116 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("unchanged raw-session reimport leaves current row updatedAt timestamps unchanged", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-idempotent-updated-at");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T12:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-idempotent-updated-at-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T12:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-idempotent-updated-at",
+        },
+      },
+      {
+        timestamp: "2026-06-22T12:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Do not churn timestamps." }],
+          metadata: { turn_id: "turn-idempotent-updated-at" },
+        },
+      },
+    ]);
+    const input = {
+      author: {
+        displayName: "Drew",
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T12:00:02.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-idempotent-updated-at",
+        label: "local-host",
+        projectRoot: "/work/saga",
+      },
+      locator: "/tmp/codex-idempotent-updated-at.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+    const frozenUpdatedAt = new Date("2026-06-22T00:00:00.000Z");
+    await service.db
+      .update(sessions)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(sessions.id, first.session.id));
+    await service.db
+      .update(activityIntervals)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(activityIntervals.id, first.activityInterval.id));
+    await service.db
+      .update(rawSessionRecords)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
+    await service.db
+      .update(sourceBindings)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(sourceBindings.id, first.sourceBinding.id));
+    await service.db
+      .update(users)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(users.id, first.authorUser.id));
+
+    const second = await Effect.runPromise(importRawSessionRecord(service, input));
+
+    expect(second.operation).toBe("unchanged");
+    expect(second.session.id).toBe(first.session.id);
+    expect(second.activityInterval.id).toBe(first.activityInterval.id);
+    expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(second.sourceBinding.id).toBe(first.sourceBinding.id);
+    expect(second.authorUser.id).toBe(first.authorUser.id);
+
+    const [storedSession] = await service.db
+      .select({ updatedAt: sessions.updatedAt })
+      .from(sessions)
+      .where(eq(sessions.id, first.session.id));
+    const [storedActivityInterval] = await service.db
+      .select({ updatedAt: activityIntervals.updatedAt })
+      .from(activityIntervals)
+      .where(eq(activityIntervals.id, first.activityInterval.id));
+    const [storedRawSessionRecord] = await service.db
+      .select({ updatedAt: rawSessionRecords.updatedAt })
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
+    const [storedSourceBinding] = await service.db
+      .select({ updatedAt: sourceBindings.updatedAt })
+      .from(sourceBindings)
+      .where(eq(sourceBindings.id, first.sourceBinding.id));
+    const [storedUser] = await service.db
+      .select({ updatedAt: users.updatedAt })
+      .from(users)
+      .where(eq(users.id, first.authorUser.id));
+
+    expect(storedSession?.updatedAt).toEqual(frozenUpdatedAt);
+    expect(storedActivityInterval?.updatedAt).toEqual(frozenUpdatedAt);
+    expect(storedRawSessionRecord?.updatedAt).toEqual(frozenUpdatedAt);
+    expect(storedSourceBinding?.updatedAt).toEqual(frozenUpdatedAt);
+    expect(storedUser?.updatedAt).toEqual(frozenUpdatedAt);
+  });
+
   test("handles concurrent duplicate first imports without duplicate sessions or raw records", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const db = service;
@@ -4461,6 +4571,19 @@ describePostgres("raw session import", () => {
         contentParts: [{ type: "tool_result", name: "web.run", callId: "call-repair" }],
       })
       .where(eq(sessionTurns.id, toolResultTurn.id));
+    const frozenUpdatedAt = new Date("2026-06-22T00:00:00.000Z");
+    await service.db
+      .update(sessions)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(sessions.id, first.session.id));
+    await service.db
+      .update(activityIntervals)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(activityIntervals.id, first.activityInterval.id));
+    await service.db
+      .update(rawSessionRecords)
+      .set({ updatedAt: frozenUpdatedAt })
+      .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
 
     const second = await Effect.runPromise(importRawSessionRecord(service, input));
 
@@ -4484,6 +4607,22 @@ describePostgres("raw session import", () => {
         ],
       },
     ]);
+
+    const [storedSession] = await service.db
+      .select({ updatedAt: sessions.updatedAt })
+      .from(sessions)
+      .where(eq(sessions.id, first.session.id));
+    const [storedActivityInterval] = await service.db
+      .select({ updatedAt: activityIntervals.updatedAt })
+      .from(activityIntervals)
+      .where(eq(activityIntervals.id, first.activityInterval.id));
+    const [storedRawSessionRecord] = await service.db
+      .select({ updatedAt: rawSessionRecords.updatedAt })
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
+    expect(storedSession?.updatedAt.getTime()).toBeGreaterThan(frozenUpdatedAt.getTime());
+    expect(storedActivityInterval?.updatedAt.getTime()).toBeGreaterThan(frozenUpdatedAt.getTime());
+    expect(storedRawSessionRecord?.updatedAt.getTime()).toBeGreaterThan(frozenUpdatedAt.getTime());
   });
 
   test("adopts legacy locator-scoped Codex session on later session_meta id detection", async () => {
