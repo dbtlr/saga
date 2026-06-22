@@ -1285,6 +1285,147 @@ describePostgres("raw session import", () => {
     expect(stopped.session.status).toBe("completed");
   });
 
+  test("settles unchanged Stop input captured at the active interval boundary", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-boundary-stop-interval");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T19:18:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-boundary-stop-interval-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T19:18:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Stop exactly on the active boundary." }],
+        },
+      },
+    ]);
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T19:18:01.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-boundary-stop-interval",
+      },
+      locator: "/tmp/codex-boundary-stop-interval.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "UserPromptSubmit",
+        },
+      }),
+    );
+    const stopped = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "Stop",
+        },
+      }),
+    );
+
+    expect(stopped.operation).toBe("unchanged");
+    expect(stopped.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(stopped.activityInterval.id).toBe(first.activityInterval.id);
+    expect(stopped.activityInterval).toMatchObject({
+      endedAt: new Date("2026-06-22T19:18:01.000Z"),
+      settlementReason: "stop_event",
+      status: "settled",
+    });
+    expect(stopped.session).toMatchObject({
+      endedAt: new Date("2026-06-22T19:18:01.000Z"),
+      status: "completed",
+    });
+  });
+
+  test("refreshes stale current active snapshot state before same-content no-op", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-stale-current-active");
+    const input = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T19:19:01.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-stale-current-active",
+      },
+      locator: "/tmp/codex-stale-current-active.jsonl",
+      rawContent: codexTranscript([
+        {
+          timestamp: "2026-06-22T19:19:00.000Z",
+          type: "session_meta",
+          payload: {
+            cwd: "/work/saga",
+            id: "codex-stale-current-active-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T19:19:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Repair stale current active state." }],
+          },
+        },
+      ]),
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+    await service.db
+      .update(sessions)
+      .set({ metadata: {} })
+      .where(eq(sessions.id, first.session.id));
+    await service.db
+      .update(activityIntervals)
+      .set({ metadata: {} })
+      .where(eq(activityIntervals.id, first.activityInterval.id));
+
+    const repeated = await Effect.runPromise(importRawSessionRecord(service, input));
+    const [sessionRow] = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, first.session.id))
+      .limit(1);
+    const [activityIntervalRow] = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.id, first.activityInterval.id))
+      .limit(1);
+
+    expect(repeated.operation).toBe("unchanged");
+    expect(repeated.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(repeated.activityInterval.id).toBe(first.activityInterval.id);
+    expect(repeated.session.lastActivityAt).toEqual(new Date("2026-06-22T19:19:01.000Z"));
+    expect(sessionRow?.metadata).toMatchObject({
+      cwd: "/work/saga",
+      latestRawSessionRecordId: first.rawSessionRecord.id,
+      normalizer: "codex-transcript-v1",
+      turnCount: 1,
+    });
+    expect(activityIntervalRow?.metadata).toMatchObject({
+      cwd: "/work/saga",
+      normalizer: "codex-transcript-v1",
+    });
+  });
+
   test("opens new Activity Intervals for clear-context lifecycle and idle timeout", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-interval-boundaries");

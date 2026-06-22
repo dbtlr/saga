@@ -504,23 +504,12 @@ async function findCurrentNoopRawSessionImport(
     return undefined;
   }
 
-  if (
-    activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
+  const repeatedBoundaryAlreadySatisfied =
+    repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
       activityInterval,
       input: input.input,
       session,
-    })
-  ) {
-    return {
-      activityInterval,
-      authorUser,
-      contentHash: input.input.contentHash,
-      operation: "unchanged",
-      rawSessionRecord: existingRecord,
-      session,
-      sourceBinding,
-    };
-  }
+    });
 
   const settlement = settlementForExistingRawSessionRecord({
     activityInterval,
@@ -533,11 +522,15 @@ async function findCurrentNoopRawSessionImport(
       input: input.input,
       rawSessionRecordId: existingRecord.id,
       session,
+      sessionLastActivityAt: repeatedBoundaryAlreadySatisfied ? input.input.capturedAt : undefined,
       settlement,
       transcriptNormalization: input.transcriptNormalization,
     }) ||
     !activityIntervalIsCurrentForRefresh({
       activityInterval,
+      activityIntervalStartedAt: repeatedBoundaryAlreadySatisfied
+        ? input.input.capturedAt
+        : undefined,
       settlement,
       transcriptNormalization: input.transcriptNormalization,
     })
@@ -600,7 +593,7 @@ async function reuseExistingRawSessionRecord(
     : existingInterval;
   const boundaryAlreadySatisfied =
     !requiresBoundaryWork &&
-    activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
+    repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
       activityInterval: resolvedInterval,
       input: input.input,
       session: input.session,
@@ -629,20 +622,39 @@ async function reuseExistingRawSessionRecord(
     now: input.now,
     transcriptNormalization: input.transcriptNormalization,
   });
+  const boundaryAlreadySatisfiedAndCurrent =
+    boundaryAlreadySatisfied &&
+    sessionIsCurrentForRefresh({
+      input: input.input,
+      rawSessionRecordId: repairedRecord.id,
+      session: input.session,
+      sessionLastActivityAt: input.input.capturedAt,
+      settlement: existingSettlement,
+      transcriptNormalization: input.transcriptNormalization,
+    }) &&
+    activityIntervalIsCurrentForRefresh({
+      activityInterval: resolvedInterval,
+      activityIntervalStartedAt: input.input.capturedAt,
+      settlement: existingSettlement,
+      transcriptNormalization: input.transcriptNormalization,
+    });
   const refreshed =
     repairedRecord.isActive &&
-    ((input.transcriptNormalization !== undefined && !boundaryAlreadySatisfied) ||
+    ((input.transcriptNormalization !== undefined && !boundaryAlreadySatisfiedAndCurrent) ||
       existingSettlement !== undefined ||
-      requiresBoundaryWork)
+      requiresBoundaryWork ||
+      (boundaryAlreadySatisfied && !boundaryAlreadySatisfiedAndCurrent))
       ? await refreshSessionAndActivityInterval(tx, {
           activityInterval: resolvedInterval,
-          activityIntervalStartedAt: requiresBoundaryWork ? input.input.capturedAt : undefined,
+          activityIntervalStartedAt:
+            requiresBoundaryWork || boundaryAlreadySatisfied ? input.input.capturedAt : undefined,
           input: input.input,
           now: input.now,
           rawSessionRecordId: repairedRecord.id,
           settlement: existingSettlement,
           session: input.session,
-          sessionLastActivityAt: requiresBoundaryWork ? input.input.capturedAt : undefined,
+          sessionLastActivityAt:
+            requiresBoundaryWork || boundaryAlreadySatisfied ? input.input.capturedAt : undefined,
           transcriptNormalization: input.transcriptNormalization,
         })
       : { activityInterval: resolvedInterval, session: input.session };
@@ -1079,6 +1091,7 @@ function sessionIsCurrentForRefresh(input: {
   input: NormalizedRawSessionImportInput;
   rawSessionRecordId: string;
   session: Session;
+  sessionLastActivityAt?: Date | undefined;
   settlement?: ActivityIntervalSettlement | undefined;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): boolean {
@@ -1098,7 +1111,9 @@ function sessionIsCurrentForRefresh(input: {
     nullableDatesEqual(input.session.endedAt, expectedEndedAt) &&
     nullableDatesEqual(
       input.session.lastActivityAt,
-      input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
+      input.sessionLastActivityAt ??
+        input.transcriptNormalization?.session.lastActivityAt ??
+        input.input.capturedAt,
     ) &&
     jsonEqual(input.session.metadata, expectedMetadata) &&
     input.session.model ===
@@ -1118,6 +1133,7 @@ function sessionIsCurrentForRefresh(input: {
 
 function activityIntervalIsCurrentForRefresh(input: {
   activityInterval: ActivityInterval;
+  activityIntervalStartedAt?: Date | undefined;
   settlement?: ActivityIntervalSettlement | undefined;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): boolean {
@@ -1144,6 +1160,7 @@ function activityIntervalIsCurrentForRefresh(input: {
     input.activityInterval.settlementTriggerRawEventId === expectedSettlementTriggerRawEventId &&
     input.activityInterval.startedAt.getTime() ===
       (
+        input.activityIntervalStartedAt ??
         input.transcriptNormalization?.activityInterval.startedAt ??
         input.activityInterval.startedAt
       ).getTime() &&
@@ -1838,7 +1855,7 @@ function activityIntervalBoundaryRequiredForExistingRawSessionRecord(input: {
   );
 }
 
-function activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord(input: {
+function repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord(input: {
   activityInterval: ActivityInterval;
   input: NormalizedRawSessionImportInput;
   session: Session;
@@ -1850,6 +1867,8 @@ function activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord(inp
 
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
+  if (hookEventName === "Stop") return false;
+
   if (
     hookEventName === "SessionStart" &&
     (sessionStartSource === "clear" || sessionStartSource === "compact")
@@ -1857,7 +1876,11 @@ function activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord(inp
     return true;
   }
 
-  return input.session.lastActivityAt?.getTime() === input.input.capturedAt.getTime();
+  return (
+    hookEventName === undefined &&
+    input.activityInterval.ordinal > 0 &&
+    input.session.lastActivityAt?.getTime() === input.input.capturedAt.getTime()
+  );
 }
 
 async function insertActivityInterval(
