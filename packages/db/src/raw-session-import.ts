@@ -338,19 +338,39 @@ async function repairActiveRawSessionRecordDerivedRows(
     transcriptNormalization: CodexTranscriptNormalization;
   },
 ): Promise<RawSessionRecord> {
-  await regenerateDerivedSessionRecords(tx, {
+  const derivedRowsCurrent = await codexDerivedRowsAreCurrent(tx, {
     activityIntervalId: input.activityIntervalId,
     input: input.input,
     rawSessionRecordId: input.existingRecord.id,
     sessionId: input.sessionId,
     transcriptNormalization: input.transcriptNormalization,
   });
+  const rawRecordMetadata = asRecord(input.existingRecord.metadata);
+  const rawRecordCurrent =
+    (input.input.harnessSessionId === undefined ||
+      input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
+    jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata);
+
+  if (derivedRowsCurrent && rawRecordCurrent) return input.existingRecord;
+
+  if (!derivedRowsCurrent) {
+    await regenerateDerivedSessionRecords(tx, {
+      activityIntervalId: input.activityIntervalId,
+      input: input.input,
+      rawSessionRecordId: input.existingRecord.id,
+      sessionId: input.sessionId,
+      transcriptNormalization: input.transcriptNormalization,
+    });
+  }
 
   const [rawSessionRecord] = await tx
     .update(rawSessionRecords)
     .set({
+      ...(input.input.harnessSessionId !== undefined
+        ? { harnessSessionId: input.input.harnessSessionId }
+        : {}),
       metadata: {
-        ...asRecord(input.existingRecord.metadata),
+        ...rawRecordMetadata,
         normalization: input.transcriptNormalization.metadata,
       },
       updatedAt: new Date(),
@@ -361,6 +381,66 @@ async function repairActiveRawSessionRecordDerivedRows(
     throw new RawSessionImportError({ message: "raw session record repair returned no row" });
   }
   return rawSessionRecord;
+}
+
+async function codexDerivedRowsAreCurrent(
+  tx: DatabaseService["db"],
+  input: {
+    activityIntervalId: string;
+    input: NormalizedRawSessionImportInput;
+    rawSessionRecordId: string;
+    sessionId: string;
+    transcriptNormalization: CodexTranscriptNormalization;
+  },
+): Promise<boolean> {
+  const turnRows = await tx
+    .select()
+    .from(sessionTurns)
+    .where(
+      and(
+        eq(sessionTurns.sessionId, input.sessionId),
+        eq(sessionTurns.workspaceId, input.input.workspaceId),
+      ),
+    )
+    .orderBy(sessionTurns.ordinal);
+  const segmentRows = await tx
+    .select({ id: sessionSegments.id })
+    .from(sessionSegments)
+    .where(
+      and(
+        eq(sessionSegments.sessionId, input.sessionId),
+        eq(sessionSegments.workspaceId, input.input.workspaceId),
+      ),
+    )
+    .limit(1);
+
+  if (segmentRows.length > 0) return false;
+  if (turnRows.length !== input.transcriptNormalization.turns.length) return false;
+
+  return input.transcriptNormalization.turns.every((normalizedTurn, turnIndex) => {
+    const turn = turnRows[turnIndex];
+    if (turn === undefined) return false;
+
+    return (
+      turn.activityIntervalId === input.activityIntervalId &&
+      turn.actorKind === normalizedTurn.actorKind &&
+      turn.actorLabel === (normalizedTurn.actorLabel ?? null) &&
+      jsonEqual(turn.contentParts, normalizedTurn.contentParts) &&
+      datesEqual(turn.endedAt, normalizedTurn.endedAt) &&
+      turn.harnessTurnId === (normalizedTurn.harnessTurnId ?? null) &&
+      jsonEqual(turn.metadata, normalizedTurn.metadata) &&
+      turn.model === (normalizedTurn.model ?? null) &&
+      turn.ordinal === turnIndex &&
+      turn.parentTurnId === null &&
+      jsonEqual(turn.rawEventIds, []) &&
+      turn.rawSessionRecordId === input.rawSessionRecordId &&
+      jsonEqual(turn.rawSpan, normalizedTurn.rawSpan) &&
+      turn.role === normalizedTurn.role &&
+      turn.sessionId === input.sessionId &&
+      datesEqual(turn.startedAt, normalizedTurn.startedAt) &&
+      turn.workspaceId === input.input.workspaceId
+    );
+  });
 }
 
 interface NormalizedRawSessionImportInput extends RawSessionImportInput {
@@ -440,7 +520,7 @@ async function findSession(
         ),
       )
       .limit(1);
-    return session;
+    if (session !== undefined) return session;
   }
 
   if (input.sourceLocatorHash === undefined) return undefined;
@@ -456,6 +536,22 @@ async function findSession(
       ),
     )
     .limit(1);
+  if (session !== undefined && input.harnessSessionId !== undefined) {
+    const [adoptedSession] = await tx
+      .update(sessions)
+      .set({
+        harnessSessionId: input.harnessSessionId,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessions.id, session.id))
+      .returning();
+    if (adoptedSession === undefined) {
+      throw new RawSessionImportError({
+        message: "legacy locator session adoption returned no row",
+      });
+    }
+    return adoptedSession;
+  }
   return session;
 }
 
@@ -762,6 +858,26 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function datesEqual(actual: Date | null, expected: Date | undefined): boolean {
+  if (actual === null || expected === undefined) return actual === null && expected === undefined;
+  return actual.getTime() === expected.getTime();
+}
+
+function jsonEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),
+  );
 }
 
 function errorMessage(cause: unknown): string {

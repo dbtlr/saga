@@ -788,6 +788,155 @@ describePostgres("raw session import", () => {
     ]);
   });
 
+  test("adopts legacy locator-scoped Codex session on later session_meta id detection", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-legacy-locator");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:40:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-legacy-locator-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:40:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Adopt the legacy locator session." }],
+          metadata: { turn_id: "turn-legacy" },
+        },
+      },
+    ]);
+    const input = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T14:40:02.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-codex-legacy-locator",
+      },
+      locator: "/tmp/codex-legacy-locator.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+
+    // Simulate a pre-normalizer import that was identifiable only by locator.
+    await service.db
+      .update(rawSessionRecords)
+      .set({ harnessSessionId: null })
+      .where(eq(rawSessionRecords.id, first.rawSessionRecord.id));
+    await service.db
+      .update(sessions)
+      .set({ harnessSessionId: null })
+      .where(eq(sessions.id, first.session.id));
+
+    const second = await Effect.runPromise(importRawSessionRecord(service, input));
+
+    expect(second.operation).toBe("unchanged");
+    expect(second.session.id).toBe(first.session.id);
+    expect(second.session.harnessSessionId).toBe("codex-legacy-locator-session");
+    expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+
+    const workspaceSessions = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.workspaceId, workspaceId));
+    expect(workspaceSessions).toHaveLength(1);
+    expect(workspaceSessions[0]?.harnessSessionId).toBe("codex-legacy-locator-session");
+
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.harnessSessionId).toBe("codex-legacy-locator-session");
+  });
+
+  test("unchanged Codex reimport preserves current session turn ids", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-unchanged-turn-ids");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:50:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-unchanged-turn-ids-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:50:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-unchanged",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:50:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Keep my turn ids." }],
+          metadata: { turn_id: "turn-unchanged" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:50:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "assistant-unchanged",
+          role: "assistant",
+          content: [{ type: "output_text", text: "The turn ids should not churn." }],
+          metadata: { turn_id: "turn-unchanged" },
+        },
+      },
+    ]);
+    const input = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T14:50:04.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-codex-unchanged-turn-ids",
+      },
+      locator: "/tmp/codex-unchanged-turn-ids.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+    const firstTurns = await service.db
+      .select({ id: sessionTurns.id })
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+
+    const second = await Effect.runPromise(importRawSessionRecord(service, input));
+    const secondTurns = await service.db
+      .select({ id: sessionTurns.id })
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+
+    expect(second.operation).toBe("unchanged");
+    expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
+  });
+
   test("regenerates Codex derived rows from the active growing snapshot", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("codex-growing");
