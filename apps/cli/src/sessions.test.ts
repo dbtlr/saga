@@ -137,8 +137,9 @@ describe("runSessionsCommand", () => {
 
   test("deletes a session by explicit id with structured safety metadata", async () => {
     const projectRoot = boundProject();
+    const secretReason = "delete-reason-secret-token";
     const output = await runSessionsCommand(
-      ["delete", "raw-record-id", "--reason", "user request"],
+      ["delete", "raw-record-id", "--reason", secretReason],
       renderOptions,
       {
         cwd: projectRoot,
@@ -146,7 +147,7 @@ describe("runSessionsCommand", () => {
           expect(input).toEqual({
             id: "raw-record-id",
             origin: "saga sessions delete",
-            reason: "user request",
+            reason: secretReason,
             workspaceId: "workspace-id",
           });
           return deleteResult();
@@ -154,19 +155,25 @@ describe("runSessionsCommand", () => {
       },
     );
 
-    expect(JSON.parse(output)).toMatchObject({
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    expect(parsed).toMatchObject({
       deleted: {
         rawSessionRecords: 1,
         segments: 2,
         turns: 2,
       },
       operation: "deleted",
+      originClassification: "cli",
+      reasonProvided: true,
       sessionId: "session-id",
     });
+    expect(output).not.toContain(secretReason);
   });
 
-  test("redacts a session with repeated literal and regex patterns without echoing patterns", async () => {
+  test("redacts a session with repeated literal and regex patterns without echoing audit text", async () => {
     const projectRoot = boundProject();
+    const secretOrigin = "redact-origin-secret-token";
+    const secretReason = "redact-reason-secret-token";
     const output = await runSessionsCommand(
       [
         "redact",
@@ -178,8 +185,10 @@ describe("runSessionsCommand", () => {
         "API_KEY=[^\\s]+",
         "--replacement",
         "[REMOVED]",
+        "--origin",
+        secretOrigin,
         "--reason",
-        "safety request",
+        secretReason,
       ],
       {
         ...renderOptions,
@@ -190,8 +199,8 @@ describe("runSessionsCommand", () => {
         redactSession: async (input) => {
           expect(input).toMatchObject({
             id: "session-id",
-            origin: "saga sessions redact",
-            reason: "safety request",
+            origin: secretOrigin,
+            reason: secretReason,
             workspaceId: "workspace-id",
           });
           expect(input.patterns).toEqual([
@@ -214,6 +223,40 @@ describe("runSessionsCommand", () => {
     expect(output).not.toContain("secret-token");
     expect(output).not.toContain("second-secret");
     expect(output).not.toContain("API_KEY=");
+    expect(output).not.toContain(secretOrigin);
+    expect(output).not.toContain(secretReason);
+  });
+
+  test("omits free-form redaction audit text from json output", async () => {
+    const projectRoot = boundProject();
+    const secretOrigin = "json-redact-origin-secret-token";
+    const secretReason = "json-redact-reason-secret-token";
+    const output = await runSessionsCommand(
+      [
+        "redact",
+        "session-id",
+        "--literal",
+        "secret-token",
+        "--origin",
+        secretOrigin,
+        "--reason",
+        secretReason,
+      ],
+      renderOptions,
+      {
+        cwd: projectRoot,
+        redactSession: async () => redactResult(),
+      },
+    );
+
+    expect(JSON.parse(output)).toMatchObject({
+      operation: "redacted",
+      originClassification: "custom",
+      reasonProvided: true,
+    });
+    expect(output).not.toContain(secretOrigin);
+    expect(output).not.toContain(secretReason);
+    expect(output).not.toContain("secret-token");
   });
 
   test("shows a bounded session detail with Activity Intervals, turns, segments, and metadata", async () => {
@@ -594,8 +637,8 @@ function deleteResult(): DeleteSessionSafetyResult {
     },
     deletedAt: new Date("2026-06-22T10:05:00.000Z"),
     operation: "deleted",
-    origin: "saga sessions delete",
-    reason: "user request",
+    originClassification: "cli",
+    reasonProvided: true,
     sessionId: "session-id",
     workspaceId: "workspace-id",
   };
@@ -620,7 +663,7 @@ function redactResult(): RedactSessionSafetyResult {
   });
   return {
     operation: "redacted",
-    origin: "saga sessions redact",
+    originClassification: "custom",
     patternCount: 3,
     previousRawSessionRecordId: "raw-record-old",
     rawSessionImport: {
@@ -633,7 +676,7 @@ function redactResult(): RedactSessionSafetyResult {
         status: "redacted",
       },
     },
-    reason: "safety request",
+    reasonProvided: true,
     redactedAt: new Date("2026-06-22T10:06:00.000Z"),
     replacementCount: 4,
     sessionId: "session-id",

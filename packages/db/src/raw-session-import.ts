@@ -67,6 +67,7 @@ export interface RawSessionImportInput {
               status?: string | undefined;
             }
           | undefined;
+        expectedActiveRawSessionRecordId?: string | undefined;
         redactedFromRawSessionRecordId?: string | undefined;
         status?: string | undefined;
       }
@@ -199,6 +200,19 @@ async function importRawSessionRecordUnsafe(
     });
     const transcriptNormalization = normalizeTranscript(input);
 
+    const [activeRecord] = await tx
+      .select()
+      .from(rawSessionRecords)
+      .where(
+        and(
+          eq(rawSessionRecords.workspaceId, input.workspaceId),
+          eq(rawSessionRecords.sessionId, session.id),
+          eq(rawSessionRecords.isActive, true),
+        ),
+      )
+      .limit(1);
+    assertExpectedActiveRawSessionRecord(input, activeRecord);
+
     const existingRecord = await findRawSessionRecordByContentHash(tx, {
       contentHash: input.contentHash,
       sessionId: session.id,
@@ -236,12 +250,6 @@ async function importRawSessionRecordUnsafe(
       };
     }
 
-    const [activeRecord] = await tx
-      .select()
-      .from(rawSessionRecords)
-      .where(and(eq(rawSessionRecords.sessionId, session.id), eq(rawSessionRecords.isActive, true)))
-      .limit(1);
-
     const [maxSnapshot] = await tx
       .select({ snapshotOrdinal: rawSessionRecords.snapshotOrdinal })
       .from(rawSessionRecords)
@@ -252,7 +260,7 @@ async function importRawSessionRecordUnsafe(
     const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
     if (activeRecord !== undefined) {
       const inactivePrevious = input.rawRecord?.inactivePrevious;
-      await tx
+      const [inactiveRawSessionRecord] = await tx
         .update(rawSessionRecords)
         .set({
           isActive: false,
@@ -273,7 +281,19 @@ async function importRawSessionRecordUnsafe(
           status: inactivePrevious?.status ?? activeRecord.status,
           updatedAt: now,
         })
-        .where(eq(rawSessionRecords.id, activeRecord.id));
+        .where(
+          and(
+            eq(rawSessionRecords.workspaceId, input.workspaceId),
+            eq(rawSessionRecords.id, activeRecord.id),
+            eq(rawSessionRecords.isActive, true),
+          ),
+        )
+        .returning({ id: rawSessionRecords.id });
+      if (inactiveRawSessionRecord === undefined) {
+        throw new RawSessionImportError({
+          message: "active raw session record changed during import",
+        });
+      }
     }
 
     const rawBody = buildRawBody(input);
@@ -746,6 +766,20 @@ async function findRawSessionRecordByContentHash(
     )
     .limit(1);
   return record;
+}
+
+function assertExpectedActiveRawSessionRecord(
+  input: NormalizedRawSessionImportInput,
+  activeRecord: RawSessionRecord | undefined,
+): void {
+  const expectedActiveRawSessionRecordId = cleanOptional(
+    input.rawRecord?.expectedActiveRawSessionRecordId,
+  );
+  if (expectedActiveRawSessionRecordId === undefined) return;
+  if (activeRecord?.id === expectedActiveRawSessionRecordId) return;
+  throw new RawSessionImportError({
+    message: "active raw session record changed during import",
+  });
 }
 
 async function regenerateDerivedSessionRecords(

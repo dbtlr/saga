@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
 import { searchSessionRecall } from "./session-recall.js";
-import { getSessionDetail } from "./session-records.js";
+import { getSessionDetail, listRecentSessionRecords } from "./session-records.js";
 import { deleteSessionSafety, redactSessionSafety } from "./session-safety.js";
 import {
   rawSessionRecords,
@@ -63,6 +63,8 @@ describePostgres("session safety", () => {
   test("redacts the active raw snapshot without exposing the prior sensitive snapshot", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createWorkspace(service, "session-safety-redact");
+    const secretOrigin = "origin-secret-token";
+    const secretReason = "reason-secret-token";
     const imported = await seedRawSession(service, {
       harnessSessionId: "safety-redact",
       rawContent:
@@ -73,21 +75,26 @@ describePostgres("session safety", () => {
     const redacted = await Effect.runPromise(
       redactSessionSafety(service, {
         id: imported.session.id,
-        origin: "test",
+        origin: secretOrigin,
         patterns: [{ kind: "literal", pattern: "super-secret-token" }],
-        reason: "fixture secret",
+        reason: secretReason,
         workspaceId,
       }),
     );
 
     expect(redacted).toMatchObject({
       operation: "redacted",
+      originClassification: "custom",
       patternCount: 1,
       previousRawSessionRecordId: imported.rawSessionRecord.id,
+      reasonProvided: true,
       replacementCount: 2,
       sessionId: imported.session.id,
       workspaceId,
     });
+    expect(JSON.stringify(redacted)).not.toContain(secretOrigin);
+    expect(JSON.stringify(redacted)).not.toContain(secretReason);
+    expect(JSON.stringify(redacted)).not.toContain("super-secret-token");
 
     const rawRecords = await service.db
       .select()
@@ -100,7 +107,6 @@ describePostgres("session safety", () => {
       isActive: false,
       status: "redacted",
     });
-    expect(JSON.stringify(rawRecords[0]?.metadata)).not.toContain("super-secret-token");
     expect(rawRecords[1]).toMatchObject({
       isActive: true,
       redactedFromRawSessionRecordId: imported.rawSessionRecord.id,
@@ -109,7 +115,15 @@ describePostgres("session safety", () => {
     });
     expect(rawRecords[1]?.bodyText).toContain("[REDACTED]");
     expect(rawRecords[1]?.bodyText).not.toContain("super-secret-token");
-    expect(JSON.stringify(rawRecords[1]?.metadata)).not.toContain("super-secret-token");
+    const auditPayload = JSON.stringify(
+      rawRecords.map((record) => ({
+        metadata: record.metadata,
+        provenance: record.provenance,
+      })),
+    );
+    expect(auditPayload).not.toContain(secretOrigin);
+    expect(auditPayload).not.toContain(secretReason);
+    expect(auditPayload).not.toContain("super-secret-token");
 
     const turns = await service.db
       .select()
@@ -133,7 +147,25 @@ describePostgres("session safety", () => {
         workspaceId,
       }),
     );
+    expect(detail.rawSessionRecords.map((record) => record.id)).not.toContain(
+      imported.rawSessionRecord.id,
+    );
+    expect(detail.selectedRawSessionRecord).toBeNull();
     expect(JSON.stringify(detail)).not.toContain("super-secret-token");
+    expect(JSON.stringify(detail)).not.toContain(secretOrigin);
+    expect(JSON.stringify(detail)).not.toContain(secretReason);
+
+    const recent = await Effect.runPromise(
+      listRecentSessionRecords(service, {
+        workspaceId,
+      }),
+    );
+    expect(recent.map((record) => record.rawSessionRecord.id)).not.toContain(
+      imported.rawSessionRecord.id,
+    );
+    expect(JSON.stringify(recent)).not.toContain("super-secret-token");
+    expect(JSON.stringify(recent)).not.toContain(secretOrigin);
+    expect(JSON.stringify(recent)).not.toContain(secretReason);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {
@@ -147,6 +179,7 @@ describePostgres("session safety", () => {
   test("deletes a session and all recall-derived rows", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createWorkspace(service, "session-safety-delete");
+    const secretReason = "delete-reason-secret-token";
     const imported = await seedRawSession(service, {
       harnessSessionId: "safety-delete",
       rawContent: '{"type":"user","text":"Delete-only sentinel phrase"}\n',
@@ -186,7 +219,7 @@ describePostgres("session safety", () => {
       deleteSessionSafety(service, {
         id: imported.rawSessionRecord.id,
         origin: "test",
-        reason: "fixture delete",
+        reason: secretReason,
         workspaceId,
       }),
     );
@@ -198,9 +231,12 @@ describePostgres("session safety", () => {
         turns: 1,
       },
       operation: "deleted",
+      originClassification: "test",
+      reasonProvided: true,
       sessionId: imported.session.id,
       workspaceId,
     });
+    expect(JSON.stringify(deleted)).not.toContain(secretReason);
 
     await expect(
       Effect.runPromise(
@@ -224,6 +260,66 @@ describePostgres("session safety", () => {
       }),
     );
     expect(recall.matchCount).toBe(0);
+  });
+
+  test("rejects stale expected active raw record guards before replacing a newer snapshot", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createWorkspace(service, "session-safety-expected-active");
+    const first = await seedRawSession(service, {
+      harnessSessionId: "safety-expected-active",
+      rawContent: '{"type":"user","text":"first active content"}\n',
+      workspaceId,
+    });
+    const second = await seedRawSession(service, {
+      harnessSessionId: "safety-expected-active",
+      rawContent: '{"type":"user","text":"newer active content"}\n',
+      workspaceId,
+    });
+
+    await expect(
+      Effect.runPromise(
+        importRawSessionRecord(service, {
+          author: {
+            displayName: "Drew",
+            handle: "drew",
+          },
+          capturedAt: "2026-06-22T12:01:00.000Z",
+          contentType: "jsonl",
+          harness: "codex",
+          harnessSessionId: "safety-expected-active",
+          host: {
+            id: "host-session-safety",
+            label: "Session Safety Host",
+            projectRoot: "/work/saga",
+          },
+          locator: "/tmp/safety-expected-active.jsonl",
+          rawContent: '{"type":"user","text":"stale redaction content"}\n',
+          rawRecord: {
+            expectedActiveRawSessionRecordId: first.rawSessionRecord.id,
+            inactivePrevious: {
+              status: "redacted",
+            },
+            redactedFromRawSessionRecordId: first.rawSessionRecord.id,
+            status: "redacted",
+          },
+          workspaceId,
+        }),
+      ),
+    ).rejects.toThrow("active raw session record changed during import");
+
+    const rawRecords = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id))
+      .orderBy(rawSessionRecords.snapshotOrdinal);
+    expect(rawRecords).toHaveLength(2);
+    expect(rawRecords.find((record) => record.id === first.rawSessionRecord.id)?.isActive).toBe(
+      false,
+    );
+    expect(rawRecords.find((record) => record.id === second.rawSessionRecord.id)).toMatchObject({
+      isActive: true,
+      status: "captured",
+    });
   });
 });
 

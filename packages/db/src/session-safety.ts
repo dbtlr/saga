@@ -19,6 +19,7 @@ type NormalizedSessionRedactionPattern = {
   pattern: string;
   replacement: string;
 };
+export type SessionSafetyOriginClassification = "api" | "cli" | "custom" | "test";
 
 export interface DeleteSessionSafetyInput {
   id: string;
@@ -30,8 +31,8 @@ export interface DeleteSessionSafetyInput {
 export interface DeleteSessionSafetyResult {
   deletedAt: Date;
   operation: "deleted";
-  origin: string;
-  reason: string | null;
+  originClassification: SessionSafetyOriginClassification;
+  reasonProvided: boolean;
   sessionId: string;
   workspaceId: string;
   deleted: {
@@ -59,10 +60,10 @@ export interface RedactSessionSafetyInput {
 
 export interface RedactSessionSafetyResult {
   operation: "redacted";
-  origin: string;
+  originClassification: SessionSafetyOriginClassification;
   patternCount: number;
   previousRawSessionRecordId: string;
-  reason: string | null;
+  reasonProvided: boolean;
   redactedAt: Date;
   replacementCount: number;
   rawSessionImport: RawSessionImportResult;
@@ -117,6 +118,7 @@ export function deleteSessionSafety(
       const id = normalizeRequired(input.id, "id");
       const origin = normalizeOptional(input.origin) ?? "db-api";
       const reason = normalizeOptional(input.reason) ?? null;
+      const originClassification = classifyOrigin(origin);
       const deletedAt = new Date();
 
       return service.sql.begin(async (tx) => {
@@ -183,8 +185,8 @@ export function deleteSessionSafety(
           deleted: counts,
           deletedAt,
           operation: "deleted",
-          origin,
-          reason,
+          originClassification,
+          reasonProvided: reason !== null,
           sessionId: identity.session_id,
           workspaceId,
         };
@@ -207,6 +209,7 @@ export function redactSessionSafety(
       const id = normalizeRequired(input.id, "id");
       const origin = normalizeOptional(input.origin) ?? "db-api";
       const reason = normalizeOptional(input.reason) ?? null;
+      const originClassification = classifyOrigin(origin);
       const patterns = normalizePatterns(input.patterns);
       const activeRecord = await findActiveRawSessionRecord(service, { id, workspaceId });
       if (activeRecord === undefined) {
@@ -240,9 +243,10 @@ export function redactSessionSafety(
 
       const redactedAt = new Date();
       const auditMetadata = {
-        origin,
+        operation: "redacted",
+        originClassification,
         patternCount: patterns.length,
-        reason,
+        reasonProvided: reason !== null,
         redactedAt: redactedAt.toISOString(),
         replacementCount: redaction.replacementCount,
       };
@@ -268,7 +272,8 @@ export function redactSessionSafety(
           },
           model: activeRecord.session_model ?? undefined,
           provenance: {
-            origin,
+            operation: "redacted",
+            originClassification,
             redactedAt: redactedAt.toISOString(),
             redactedBy: "saga session safety",
             redactedFromRawSessionRecordId: activeRecord.raw_record_id,
@@ -280,12 +285,14 @@ export function redactSessionSafety(
                 redactionTombstone: auditMetadata,
               },
               provenance: {
-                origin,
+                operation: "redacted",
+                originClassification,
                 redactedAt: redactedAt.toISOString(),
                 redactedBy: "saga session safety",
               },
               status: "redacted",
             },
+            expectedActiveRawSessionRecordId: activeRecord.raw_record_id,
             redactedFromRawSessionRecordId: activeRecord.raw_record_id,
             status: "redacted",
           },
@@ -297,11 +304,11 @@ export function redactSessionSafety(
 
       return {
         operation: "redacted",
-        origin,
+        originClassification,
         patternCount: patterns.length,
         previousRawSessionRecordId: activeRecord.raw_record_id,
         rawSessionImport: importResult,
-        reason,
+        reasonProvided: reason !== null,
         redactedAt,
         replacementCount: redaction.replacementCount,
         sessionId: activeRecord.session_id,
@@ -543,6 +550,13 @@ function normalizeRequired(value: string | undefined, label: string): string {
 function normalizeOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+}
+
+function classifyOrigin(value: string): SessionSafetyOriginClassification {
+  if (value === "db-api") return "api";
+  if (value === "test") return "test";
+  if (value.startsWith("saga sessions ")) return "cli";
+  return "custom";
 }
 
 function asRecord(value: unknown): JsonRecord {

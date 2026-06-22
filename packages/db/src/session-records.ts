@@ -386,6 +386,7 @@ export function listRecentSessionRecords(
         where r.workspace_id = ${workspaceId}
           and (${harness ?? null}::text is null or r.harness = ${harness ?? null})
           and (${activeOnly}::boolean = false or r.is_active = true)
+          and (r.is_active = true or r.status <> 'redacted')
         group by
           s.id,
           u.id,
@@ -573,6 +574,7 @@ export function getSessionDetail(
           and sb.workspace_id = s.workspace_id
         where r.workspace_id = ${workspaceId}
           and r.session_id = ${identity.session_id}
+          and (r.is_active = true or r.status <> 'redacted')
         order by r.snapshot_ordinal desc, r.captured_at desc, r.id asc
         limit ${maxRawRecords + 1}
       `;
@@ -644,6 +646,7 @@ export function getSessionDetail(
           where r.workspace_id = ${workspaceId}
             and r.session_id = ${identity.session_id}
             and r.id = ${identity.selected_raw_record_id}
+            and (r.is_active = true or r.status <> 'redacted')
           limit 1
         `;
         selectedRawSessionRecord =
