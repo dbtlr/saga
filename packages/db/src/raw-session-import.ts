@@ -482,6 +482,17 @@ async function findCurrentNoopRawSessionImport(
   }
 
   if (
+    activityIntervalBoundaryRequiredForExistingRawSessionRecord({
+      activityInterval,
+      input: input.input,
+      session,
+      transcriptNormalization: input.transcriptNormalization,
+    })
+  ) {
+    return undefined;
+  }
+
+  if (
     !(await rawSessionRecordIsCurrent(tx, {
       activityIntervalId: activityInterval.id,
       existingRecord,
@@ -491,6 +502,24 @@ async function findCurrentNoopRawSessionImport(
     }))
   ) {
     return undefined;
+  }
+
+  if (
+    activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
+      activityInterval,
+      input: input.input,
+      session,
+    })
+  ) {
+    return {
+      activityInterval,
+      authorUser,
+      contentHash: input.input.contentHash,
+      operation: "unchanged",
+      rawSessionRecord: existingRecord,
+      session,
+      sourceBinding,
+    };
   }
 
   const settlement = settlementForExistingRawSessionRecord({
@@ -553,34 +582,70 @@ async function reuseExistingRawSessionRecord(
           id: input.existingRecord.activityIntervalId,
           workspaceId: input.input.workspaceId,
         });
-  const repairedRecord =
-    input.existingRecord.isActive && input.transcriptNormalization !== undefined
-      ? await repairActiveRawSessionRecordDerivedRows(tx, {
-          activityIntervalId: existingInterval.id,
+  const requiresBoundaryWork =
+    input.existingRecord.isActive &&
+    activityIntervalBoundaryRequiredForExistingRawSessionRecord({
+      activityInterval: existingInterval,
+      input: input.input,
+      session: input.session,
+      transcriptNormalization: input.transcriptNormalization,
+    });
+  const resolvedInterval = requiresBoundaryWork
+    ? await resolveActivityInterval(tx, {
+        input: input.input,
+        now: input.now,
+        session: input.session,
+        transcriptNormalization: input.transcriptNormalization,
+      }).then((resolution) => resolution.activityInterval)
+    : existingInterval;
+  const boundaryAlreadySatisfied =
+    !requiresBoundaryWork &&
+    activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
+      activityInterval: resolvedInterval,
+      input: input.input,
+      session: input.session,
+    });
+  const intervalAdjustedRecord =
+    requiresBoundaryWork && input.existingRecord.activityIntervalId !== resolvedInterval.id
+      ? await updateActiveRawSessionRecordActivityInterval(tx, {
+          activityIntervalId: resolvedInterval.id,
           existingRecord: input.existingRecord,
+          now: input.now,
+        })
+      : input.existingRecord;
+  const repairedRecord =
+    intervalAdjustedRecord.isActive && input.transcriptNormalization !== undefined
+      ? await repairActiveRawSessionRecordDerivedRows(tx, {
+          activityIntervalId: resolvedInterval.id,
+          existingRecord: intervalAdjustedRecord,
           input: input.input,
           sessionId: input.session.id,
           transcriptNormalization: input.transcriptNormalization,
         })
-      : input.existingRecord;
+      : intervalAdjustedRecord;
   const existingSettlement = settlementForExistingRawSessionRecord({
-    activityInterval: existingInterval,
+    activityInterval: resolvedInterval,
     input: input.input,
     now: input.now,
     transcriptNormalization: input.transcriptNormalization,
   });
   const refreshed =
-    input.existingRecord.isActive && input.transcriptNormalization !== undefined
+    repairedRecord.isActive &&
+    ((input.transcriptNormalization !== undefined && !boundaryAlreadySatisfied) ||
+      existingSettlement !== undefined ||
+      requiresBoundaryWork)
       ? await refreshSessionAndActivityInterval(tx, {
-          activityInterval: existingInterval,
+          activityInterval: resolvedInterval,
+          activityIntervalStartedAt: requiresBoundaryWork ? input.input.capturedAt : undefined,
           input: input.input,
           now: input.now,
           rawSessionRecordId: repairedRecord.id,
           settlement: existingSettlement,
           session: input.session,
+          sessionLastActivityAt: requiresBoundaryWork ? input.input.capturedAt : undefined,
           transcriptNormalization: input.transcriptNormalization,
         })
-      : { activityInterval: existingInterval, session: input.session };
+      : { activityInterval: resolvedInterval, session: input.session };
   return {
     activityInterval: refreshed.activityInterval,
     rawSessionRecord: repairedRecord,
@@ -933,11 +998,13 @@ async function refreshSessionAndActivityInterval(
   tx: DatabaseService["db"],
   input: {
     activityInterval: ActivityInterval;
+    activityIntervalStartedAt?: Date | undefined;
     input: NormalizedRawSessionImportInput;
     now: Date;
     rawSessionRecordId: string;
     settlement?: ActivityIntervalSettlement | undefined;
     session: Session;
+    sessionLastActivityAt?: Date | undefined;
     transcriptNormalization?: TranscriptNormalization | undefined;
   },
 ): Promise<{ activityInterval: ActivityInterval; session: Session }> {
@@ -948,7 +1015,9 @@ async function refreshSessionAndActivityInterval(
         input.transcriptNormalization?.session.endedAt ??
         (input.settlement?.reason === "stop_event" ? input.settlement.endedAt : undefined),
       lastActivityAt:
-        input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
+        input.sessionLastActivityAt ??
+        input.transcriptNormalization?.session.lastActivityAt ??
+        input.input.capturedAt,
       metadata: {
         ...sessionMetadataBaseForRefresh({
           existingMetadata: input.session.metadata,
@@ -987,6 +1056,7 @@ async function refreshSessionAndActivityInterval(
       settlementReason: input.settlement?.reason,
       settlementTriggerRawEventId: input.settlement?.triggerRawEventId,
       startedAt:
+        input.activityIntervalStartedAt ??
         input.transcriptNormalization?.activityInterval.startedAt ??
         input.activityInterval.startedAt,
       status:
@@ -1628,8 +1698,10 @@ async function resolveActivityInterval(
     transcriptNormalization?: TranscriptNormalization | undefined;
   },
 ): Promise<ActivityIntervalResolution> {
-  const observedStart =
-    input.transcriptNormalization?.activityInterval.startedAt ?? input.input.capturedAt;
+  const observedStart = observedActivityIntervalStart({
+    input: input.input,
+    transcriptNormalization: input.transcriptNormalization,
+  });
   const observedLast =
     input.transcriptNormalization?.session.lastActivityAt ??
     input.transcriptNormalization?.activityInterval.endedAt ??
@@ -1653,7 +1725,7 @@ async function resolveActivityInterval(
       ? undefined
       : idleTimeoutSettlement({
           lastActivityAt: input.session.lastActivityAt,
-          observedStart,
+          observedStart: input.input.capturedAt,
           triggerRawEventId,
         });
 
@@ -1692,7 +1764,7 @@ async function resolveActivityInterval(
         input: input.input,
         ordinal: latestOrdinal + 1,
         sessionId: input.session.id,
-        startedAt: observedStart,
+        startedAt: idleSettlement.settledAt,
       }),
     };
   }
@@ -1723,6 +1795,69 @@ async function resolveActivityInterval(
     activityInterval,
     settlement: stopSettlement,
   };
+}
+
+function observedActivityIntervalStart(input: {
+  input: NormalizedRawSessionImportInput;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): Date {
+  const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
+  if (
+    cleanOptional(input.input.activity?.hookEventName) === "SessionStart" &&
+    (sessionStartSource === "clear" || sessionStartSource === "compact")
+  ) {
+    return input.input.capturedAt;
+  }
+
+  return input.transcriptNormalization?.activityInterval.startedAt ?? input.input.capturedAt;
+}
+
+function activityIntervalBoundaryRequiredForExistingRawSessionRecord(input: {
+  activityInterval: ActivityInterval;
+  input: NormalizedRawSessionImportInput;
+  session: Session;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): boolean {
+  if (input.activityInterval.status !== "active") return false;
+
+  const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
+  const hookEventName = cleanOptional(input.input.activity?.hookEventName);
+  if (
+    hookEventName === "SessionStart" &&
+    (sessionStartSource === "clear" || sessionStartSource === "compact")
+  ) {
+    return input.activityInterval.startedAt.getTime() < input.input.capturedAt.getTime();
+  }
+
+  return (
+    idleTimeoutSettlement({
+      lastActivityAt: input.session.lastActivityAt,
+      observedStart: input.input.capturedAt,
+      triggerRawEventId: cleanOptional(input.input.activity?.settlementTriggerRawEventId),
+    }) !== undefined
+  );
+}
+
+function activityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord(input: {
+  activityInterval: ActivityInterval;
+  input: NormalizedRawSessionImportInput;
+  session: Session;
+}): boolean {
+  if (input.activityInterval.status !== "active") return false;
+  if (input.activityInterval.startedAt.getTime() !== input.input.capturedAt.getTime()) {
+    return false;
+  }
+
+  const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
+  const hookEventName = cleanOptional(input.input.activity?.hookEventName);
+  if (
+    hookEventName === "SessionStart" &&
+    (sessionStartSource === "clear" || sessionStartSource === "compact")
+  ) {
+    return true;
+  }
+
+  return input.session.lastActivityAt?.getTime() === input.input.capturedAt.getTime();
 }
 
 async function insertActivityInterval(
@@ -1850,6 +1985,36 @@ async function settleActivityInterval(
   if (settled === undefined) {
     throw new RawSessionImportError({ message: "active activity interval changed during import" });
   }
+}
+
+async function updateActiveRawSessionRecordActivityInterval(
+  tx: DatabaseService["db"],
+  input: {
+    activityIntervalId: string;
+    existingRecord: RawSessionRecord;
+    now: Date;
+  },
+): Promise<RawSessionRecord> {
+  const [rawSessionRecord] = await tx
+    .update(rawSessionRecords)
+    .set({
+      activityIntervalId: input.activityIntervalId,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(rawSessionRecords.id, input.existingRecord.id),
+        eq(rawSessionRecords.workspaceId, input.existingRecord.workspaceId),
+        eq(rawSessionRecords.isActive, true),
+      ),
+    )
+    .returning();
+  if (rawSessionRecord === undefined) {
+    throw new RawSessionImportError({
+      message: "active raw session record changed during import",
+    });
+  }
+  return rawSessionRecord;
 }
 
 function idleTimeoutSettlement(input: {

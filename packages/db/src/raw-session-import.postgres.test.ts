@@ -1440,6 +1440,190 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("opens new Activity Intervals for same-content clear and compact lifecycle inputs", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    for (const sessionStartSource of ["clear", "compact"] as const) {
+      const workspaceId = await createBoundWorkspace(
+        `raw-import-same-content-${sessionStartSource}`,
+      );
+      const rawContent = codexTranscript([
+        {
+          timestamp: "2026-06-23T00:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: `codex-same-content-${sessionStartSource}-session`,
+          },
+        },
+        {
+          timestamp: "2026-06-23T00:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: `Before ${sessionStartSource}.` }],
+          },
+        },
+      ]);
+      const baseInput = {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-23T00:00:01.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: `host-same-content-${sessionStartSource}`,
+        },
+        locator: `/tmp/codex-same-content-${sessionStartSource}.jsonl`,
+        rawContent,
+        workspaceId,
+      } as const;
+
+      const first = await Effect.runPromise(importRawSessionRecord(service, baseInput));
+      const boundary = await Effect.runPromise(
+        importRawSessionRecord(service, {
+          ...baseInput,
+          activity: {
+            hookEventName: "SessionStart",
+            sessionStartSource,
+          },
+          capturedAt: "2026-06-23T00:05:00.000Z",
+        }),
+      );
+      const repeatedBoundary = await Effect.runPromise(
+        importRawSessionRecord(service, {
+          ...baseInput,
+          activity: {
+            hookEventName: "SessionStart",
+            sessionStartSource,
+          },
+          capturedAt: "2026-06-23T00:05:00.000Z",
+        }),
+      );
+
+      expect(boundary.operation).toBe("unchanged");
+      expect(boundary.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+      expect(boundary.activityInterval.id).not.toBe(first.activityInterval.id);
+      expect(boundary.activityInterval).toMatchObject({
+        ordinal: 1,
+        startedAt: new Date("2026-06-23T00:05:00.000Z"),
+        status: "active",
+      });
+      expect(repeatedBoundary.operation).toBe("unchanged");
+      expect(repeatedBoundary.activityInterval.id).toBe(boundary.activityInterval.id);
+      expect(repeatedBoundary.session.lastActivityAt).toEqual(new Date("2026-06-23T00:05:00.000Z"));
+
+      const intervals = await service.db
+        .select()
+        .from(activityIntervals)
+        .where(eq(activityIntervals.sessionId, first.session.id))
+        .orderBy(asc(activityIntervals.ordinal));
+      expect(intervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+      expect(intervals[0]).toMatchObject({
+        endedAt: new Date("2026-06-23T00:05:00.000Z"),
+        settlementReason: "clear_context",
+      });
+
+      const records = await service.db
+        .select()
+        .from(rawSessionRecords)
+        .where(eq(rawSessionRecords.sessionId, first.session.id));
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        activityIntervalId: boundary.activityInterval.id,
+        id: first.rawSessionRecord.id,
+        isActive: true,
+      });
+    }
+  });
+
+  test("opens a new Activity Interval for same-content idle-boundary input", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-same-content-idle");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-23T01:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-same-content-idle-session",
+        },
+      },
+      {
+        timestamp: "2026-06-23T01:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Before idle same-content import." }],
+        },
+      },
+    ]);
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-23T01:00:01.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-same-content-idle",
+      },
+      locator: "/tmp/codex-same-content-idle.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, baseInput));
+    const boundary = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-23T01:45:01.000Z",
+      }),
+    );
+    const repeatedBoundary = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-23T01:45:01.000Z",
+      }),
+    );
+
+    expect(boundary.operation).toBe("unchanged");
+    expect(boundary.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(boundary.activityInterval.id).not.toBe(first.activityInterval.id);
+    expect(boundary.activityInterval).toMatchObject({
+      ordinal: 1,
+      startedAt: new Date("2026-06-23T01:45:01.000Z"),
+      status: "active",
+    });
+    expect(boundary.session.lastActivityAt).toEqual(new Date("2026-06-23T01:45:01.000Z"));
+    expect(repeatedBoundary.operation).toBe("unchanged");
+    expect(repeatedBoundary.activityInterval.id).toBe(boundary.activityInterval.id);
+    expect(repeatedBoundary.session.lastActivityAt).toEqual(new Date("2026-06-23T01:45:01.000Z"));
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(intervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+    expect(intervals[0]).toMatchObject({
+      endedAt: new Date("2026-06-23T01:30:01.000Z"),
+      settlementReason: "idle_timeout",
+    });
+
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      activityIntervalId: boundary.activityInterval.id,
+      id: first.rawSessionRecord.id,
+      isActive: true,
+    });
+  });
+
   test("handles concurrent duplicate clear-context imports as one new active Activity Interval", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const db = service;
