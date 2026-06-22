@@ -51,7 +51,7 @@ export const COMMANDS = {
   },
   sessions: {
     description: "import and inspect raw session records",
-    subcommands: ["import", "recent", "show"],
+    subcommands: ["delete", "import", "recent", "redact", "show"],
   },
 } as const satisfies Record<string, CommandDefinition>;
 

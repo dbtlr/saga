@@ -3,10 +3,14 @@ import { userInfo } from "node:os";
 import { extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  deleteSessionSafety,
   getSessionDetail,
   importRawSessionRecord,
   listRecentSessionRecords,
   makeDatabase,
+  redactSessionSafety,
+  type DeleteSessionSafetyInput,
+  type DeleteSessionSafetyResult,
   type GetSessionDetailInput,
   type ListRecentSessionRecordsInput,
   type RawSessionContentType,
@@ -14,10 +18,13 @@ import {
   type RawSessionImportInput,
   type RawSessionImportResult,
   type RecentSessionRecord,
+  type RedactSessionSafetyInput,
+  type RedactSessionSafetyResult,
   type SessionDetail,
   type SessionDetailSegment,
   type SessionDetailTurn,
   type SessionRawSessionRecordMetadata,
+  type SessionRedactionPattern,
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
@@ -55,15 +62,32 @@ const RECENT_FLAGS_WITH_VALUES = new Set(["harness", "limit"]);
 const RECENT_BOOLEAN_FLAGS = new Set(["active-only"]);
 const SHOW_FLAGS_WITH_VALUES = new Set(["raw-records", "segments", "turns"]);
 const SHOW_BOOLEAN_FLAGS = new Set(["raw-body"]);
+const DELETE_FLAGS_WITH_VALUES = new Set(["origin", "reason"]);
+const DELETE_BOOLEAN_FLAGS = new Set<string>();
+const REDACT_FLAGS_WITH_VALUES = new Set([
+  "literal",
+  "origin",
+  "reason",
+  "regex",
+  "regex-flags",
+  "replacement",
+]);
+const REDACT_BOOLEAN_FLAGS = new Set<string>();
 
 export interface SessionsCommandDependencies {
   cwd?: string | undefined;
+  deleteSession?:
+    | ((input: DeleteSessionSafetyInput) => Promise<DeleteSessionSafetyResult>)
+    | undefined;
   getDetail?: ((input: GetSessionDetailInput) => Promise<SessionDetail>) | undefined;
   importRecord?: ((input: RawSessionImportInput) => Promise<RawSessionImportResult>) | undefined;
   listRecent?:
     | ((input: ListRecentSessionRecordsInput) => Promise<RecentSessionRecord[]>)
     | undefined;
   readStdin?: (() => Promise<string>) | undefined;
+  redactSession?:
+    | ((input: RedactSessionSafetyInput) => Promise<RedactSessionSafetyResult>)
+    | undefined;
 }
 
 export async function runSessionsCommand(
@@ -75,8 +99,14 @@ export async function runSessionsCommand(
   if (subcommand === "import") {
     return importSession(args.slice(1), options, dependencies);
   }
+  if (subcommand === "delete") {
+    return deleteSession(args.slice(1), options, dependencies);
+  }
   if (subcommand === "recent") {
     return recentSessions(args.slice(1), options, dependencies);
+  }
+  if (subcommand === "redact") {
+    return redactSession(args.slice(1), options, dependencies);
   }
   if (subcommand === "show") {
     return showSession(args.slice(1), options, dependencies);
@@ -129,6 +159,47 @@ async function importSession(
   );
 }
 
+async function deleteSession(
+  args: readonly string[],
+  options: RenderOptions,
+  dependencies: SessionsCommandDependencies,
+): Promise<string> {
+  const parsed = parseLocalOptions(args, {
+    booleanFlags: DELETE_BOOLEAN_FLAGS,
+    flagsWithValues: DELETE_FLAGS_WITH_VALUES,
+  });
+  const id = parsed.positionals[0];
+  if (id === undefined) {
+    throw new Error("sessions delete requires a session id or raw session record id");
+  }
+  if (parsed.positionals.length > 1) {
+    throw new Error(`sessions delete received unexpected argument: ${parsed.positionals[1]}`);
+  }
+
+  const project = loadBoundProject(dependencies.cwd);
+  const input: DeleteSessionSafetyInput = {
+    id,
+    origin: parsed.flags.origin ?? "saga sessions delete",
+    reason: parsed.flags.reason,
+    workspaceId: project.binding.workspace.id,
+  };
+  const result =
+    dependencies.deleteSession === undefined
+      ? await withDatabase(project.projectRoot, async (service) =>
+          Effect.runPromise(deleteSessionSafety(service, input)),
+        )
+      : await dependencies.deleteSession(input);
+
+  return formatCommandOutput(
+    {
+      id: result.sessionId,
+      records: renderDeleteResult(result, options),
+      value: result,
+    },
+    options.format,
+  );
+}
+
 async function recentSessions(
   args: readonly string[],
   options: RenderOptions,
@@ -161,6 +232,49 @@ async function recentSessions(
       id: rows.map((row) => row.rawSessionRecord.id).join("\n"),
       records: renderRecentSessions(rows, options),
       value: rows,
+    },
+    options.format,
+  );
+}
+
+async function redactSession(
+  args: readonly string[],
+  options: RenderOptions,
+  dependencies: SessionsCommandDependencies,
+): Promise<string> {
+  const parsed = parseLocalOptions(args, {
+    booleanFlags: REDACT_BOOLEAN_FLAGS,
+    flagsWithValues: REDACT_FLAGS_WITH_VALUES,
+  });
+  const id = parsed.positionals[0];
+  if (id === undefined) {
+    throw new Error("sessions redact requires a session id or active raw session record id");
+  }
+  if (parsed.positionals.length > 1) {
+    throw new Error(`sessions redact received unexpected argument: ${parsed.positionals[1]}`);
+  }
+
+  const patterns = buildRedactionPatterns(parsed);
+  const project = loadBoundProject(dependencies.cwd);
+  const input: RedactSessionSafetyInput = {
+    id,
+    origin: parsed.flags.origin ?? "saga sessions redact",
+    patterns,
+    reason: parsed.flags.reason,
+    workspaceId: project.binding.workspace.id,
+  };
+  const result =
+    dependencies.redactSession === undefined
+      ? await withDatabase(project.projectRoot, async (service) =>
+          Effect.runPromise(redactSessionSafety(service, input)),
+        )
+      : await dependencies.redactSession(input);
+
+  return formatCommandOutput(
+    {
+      id: result.rawSessionImport.rawSessionRecord.id,
+      records: renderRedactResult(result, options),
+      value: result,
     },
     options.format,
   );
@@ -330,6 +444,46 @@ function renderImportResult(result: RawSessionImportResult, options: RenderOptio
       { label: "content", value: result.rawSessionRecord.contentType },
       { label: "bytes", value: String(result.rawSessionRecord.contentBytes ?? 0) },
       { label: "provenance", value: compactJson(result.rawSessionRecord.provenance) },
+    ],
+    options,
+  );
+}
+
+function renderDeleteResult(result: DeleteSessionSafetyResult, options: RenderOptions): string {
+  return recordBlock(
+    "Session deleted",
+    [
+      { label: "session", value: result.sessionId },
+      { label: "workspace", value: result.workspaceId },
+      { label: "deleted", value: result.deletedAt.toISOString() },
+      { label: "origin", value: result.origin },
+      { label: "reason", value: result.reason ?? "none" },
+      { label: "raw records", value: String(result.deleted.rawSessionRecords) },
+      { label: "turns", value: String(result.deleted.turns) },
+      { label: "segments", value: String(result.deleted.segments) },
+      { label: "embeddings", value: String(result.deleted.embeddings) },
+    ],
+    options,
+  );
+}
+
+function renderRedactResult(result: RedactSessionSafetyResult, options: RenderOptions): string {
+  return recordBlock(
+    "Session redacted",
+    [
+      { label: "session", value: result.sessionId },
+      { label: "workspace", value: result.workspaceId },
+      { label: "previous raw record", value: result.previousRawSessionRecordId },
+      { label: "active raw record", value: result.rawSessionImport.rawSessionRecord.id },
+      {
+        label: "snapshot",
+        value: String(result.rawSessionImport.rawSessionRecord.snapshotOrdinal),
+      },
+      { label: "redacted", value: result.redactedAt.toISOString() },
+      { label: "origin", value: result.origin },
+      { label: "reason", value: result.reason ?? "none" },
+      { label: "patterns", value: String(result.patternCount) },
+      { label: "replacements", value: String(result.replacementCount) },
     ],
     options,
   );
@@ -585,6 +739,7 @@ async function readStdin(): Promise<string> {
 
 interface LocalOptions {
   booleans: Set<string>;
+  flagValues: Record<string, string[]>;
   flags: Record<string, string>;
   positionals: string[];
 }
@@ -594,6 +749,7 @@ function parseLocalOptions(
   spec: { booleanFlags: ReadonlySet<string>; flagsWithValues: ReadonlySet<string> },
 ): LocalOptions {
   const booleans = new Set<string>();
+  const flagValues: Record<string, string[]> = {};
   const flags: Record<string, string> = {};
   const positionals: string[] = [];
 
@@ -623,10 +779,34 @@ function parseLocalOptions(
     const value = inlineValue ?? args[index + 1];
     if (value === undefined) throw new Error(`--${name} expects a value`);
     flags[name] = value;
+    flagValues[name] = [...(flagValues[name] ?? []), value];
     if (inlineValue === undefined) index += 1;
   }
 
-  return { booleans, flags, positionals };
+  return { booleans, flagValues, flags, positionals };
+}
+
+function buildRedactionPatterns(parsed: LocalOptions): SessionRedactionPattern[] {
+  const replacement = parsed.flags.replacement ?? "[REDACTED]";
+  const literalPatterns = parsed.flagValues.literal ?? [];
+  const regexPatterns = parsed.flagValues.regex ?? [];
+  const patterns: SessionRedactionPattern[] = [
+    ...literalPatterns.map((pattern) => ({
+      kind: "literal" as const,
+      pattern,
+      replacement,
+    })),
+    ...regexPatterns.map((pattern) => ({
+      flags: parsed.flags["regex-flags"],
+      kind: "regex" as const,
+      pattern,
+      replacement,
+    })),
+  ];
+  if (patterns.length === 0) {
+    throw new Error("sessions redact requires at least one --literal or --regex pattern");
+  }
+  return patterns;
 }
 
 function parseHarness(value: string | undefined): RawSessionHarness {

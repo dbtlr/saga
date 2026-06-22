@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type {
+  DeleteSessionSafetyResult,
   RawSessionImportInput,
   RawSessionImportResult,
   RecentSessionRecord,
+  RedactSessionSafetyResult,
   SessionDetail,
 } from "@saga/db";
 import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
@@ -131,6 +133,87 @@ describe("runSessionsCommand", () => {
     expect(records).toContain("host-user");
     expect(records).toContain("provenance");
     expect(ids).toBe("raw-record-id");
+  });
+
+  test("deletes a session by explicit id with structured safety metadata", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(
+      ["delete", "raw-record-id", "--reason", "user request"],
+      renderOptions,
+      {
+        cwd: projectRoot,
+        deleteSession: async (input) => {
+          expect(input).toEqual({
+            id: "raw-record-id",
+            origin: "saga sessions delete",
+            reason: "user request",
+            workspaceId: "workspace-id",
+          });
+          return deleteResult();
+        },
+      },
+    );
+
+    expect(JSON.parse(output)).toMatchObject({
+      deleted: {
+        rawSessionRecords: 1,
+        segments: 2,
+        turns: 2,
+      },
+      operation: "deleted",
+      sessionId: "session-id",
+    });
+  });
+
+  test("redacts a session with repeated literal and regex patterns without echoing patterns", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(
+      [
+        "redact",
+        "session-id",
+        "--literal",
+        "secret-token",
+        "--literal=second-secret",
+        "--regex",
+        "API_KEY=[^\\s]+",
+        "--replacement",
+        "[REMOVED]",
+        "--reason",
+        "safety request",
+      ],
+      {
+        ...renderOptions,
+        format: "records",
+      },
+      {
+        cwd: projectRoot,
+        redactSession: async (input) => {
+          expect(input).toMatchObject({
+            id: "session-id",
+            origin: "saga sessions redact",
+            reason: "safety request",
+            workspaceId: "workspace-id",
+          });
+          expect(input.patterns).toEqual([
+            { kind: "literal", pattern: "secret-token", replacement: "[REMOVED]" },
+            { kind: "literal", pattern: "second-secret", replacement: "[REMOVED]" },
+            {
+              flags: undefined,
+              kind: "regex",
+              pattern: "API_KEY=[^\\s]+",
+              replacement: "[REMOVED]",
+            },
+          ]);
+          return redactResult();
+        },
+      },
+    );
+
+    expect(output).toContain("Session redacted");
+    expect(output).toContain("replacements");
+    expect(output).not.toContain("secret-token");
+    expect(output).not.toContain("second-secret");
+    expect(output).not.toContain("API_KEY=");
   });
 
   test("shows a bounded session detail with Activity Intervals, turns, segments, and metadata", async () => {
@@ -498,6 +581,63 @@ function recentRecord(): RecentSessionRecord {
       sourceType: "codex",
       sourceUri: "codex://host/host-id",
     },
+  };
+}
+
+function deleteResult(): DeleteSessionSafetyResult {
+  return {
+    deleted: {
+      embeddings: 0,
+      rawSessionRecords: 1,
+      segments: 2,
+      turns: 2,
+    },
+    deletedAt: new Date("2026-06-22T10:05:00.000Z"),
+    operation: "deleted",
+    origin: "saga sessions delete",
+    reason: "user request",
+    sessionId: "session-id",
+    workspaceId: "workspace-id",
+  };
+}
+
+function redactResult(): RedactSessionSafetyResult {
+  const rawImport = importResult({
+    author: {
+      displayName: "Drew",
+      handle: "drew",
+    },
+    contentType: "jsonl",
+    harness: "codex",
+    harnessSessionId: "codex-session-1",
+    host: {
+      id: "host-id",
+      label: "test-host",
+      projectRoot: "/work/saga",
+    },
+    rawContent: "redacted body",
+    workspaceId: "workspace-id",
+  });
+  return {
+    operation: "redacted",
+    origin: "saga sessions redact",
+    patternCount: 3,
+    previousRawSessionRecordId: "raw-record-old",
+    rawSessionImport: {
+      ...rawImport,
+      rawSessionRecord: {
+        ...rawImport.rawSessionRecord,
+        id: "raw-record-redacted",
+        redactedFromRawSessionRecordId: "raw-record-old",
+        snapshotOrdinal: 1,
+        status: "redacted",
+      },
+    },
+    reason: "safety request",
+    redactedAt: new Date("2026-06-22T10:06:00.000Z"),
+    replacementCount: 4,
+    sessionId: "session-id",
+    workspaceId: "workspace-id",
   };
 }
 
