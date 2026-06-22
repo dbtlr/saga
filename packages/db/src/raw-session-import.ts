@@ -641,6 +641,8 @@ async function insertOrRefreshChildRelationship(
     return;
   }
 
+  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) return;
+
   if (
     existingRelationship.sourceTurnId === sourceTurnId &&
     jsonEqual(existingRelationship.evidence, input.relationshipEvidence)
@@ -787,6 +789,10 @@ function relationshipEvidenceForCandidate(
     sourceToolUseID: readString(evidence.sourceToolUseID),
     threadSource: readString(evidence.thread_source),
   });
+}
+
+function isImportedChildRelationshipEvidence(evidence: unknown): boolean {
+  return asRecord(evidence).derivation === SESSION_RELATIONSHIP_IMPORT_DERIVATION;
 }
 
 function isCodexSubagentEvidence(evidence: Record<string, unknown>): boolean {

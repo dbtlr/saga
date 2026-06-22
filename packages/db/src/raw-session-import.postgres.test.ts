@@ -2598,6 +2598,179 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("does not overwrite same-key non-derived child relationships during import sync", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-relationship-same-key-manual");
+    const host = { id: "host-codex-relationship-same-key-manual" };
+    const parentRawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T15:20:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "parent-thread-same-key",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:20:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "parent-turn-same-key" },
+      },
+      {
+        timestamp: "2026-06-22T15:20:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Delegate same-key importer inspection." }],
+          metadata: { turn_id: "parent-turn-same-key" },
+        },
+      },
+    ]);
+    const childRawContent = (includeParentEvidence: boolean) =>
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T15:21:00.000Z",
+          type: "session_meta",
+          payload: {
+            ...(includeParentEvidence
+              ? {
+                  agent_role: "subagent",
+                  parent_thread_id: "parent-thread-same-key",
+                  source: {
+                    subagent: {
+                      thread_spawn: {
+                        parent_turn_id: "parent-turn-same-key",
+                      },
+                    },
+                  },
+                  thread_source: "subagent",
+                }
+              : {}),
+            cwd: "/work/saga",
+            id: "child-thread-same-key",
+          },
+        },
+        {
+          timestamp: "2026-06-22T15:21:01.000Z",
+          type: "event_msg",
+          payload: { type: "task_started", turn_id: "child-turn-same-key" },
+        },
+        {
+          timestamp: "2026-06-22T15:21:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Inspect the same-key delegated task." }],
+            metadata: { turn_id: "child-turn-same-key" },
+          },
+        },
+      ]);
+
+    const parent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:20:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "parent-thread-same-key",
+        host,
+        locator: "/tmp/parent-thread-same-key.jsonl",
+        rawContent: parentRawContent,
+        workspaceId,
+      }),
+    );
+    const child = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:21:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-same-key",
+        host,
+        locator: "/tmp/child-thread-same-key.jsonl",
+        rawContent: childRawContent(false),
+        workspaceId,
+      }),
+    );
+
+    const [manualRelationship] = await service.db
+      .insert(sessionRelationships)
+      .values({
+        confidence: "inferred",
+        evidence: {
+          note: "same-key manual inference",
+        },
+        relationshipType: "child",
+        sourceSessionId: parent.session.id,
+        targetSessionId: child.session.id,
+        workspaceId,
+      })
+      .returning();
+    expect(manualRelationship).toBeDefined();
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:21:04.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-same-key",
+        host,
+        locator: "/tmp/child-thread-same-key.jsonl",
+        rawContent: childRawContent(true),
+        workspaceId,
+      }),
+    );
+
+    let relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: "inferred",
+      id: manualRelationship?.id,
+      sourceSessionId: parent.session.id,
+      sourceTurnId: null,
+      targetSessionId: child.session.id,
+    });
+    expect(relationships[0]?.evidence).toEqual({
+      note: "same-key manual inference",
+    });
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T15:21:05.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "child-thread-same-key",
+        host,
+        locator: "/tmp/child-thread-same-key.jsonl",
+        rawContent: childRawContent(false),
+        workspaceId,
+      }),
+    );
+
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: "inferred",
+      id: manualRelationship?.id,
+      sourceSessionId: parent.session.id,
+      sourceTurnId: null,
+      targetSessionId: child.session.id,
+    });
+    expect(relationships[0]?.evidence).toEqual({
+      note: "same-key manual inference",
+    });
+  });
+
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("claude-normalize");
