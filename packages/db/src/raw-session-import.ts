@@ -38,6 +38,7 @@ export type RawSessionHarness = "claude" | "codex";
 export type RawSessionContentType = "json" | "jsonl" | "text";
 export type RawSessionImportStatus = "inserted" | "unchanged";
 type JsonBody = boolean | null | number | string | JsonBody[] | { [key: string]: JsonBody };
+const SESSION_RELATIONSHIP_IMPORT_DERIVATION = "session-relationship-import-v1";
 type ActivityIntervalSettlementReason = "clear_context" | "idle_timeout" | "manual" | "stop_event";
 
 const ACTIVITY_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -669,6 +670,7 @@ async function deleteStaleChildRelationships(
     eq(sessionRelationships.workspaceId, input.input.workspaceId),
     eq(sessionRelationships.targetSessionId, input.childSession.id),
     eq(sessionRelationships.relationshipType, "child"),
+    sql`${sessionRelationships.evidence}->>'derivation' = ${SESSION_RELATIONSHIP_IMPORT_DERIVATION}`,
   ];
 
   await tx
@@ -775,7 +777,7 @@ function relationshipEvidenceForCandidate(
     agentId: readString(evidence.agentId),
     agentRole: readString(evidence.agent_role),
     childHarnessSessionId: childSession.harnessSessionId,
-    derivation: "session-relationship-import-v1",
+    derivation: SESSION_RELATIONSHIP_IMPORT_DERIVATION,
     parentHarnessSessionId: candidate?.parentHarnessSessionId,
     parentThreadId: readString(evidence.parent_thread_id),
     parentTurnId: readString(threadSpawn?.parent_turn_id),

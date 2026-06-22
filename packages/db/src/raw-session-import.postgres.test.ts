@@ -2546,6 +2546,27 @@ describePostgres("raw session import", () => {
       parentHarnessSessionId: "parent-thread-sync-2",
       parentTurnId: "parent-turn-sync-3",
     });
+    const secondRelationshipId = relationships[0]?.id;
+
+    const [inferredRelationship] = await service.db
+      .insert(sessionRelationships)
+      .values({
+        confidence: "inferred",
+        evidence: {
+          note: "manual inference without import derivation",
+        },
+        relationshipType: "child",
+        sourceSessionId: parent.session.id,
+        targetSessionId: child.session.id,
+        workspaceId,
+      })
+      .returning();
+    expect(inferredRelationship).toBeDefined();
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.targetSessionId, child.session.id));
+    expect(relationships).toHaveLength(2);
 
     await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -2564,7 +2585,17 @@ describePostgres("raw session import", () => {
       .select()
       .from(sessionRelationships)
       .where(eq(sessionRelationships.targetSessionId, child.session.id));
-    expect(relationships).toHaveLength(0);
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: "inferred",
+      id: inferredRelationship?.id,
+      sourceSessionId: parent.session.id,
+      targetSessionId: child.session.id,
+    });
+    expect(relationships[0]?.id).not.toBe(secondRelationshipId);
+    expect(relationships[0]?.evidence).toEqual({
+      note: "manual inference without import derivation",
+    });
   });
 
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
