@@ -119,6 +119,7 @@ export interface RecallSessionMetadata {
   lastActivityAt: Date | null;
   metadata: JsonRecord;
   model: string | null;
+  provenance: JsonRecord;
   sourceBindingId: string;
   sourceLocator: string | null;
   startedAt: Date | null;
@@ -166,6 +167,7 @@ export interface RecallRawSessionRecordMetadata {
   id: string;
   isActive: boolean;
   metadata: JsonRecord;
+  provenance: JsonRecord;
   snapshotOrdinal: number;
   sourceLocator: string | null;
   status: string;
@@ -223,6 +225,7 @@ interface RecallSearchRow {
   raw_record_id: string;
   raw_record_is_active: boolean;
   raw_record_metadata: JsonRecord;
+  raw_record_provenance: JsonRecord;
   raw_record_snapshot_ordinal: number;
   raw_record_source_locator: string | null;
   raw_record_status: string;
@@ -241,6 +244,7 @@ interface RecallSearchRow {
   session_last_activity_at: Date | null;
   session_metadata: JsonRecord;
   session_model: string | null;
+  session_provenance: JsonRecord;
   session_source_binding_id: string;
   session_source_locator: string | null;
   session_started_at: Date | null;
@@ -450,6 +454,7 @@ export function searchSessionRecall(
             s.last_activity_at as session_last_activity_at,
             s.ended_at as session_ended_at,
             s.metadata as session_metadata,
+            s.provenance as session_provenance,
             u.id as author_id,
             u.handle as author_handle,
             u.display_name as author_display_name,
@@ -482,6 +487,7 @@ export function searchSessionRecall(
             r.content_hash as raw_record_content_hash,
             r.captured_at as raw_record_captured_at,
             r.metadata as raw_record_metadata,
+            r.provenance as raw_record_provenance,
             st.id as turn_id,
             st.ordinal as turn_ordinal,
             st.harness_turn_id as turn_harness_turn_id,
@@ -666,6 +672,7 @@ export function searchSessionRecall(
           s.last_activity_at as session_last_activity_at,
           s.ended_at as session_ended_at,
           s.metadata as session_metadata,
+          s.provenance as session_provenance,
           u.id as author_id,
           u.handle as author_handle,
           u.display_name as author_display_name,
@@ -698,6 +705,7 @@ export function searchSessionRecall(
           r.content_hash as raw_record_content_hash,
           r.captured_at as raw_record_captured_at,
           r.metadata as raw_record_metadata,
+          r.provenance as raw_record_provenance,
           st.id as turn_id,
           st.ordinal as turn_ordinal,
           st.harness_turn_id as turn_harness_turn_id,
@@ -835,6 +843,7 @@ export function expandRecallContext(
           s.last_activity_at as session_last_activity_at,
           s.ended_at as session_ended_at,
           s.metadata as session_metadata,
+          s.provenance as session_provenance,
           u.id as author_id,
           u.handle as author_handle,
           u.display_name as author_display_name,
@@ -867,6 +876,7 @@ export function expandRecallContext(
           r.content_hash as raw_record_content_hash,
           r.captured_at as raw_record_captured_at,
           r.metadata as raw_record_metadata,
+          r.provenance as raw_record_provenance,
           anchor.segment_id,
           anchor.segment_ordinal,
           anchor.segment_kind,
@@ -1111,6 +1121,7 @@ function mapSession(row: RecallSearchRow): RecallSessionMetadata {
     lastActivityAt: row.session_last_activity_at,
     metadata: row.session_metadata,
     model: row.session_model,
+    provenance: row.session_provenance,
     sourceBindingId: row.session_source_binding_id,
     sourceLocator: row.session_source_locator,
     startedAt: row.session_started_at,
@@ -1155,6 +1166,7 @@ function mapRawSessionRecord(row: RecallSearchRow): RecallRawSessionRecordMetada
     id: row.raw_record_id,
     isActive: row.raw_record_is_active,
     metadata: row.raw_record_metadata,
+    provenance: row.raw_record_provenance,
     snapshotOrdinal: row.raw_record_snapshot_ordinal,
     sourceLocator: row.raw_record_source_locator,
     status: row.raw_record_status,

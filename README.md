@@ -28,6 +28,13 @@ pnpm --filter @saga/cli exec saga init
 pnpm --filter @saga/cli exec saga doctor
 ```
 
+Search captured session memory and expand a segment hit:
+
+```sh
+pnpm --filter @saga/cli exec saga recall search "what changed in recall"
+pnpm --filter @saga/cli exec saga recall show <segment-id> --window 2
+```
+
 Stop dependencies when finished:
 
 ```sh

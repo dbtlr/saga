@@ -4,6 +4,7 @@ import { runHarnessCommand } from "./harness.js";
 import { runIngestCommand } from "./ingest.js";
 import { runInit } from "./init.js";
 import { runMcpCommand } from "./mcp.js";
+import { runRecallCommand } from "./recall.js";
 import { runServiceCommand } from "./service.js";
 import { runSessionsCommand } from "./sessions.js";
 import { runStartCommand } from "./start.js";
@@ -49,6 +50,10 @@ export const COMMANDS = {
     description: "manually ingest source data for debugging",
     subcommands: ["claude-hook", "codex-hook", "recent", "claims"],
   },
+  recall: {
+    description: "search and expand captured session memory",
+    subcommands: ["search", "show"],
+  },
   sessions: {
     description: "import and inspect raw session records",
     subcommands: ["delete", "import", "recent", "redact", "show"],
@@ -86,6 +91,7 @@ export interface CommandHandlers {
   ingest: typeof runIngestCommand;
   init: typeof runInit;
   mcp: typeof runMcpCommand;
+  recall: typeof runRecallCommand;
   service: typeof runServiceCommand;
   sessions: typeof runSessionsCommand;
   start: typeof runStartCommand;
@@ -98,6 +104,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   ingest: runIngestCommand,
   init: runInit,
   mcp: runMcpCommand,
+  recall: runRecallCommand,
   service: runServiceCommand,
   sessions: runSessionsCommand,
   start: runStartCommand,
@@ -256,6 +263,10 @@ export async function run(
     if (parsed.command === "mcp") {
       const output = await handlers.mcp(parsed.args, renderOptions, write);
       if (output !== undefined && output !== "") write(output);
+      return 0;
+    }
+    if (parsed.command === "recall") {
+      write(await handlers.recall(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === "service") {

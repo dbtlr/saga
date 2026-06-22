@@ -2,6 +2,22 @@ import { describe, expect, test } from "vitest";
 import type { CommandHandlers } from "./cli.js";
 import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from "./cli.js";
 
+function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandlers {
+  return {
+    context: async () => "context",
+    doctor: async () => "doctor",
+    harness: async () => "harness",
+    ingest: async () => "ingest",
+    init: async () => "init",
+    mcp: async () => "mcp",
+    recall: async () => "recall",
+    service: async () => "service",
+    sessions: async () => "sessions",
+    start: async () => 0,
+    ...overrides,
+  };
+}
+
 describe("parseArgs", () => {
   test("parses global flags and command arguments", () => {
     expect(
@@ -65,6 +81,7 @@ describe("run", () => {
       "mcp",
       "context",
       "ingest",
+      "recall",
       "sessions",
     ]);
   });
@@ -95,20 +112,12 @@ describe("run", () => {
 
   test("dispatches start through the start handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
+    const handlers = commandHandlers({
       start: async (_args, _options, write) => {
         write("start launched");
         return 0;
       },
-    };
+    });
 
     await expect(run(["start"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["start launched"]);
@@ -116,17 +125,9 @@ describe("run", () => {
 
   test("dispatches init through the init handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
+    const handlers = commandHandlers({
       init: async (args) => `init ${args.join(",")}`,
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(run(["init", "custom"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["init custom"]);
@@ -134,17 +135,9 @@ describe("run", () => {
 
   test("dispatches doctor through the doctor handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
+    const handlers = commandHandlers({
       doctor: async () => "doctor ok",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(run(["doctor"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["doctor ok"]);
@@ -152,17 +145,9 @@ describe("run", () => {
 
   test("dispatches service through the service handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
+    const handlers = commandHandlers({
       service: async (args) => `service ${args.join(",")}`,
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(run(["service", "status"], (text) => output.push(text), handlers)).resolves.toBe(
       0,
@@ -172,17 +157,9 @@ describe("run", () => {
 
   test("dispatches harness through the harness handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
+    const handlers = commandHandlers({
       harness: async (args) => `harness ${args.join(",")}`,
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(
       run(["harness", "install", "codex"], (text) => output.push(text), handlers),
@@ -192,17 +169,9 @@ describe("run", () => {
 
   test("dispatches ingest through the ingest handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
+    const handlers = commandHandlers({
       ingest: async (args) => `ingest ${args.join(",")}`,
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(
       run(["ingest", "codex-hook"], (text) => output.push(text), handlers),
@@ -212,17 +181,9 @@ describe("run", () => {
 
   test("dispatches sessions through the sessions handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
+    const handlers = commandHandlers({
       sessions: async (args) => `sessions ${args.join(",")}`,
-      start: async () => 0,
-    };
+    });
 
     await expect(
       run(["sessions", "recent", "--limit", "5"], (text) => output.push(text), handlers),
@@ -230,23 +191,27 @@ describe("run", () => {
     expect(output).toEqual(["sessions recent,--limit,5"]);
   });
 
+  test("dispatches recall through the recall handler", async () => {
+    const output: string[] = [];
+    const handlers = commandHandlers({
+      recall: async (args) => `recall ${args.join(",")}`,
+    });
+
+    await expect(
+      run(["recall", "search", "lexical", "recall"], (text) => output.push(text), handlers),
+    ).resolves.toBe(0);
+    expect(output).toEqual(["recall search,lexical,recall"]);
+  });
+
   test("does not pass trailing global format flags to sessions handlers", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
+    const handlers = commandHandlers({
       sessions: async (args, options) =>
         JSON.stringify({
           args,
           format: options.format,
         }),
-      start: async () => 0,
-    };
+    });
 
     await expect(
       run(["sessions", "recent", "--format", "json"], (text) => output.push(text), handlers),
@@ -257,19 +222,34 @@ describe("run", () => {
     });
   });
 
+  test("does not pass trailing global format flags to recall handlers", async () => {
+    const output: string[] = [];
+    const handlers = commandHandlers({
+      recall: async (args, options) =>
+        JSON.stringify({
+          args,
+          format: options.format,
+        }),
+    });
+
+    await expect(
+      run(
+        ["recall", "search", "needle", "--format", "json"],
+        (text) => output.push(text),
+        handlers,
+      ),
+    ).resolves.toBe(0);
+    expect(JSON.parse(output[0] ?? "{}")).toEqual({
+      args: ["search", "needle"],
+      format: "json",
+    });
+  });
+
   test("dispatches context through the context handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
+    const handlers = commandHandlers({
       context: async () => "compiled context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
-      mcp: async () => "mcp",
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(run(["context"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["compiled context"]);
@@ -277,20 +257,12 @@ describe("run", () => {
 
   test("dispatches mcp through the streaming mcp handler", async () => {
     const output: string[] = [];
-    const handlers: CommandHandlers = {
-      context: async () => "context",
-      doctor: async () => "doctor",
-      harness: async () => "harness",
-      ingest: async () => "ingest",
-      init: async () => "init",
+    const handlers = commandHandlers({
       mcp: async (_args, _options, write) => {
         write("mcp response");
         return undefined;
       },
-      service: async () => "service",
-      sessions: async () => "sessions",
-      start: async () => 0,
-    };
+    });
 
     await expect(run(["mcp"], (text) => output.push(text), handlers)).resolves.toBe(0);
     expect(output).toEqual(["mcp response"]);
