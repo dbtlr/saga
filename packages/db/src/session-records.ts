@@ -576,9 +576,12 @@ export function getSessionDetail(
         order by r.snapshot_ordinal desc, r.captured_at desc, r.id asc
         limit ${maxRawRecords + 1}
       `;
-      const rawRecords = rawRecordRows.slice(0, maxRawRecords).map(mapRawSessionRecord);
+      const rawRecords = rawRecordRows
+        .slice(0, maxRawRecords)
+        .map((row) => mapRawSessionRecord(row, { includeRawBody }));
       const activeRawSessionRecord =
-        rawRecords.find((record) => record.isActive) ?? mapRawSessionRecord(metadata);
+        rawRecords.find((record) => record.isActive) ??
+        mapRawSessionRecord(metadata, { includeRawBody: false });
       let selectedRawSessionRecord =
         identity.selected_raw_record_id === null
           ? null
@@ -644,7 +647,9 @@ export function getSessionDetail(
           limit 1
         `;
         selectedRawSessionRecord =
-          selectedRows[0] === undefined ? null : mapRawSessionRecord(selectedRows[0]);
+          selectedRows[0] === undefined
+            ? null
+            : mapRawSessionRecord(selectedRows[0], { includeRawBody });
       }
       const detailRawRecordId =
         selectedRawSessionRecord?.id ?? activeRawSessionRecord?.id ?? rawRecords[0]?.id;
@@ -884,10 +889,17 @@ function mapActivityInterval(row: ActivityIntervalRow): SessionActivityIntervalM
   };
 }
 
-function mapRawSessionRecord(row: CommonSessionRow): SessionRawSessionRecordMetadata {
+function mapRawSessionRecord(
+  row: CommonSessionRow,
+  options: { includeRawBody?: boolean } = {},
+): SessionRawSessionRecordMetadata {
   return {
-    ...(Object.hasOwn(row, "raw_record_body_json") ? { bodyJson: row.raw_record_body_json } : {}),
-    ...(Object.hasOwn(row, "raw_record_body_text") ? { bodyText: row.raw_record_body_text } : {}),
+    ...(options.includeRawBody === true && Object.hasOwn(row, "raw_record_body_json")
+      ? { bodyJson: row.raw_record_body_json }
+      : {}),
+    ...(options.includeRawBody === true && Object.hasOwn(row, "raw_record_body_text")
+      ? { bodyText: row.raw_record_body_text }
+      : {}),
     capturedAt: normalizeRequiredTimestamp(
       row.raw_record_captured_at,
       "rawSessionRecord.capturedAt",

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -8,7 +8,7 @@ import type {
   RecentSessionRecord,
   SessionDetail,
 } from "@saga/db";
-import { writeBindingFile } from "./init.js";
+import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
 import { runSessionsCommand } from "./sessions.js";
 
 const renderOptions = {
@@ -167,6 +167,58 @@ describe("runSessionsCommand", () => {
     expect(output).toContain("Bounds");
   });
 
+  test("omits raw body fields by default when showing session detail", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(
+      ["show", "session-id"],
+      {
+        ...renderOptions,
+        format: "records",
+      },
+      {
+        cwd: projectRoot,
+        getDetail: async (input) => {
+          expect(input).toMatchObject({
+            id: "session-id",
+            includeRawBody: false,
+            workspaceId: "workspace-id",
+          });
+          return sessionDetail();
+        },
+      },
+    );
+
+    expect(output).not.toContain("body text");
+    expect(output).not.toContain("body json");
+  });
+
+  test("renders raw body fields only when requested", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(
+      ["show", "session-id", "--raw-body"],
+      {
+        ...renderOptions,
+        format: "records",
+      },
+      {
+        cwd: projectRoot,
+        getDetail: async (input) => {
+          expect(input).toMatchObject({
+            id: "session-id",
+            includeRawBody: true,
+            workspaceId: "workspace-id",
+          });
+          return sessionDetail({ includeRawBody: true });
+        },
+      },
+    );
+
+    expect(output).toContain("body text");
+    expect(output).toContain("raw transcript body");
+    expect(output).toContain("body json");
+    expect(output).toContain("raw-json-body");
+  });
+
   test("renders the bounded raw session snapshot list without duplicate active or selected blocks", async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
@@ -194,6 +246,41 @@ describe("runSessionsCommand", () => {
     expect(output).toContain("raw-record-id");
     expect(output).toContain("raw-record-older");
   });
+
+  test("does not backfill host into a no-host binding for sessions recent", async () => {
+    const projectRoot = boundProjectWithoutHost();
+    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8");
+
+    await runSessionsCommand(["recent"], renderOptions, {
+      cwd: projectRoot,
+      listRecent: async (input) => {
+        expect(input).toMatchObject({
+          workspaceId: "workspace-id",
+        });
+        return [];
+      },
+    });
+
+    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8")).toBe(before);
+  });
+
+  test("does not backfill host into a no-host binding for sessions show", async () => {
+    const projectRoot = boundProjectWithoutHost();
+    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8");
+
+    await runSessionsCommand(["show", "session-id"], renderOptions, {
+      cwd: projectRoot,
+      getDetail: async (input) => {
+        expect(input).toMatchObject({
+          id: "session-id",
+          workspaceId: "workspace-id",
+        });
+        return sessionDetail();
+      },
+    });
+
+    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8")).toBe(before);
+  });
 });
 
 function boundProject(): string {
@@ -220,6 +307,34 @@ function boundProject(): string {
       id: "workspace-id",
     },
   });
+  return projectRoot;
+}
+
+function boundProjectWithoutHost(): string {
+  const projectRoot = mkdtempSync(join(tmpdir(), "saga-sessions-no-host-"));
+  writeFileSync(
+    join(projectRoot, BINDING_FILE_NAME),
+    `${JSON.stringify(
+      {
+        project: {
+          root: projectRoot,
+        },
+        schemaVersion: 1,
+        service: {
+          databaseUrl: "env:DATABASE_URL",
+        },
+        sourceBinding: {
+          id: "source-id",
+        },
+        workspace: {
+          handle: "saga",
+          id: "workspace-id",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
   return projectRoot;
 }
 
@@ -386,10 +501,20 @@ function recentRecord(): RecentSessionRecord {
   };
 }
 
-function sessionDetail(): SessionDetail {
+function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail {
   const row = recentRecord();
+  const rawSessionRecord =
+    input.includeRawBody === true
+      ? {
+          ...row.rawSessionRecord,
+          bodyJson: {
+            value: "raw-json-body",
+          },
+          bodyText: "raw transcript body",
+        }
+      : row.rawSessionRecord;
   return {
-    activeRawSessionRecord: row.rawSessionRecord,
+    activeRawSessionRecord: rawSessionRecord,
     activityIntervals: [
       {
         activityInterval: row.activityInterval ?? {
@@ -442,12 +567,12 @@ function sessionDetail(): SessionDetail {
     ],
     authorUser: row.authorUser,
     limits: {
-      includeRawBody: true,
+      includeRawBody: input.includeRawBody === true,
       maxRawRecords: 10,
       maxSegmentsPerTurn: 1,
       maxTurns: 1,
     },
-    rawSessionRecords: [row.rawSessionRecord],
+    rawSessionRecords: [rawSessionRecord],
     selectedRawSessionRecord: null,
     session: row.session,
     sourceBinding: row.sourceBinding,

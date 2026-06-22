@@ -22,6 +22,8 @@ import {
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
 import {
+  type WorkspaceBindingFile,
+  type WorkspaceBindingFileWithHost,
   findProjectRoot,
   readBindingFile,
   writeBindingFile,
@@ -101,7 +103,7 @@ async function importSession(
     throw new Error(`sessions import received unexpected argument: ${parsed.positionals[1]}`);
   }
 
-  const project = loadBoundProject(dependencies.cwd);
+  const project = loadBoundProjectWithHost(dependencies.cwd);
   const rawContent = await readSessionInput(inputPath, dependencies);
   const importInput = buildImportInput({
     flags: parsed.flags,
@@ -208,21 +210,32 @@ async function showSession(
 }
 
 interface BoundProject {
-  binding: ReturnType<typeof ensureLocalHostBinding>;
+  binding: WorkspaceBindingFile;
+  projectRoot: string;
+}
+
+interface BoundProjectWithHost {
+  binding: WorkspaceBindingFileWithHost;
   projectRoot: string;
 }
 
 function loadBoundProject(cwd: string | undefined): BoundProject {
   const projectRoot = findProjectRoot(cwd ?? process.cwd());
-  const rawBinding = readBindingFile(projectRoot);
-  if (rawBinding === undefined) {
+  const binding = readBindingFile(projectRoot);
+  if (binding === undefined) {
     throw new Error("workspace binding is missing; run saga init");
   }
+  return { binding, projectRoot };
+}
+
+function loadBoundProjectWithHost(cwd: string | undefined): BoundProjectWithHost {
+  const project = loadBoundProject(cwd);
+  const rawBinding = project.binding;
   const binding = ensureLocalHostBinding(rawBinding);
   if (rawBinding.host === undefined) {
-    writeBindingFile(projectRoot, binding);
+    writeBindingFile(project.projectRoot, binding);
   }
-  return { binding, projectRoot };
+  return { binding, projectRoot: project.projectRoot };
 }
 
 async function withDatabase<T>(
@@ -245,7 +258,7 @@ async function openDatabase(projectRoot: string) {
 function buildImportInput(input: {
   flags: Record<string, string>;
   inputPath: string;
-  project: BoundProject;
+  project: BoundProjectWithHost;
   rawContent: string;
 }): RawSessionImportInput {
   const harness = parseHarness(input.flags.harness);

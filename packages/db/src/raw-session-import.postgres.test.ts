@@ -314,6 +314,10 @@ describePostgres("raw session import", () => {
     expect(bySession.session.id).toBe(imported.session.id);
     expectSessionDetailTimestampsCanRender(bySession);
     expect(bySession.activeRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
+    expect(Object.hasOwn(bySession.activeRawSessionRecord ?? {}, "bodyText")).toBe(false);
+    expect(Object.hasOwn(bySession.activeRawSessionRecord ?? {}, "bodyJson")).toBe(false);
+    expect(Object.hasOwn(bySession.rawSessionRecords[0] ?? {}, "bodyText")).toBe(false);
+    expect(Object.hasOwn(bySession.rawSessionRecords[0] ?? {}, "bodyJson")).toBe(false);
     expect(bySession.selectedRawSessionRecord).toBeNull();
     expect(bySession.activityIntervals).toHaveLength(1);
     expect(bySession.activityIntervals[0]?.turns).toHaveLength(1);
@@ -328,6 +332,29 @@ describePostgres("raw session import", () => {
     expectSessionDetailTimestampsCanRender(byRawRecord);
     expect(byRawRecord.selectedRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
     expect(byRawRecord.activityIntervals[0]?.turns).toHaveLength(2);
+
+    const withRawBody = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: imported.session.id,
+        includeRawBody: true,
+        workspaceId,
+      }),
+    );
+    expect(withRawBody.limits.includeRawBody).toBe(true);
+    expect(withRawBody.activeRawSessionRecord?.bodyText).toBe(
+      '{"role":"user","content":"First detail turn"}\n{"role":"assistant","content":"Second detail turn"}\n',
+    );
+    expect(withRawBody.activeRawSessionRecord?.bodyJson).toEqual([
+      { role: "user", content: "First detail turn" },
+      { role: "assistant", content: "Second detail turn" },
+    ]);
+    expect(withRawBody.rawSessionRecords[0]?.bodyText).toBe(
+      '{"role":"user","content":"First detail turn"}\n{"role":"assistant","content":"Second detail turn"}\n',
+    );
+    expect(withRawBody.rawSessionRecords[0]?.bodyJson).toEqual([
+      { role: "user", content: "First detail turn" },
+      { role: "assistant", content: "Second detail turn" },
+    ]);
   });
 
   test("shows a selected raw record outside the bounded raw-record window", async () => {
