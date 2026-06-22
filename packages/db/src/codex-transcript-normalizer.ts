@@ -104,7 +104,7 @@ export function normalizeCodexTranscript(input: {
   rawContent: string;
 }): CodexTranscriptNormalization | undefined {
   const { parseErrors, records } = parseCodexJsonRecords(input);
-  if (records.length === 0) return undefined;
+  if (records.length === 0 && parseErrors.length === 0) return undefined;
 
   const state: TranscriptState = {
     callIdToToolName: new Map(),
@@ -150,11 +150,14 @@ export function normalizeCodexTranscript(input: {
       continue;
     }
 
+    if (type === "compacted") {
+      state.lifecycleEvents.push(topLevelLifecycleEvent(record));
+      continue;
+    }
+
     const legacyTurn = legacyTopLevelTurn(record, state);
     if (legacyTurn !== undefined) turns.push(legacyTurn);
   }
-
-  if (turns.length === 0) return undefined;
 
   const sortedTurns = turns.map((turn) => ({
     ...turn,
@@ -334,12 +337,11 @@ function responseItemTurn(
     const name = callId === undefined ? undefined : state.callIdToToolName.get(callId);
     const turnId =
       callId === undefined ? codexTurnId : (state.callIdToTurnId.get(callId) ?? codexTurnId);
-    const output = readString(payload.output);
     const contentParts = [
       compactRecord({
         callId,
         name,
-        output: parseJsonValue(output) ?? output,
+        output: normalizeToolOutput(payload.output),
         type: "tool_result",
       }),
     ];
@@ -377,6 +379,16 @@ function responseItemTurn(
   }
 
   return undefined;
+}
+
+function topLevelLifecycleEvent(record: ParsedJsonRecord): Record<string, unknown> {
+  const payload = asRecord(record.value.payload);
+  return compactRecord({
+    payload: lifecyclePayload(payload ?? record.value),
+    rawSpan: rawSpan(record),
+    timestamp: readString(record.value.timestamp),
+    type: readString(record.value.type),
+  });
 }
 
 function legacyTopLevelTurn(
@@ -664,6 +676,12 @@ function stringifyForSearch(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+function normalizeToolOutput(value: unknown): unknown {
+  if (typeof value === "string") return parseJsonValue(value) ?? value;
+  if (value === undefined) return undefined;
+  return value;
 }
 
 function parseJsonValue(value: string | undefined): unknown {

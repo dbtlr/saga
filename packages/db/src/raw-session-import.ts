@@ -191,12 +191,22 @@ async function importRawSessionRecordUnsafe(
       sessionId: session.id,
     });
     if (existingRecord !== undefined) {
+      const repairedRecord =
+        existingRecord.isActive && transcriptNormalization !== undefined
+          ? await repairActiveRawSessionRecordDerivedRows(tx, {
+              activityIntervalId: activityInterval.id,
+              existingRecord,
+              input,
+              sessionId: session.id,
+              transcriptNormalization,
+            })
+          : existingRecord;
       return {
         activityInterval,
         authorUser,
         contentHash: input.contentHash,
         operation: "unchanged",
-        rawSessionRecord: existingRecord,
+        rawSessionRecord: repairedRecord,
         session,
         sourceBinding,
       };
@@ -316,6 +326,41 @@ async function importRawSessionRecordUnsafe(
       sourceBinding,
     };
   });
+}
+
+async function repairActiveRawSessionRecordDerivedRows(
+  tx: DatabaseService["db"],
+  input: {
+    activityIntervalId: string;
+    existingRecord: RawSessionRecord;
+    input: NormalizedRawSessionImportInput;
+    sessionId: string;
+    transcriptNormalization: CodexTranscriptNormalization;
+  },
+): Promise<RawSessionRecord> {
+  await regenerateDerivedSessionRecords(tx, {
+    activityIntervalId: input.activityIntervalId,
+    input: input.input,
+    rawSessionRecordId: input.existingRecord.id,
+    sessionId: input.sessionId,
+    transcriptNormalization: input.transcriptNormalization,
+  });
+
+  const [rawSessionRecord] = await tx
+    .update(rawSessionRecords)
+    .set({
+      metadata: {
+        ...asRecord(input.existingRecord.metadata),
+        normalization: input.transcriptNormalization.metadata,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(rawSessionRecords.id, input.existingRecord.id))
+    .returning();
+  if (rawSessionRecord === undefined) {
+    throw new RawSessionImportError({ message: "raw session record repair returned no row" });
+  }
+  return rawSessionRecord;
 }
 
 interface NormalizedRawSessionImportInput extends RawSessionImportInput {

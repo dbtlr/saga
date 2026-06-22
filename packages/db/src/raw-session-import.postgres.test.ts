@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
 import {
@@ -310,7 +311,38 @@ describePostgres("raw session import", () => {
           output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated files\n",
         },
       },
+      {
+        timestamp: "2026-06-22T14:00:07.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-2",
+          name: "web.run",
+          arguments: '{"open":[{"ref_id":"turn0search0"}]}',
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:08.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-2",
+          output: [
+            { type: "text", text: "Structured array output needle" },
+            { type: "image", image_url: "file:///tmp/codex-output.png" },
+          ],
+        },
+      },
     ]);
+
+    const normalized = normalizeCodexTranscript({
+      contentType: "jsonl",
+      rawContent,
+    });
+    expect(normalized?.turns[5]?.searchText).toContain("Structured array output needle");
+    expect(normalized?.turns[5]?.searchText).toContain("codex-output.png");
 
     const result = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -335,7 +367,7 @@ describePostgres("raw session import", () => {
     expect(result.operation).toBe("inserted");
     expect(result.session.harnessSessionId).toBe("codex-transcript-session-1");
     expect(result.session).toMatchObject({
-      lastActivityAt: new Date("2026-06-22T14:00:06.000Z"),
+      lastActivityAt: new Date("2026-06-22T14:00:08.000Z"),
       model: "gpt-5-codex",
       startedAt: new Date("2026-06-22T14:00:03.000Z"),
     });
@@ -344,7 +376,7 @@ describePostgres("raw session import", () => {
       cwd: "/work/saga",
       detectedHarnessSessionId: "codex-transcript-session-1",
       normalizer: "codex-transcript-v1",
-      turnCount: 4,
+      turnCount: 6,
     });
     expect(result.activityInterval.startedAt).toEqual(new Date("2026-06-22T14:00:03.000Z"));
     expect(result.activityInterval.metadata).toMatchObject({
@@ -379,7 +411,7 @@ describePostgres("raw session import", () => {
           thread_source: "subagent",
         },
       ],
-      turnCount: 4,
+      turnCount: 6,
     });
 
     const [rawRecord] = await service.db
@@ -406,7 +438,7 @@ describePostgres("raw session import", () => {
             thread_source: "subagent",
           },
         ],
-        turnCount: 4,
+        turnCount: 6,
       },
     });
 
@@ -415,7 +447,14 @@ describePostgres("raw session import", () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "tool", "tool"]);
+    expect(turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+    ]);
     expect(turns[0]).toMatchObject({
       actorKind: "host_user",
       harnessTurnId: "turn-1:user:3",
@@ -449,6 +488,26 @@ describePostgres("raw session import", () => {
         name: "apply_patch",
         callId: "call-1",
         output: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated files\n",
+      },
+    ]);
+    expect(turns[4]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "web.run",
+        callId: "call-2",
+        arguments: { open: [{ ref_id: "turn0search0" }] },
+        status: "completed",
+      },
+    ]);
+    expect(turns[5]?.contentParts).toEqual([
+      {
+        type: "tool_result",
+        name: "web.run",
+        callId: "call-2",
+        output: [
+          { type: "text", text: "Structured array output needle" },
+          { type: "image", image_url: "file:///tmp/codex-output.png" },
+        ],
       },
     ]);
 
@@ -526,6 +585,207 @@ describePostgres("raw session import", () => {
         turnCount: 1,
       },
     });
+  });
+
+  test("persists Codex parse errors and compacted lifecycle evidence without turns", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-metadata-only");
+    const rawContent = [
+      JSON.stringify({
+        timestamp: "2026-06-22T14:20:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-metadata-only-session",
+        },
+      }),
+      '{"timestamp":"2026-06-22T14:20:01.000Z","type":"response_item","payload":',
+      JSON.stringify({
+        timestamp: "2026-06-22T14:20:02.000Z",
+        type: "compacted",
+        payload: {
+          source: "codex",
+          turn_id: "turn-compacted",
+        },
+      }),
+      "",
+    ].join("\n");
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T14:20:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-codex-metadata-only",
+        },
+        locator: "/tmp/codex-metadata-only-session.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.activityInterval.metadata).toMatchObject({
+      lifecycleEvents: [
+        {
+          payload: {
+            source: "codex",
+            turnId: "turn-compacted",
+          },
+          type: "compacted",
+        },
+      ],
+      parseErrors: [
+        {
+          lineNumber: 1,
+        },
+      ],
+    });
+    expect(result.session.metadata).toMatchObject({
+      lifecycleEventCount: 1,
+      turnCount: 0,
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id));
+    expect(turns).toHaveLength(0);
+
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
+      .limit(1);
+    expect(rawRecord?.metadata).toMatchObject({
+      normalization: {
+        lifecycleEvents: [
+          {
+            type: "compacted",
+          },
+        ],
+        parseErrors: [
+          {
+            lineNumber: 1,
+          },
+        ],
+        turnCount: 0,
+      },
+    });
+  });
+
+  test("same-hash Codex reimport repairs derived rows with current normalization", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-repair");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:30:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-repair-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:30:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-repair",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:30:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-repair",
+          name: "web.run",
+          arguments: "{}",
+          metadata: { turn_id: "turn-repair" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:30:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-repair",
+          output: [
+            { type: "text", text: "Repaired structured output" },
+            { type: "image", image_url: "file:///tmp/repaired.png" },
+          ],
+        },
+      },
+    ]);
+    const input = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T14:30:04.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-codex-repair",
+      },
+      locator: "/tmp/codex-repair-session.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, input));
+    const initialTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    const toolResultTurn = initialTurns.find((turn) =>
+      Array.isArray(turn.contentParts)
+        ? turn.contentParts.some(
+            (part) =>
+              typeof part === "object" &&
+              part !== null &&
+              "type" in part &&
+              part.type === "tool_result",
+          )
+        : false,
+    );
+    if (toolResultTurn === undefined) throw new Error("tool result turn was not normalized");
+
+    await service.db
+      .update(sessionTurns)
+      .set({
+        contentParts: [{ type: "tool_result", name: "web.run", callId: "call-repair" }],
+      })
+      .where(eq(sessionTurns.id, toolResultTurn.id));
+
+    const second = await Effect.runPromise(importRawSessionRecord(service, input));
+
+    expect(second.operation).toBe("unchanged");
+    expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+
+    const repairedTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(repairedTurns).toHaveLength(2);
+    expect(repairedTurns[1]?.contentParts).toEqual([
+      {
+        type: "tool_result",
+        name: "web.run",
+        callId: "call-repair",
+        output: [
+          { type: "text", text: "Repaired structured output" },
+          { type: "image", image_url: "file:///tmp/repaired.png" },
+        ],
+      },
+    ]);
   });
 
   test("regenerates Codex derived rows from the active growing snapshot", async () => {
