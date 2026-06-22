@@ -81,7 +81,11 @@ export async function ingestHook(
   options: RenderOptions,
   input: IngestHookOptions = {},
 ): Promise<string> {
-  const hookInput = parseHookInput(await readHookInput(input));
+  const parsedHookInput = parseHookInput(await readHookInput(input));
+  const hookInput =
+    input.inputPath === undefined || input.inputPath === "-"
+      ? parsedHookInput
+      : markManualHookInput(source, parsedHookInput);
   const capture = input.capture ?? ((event) => captureHook(source, event));
   const result = await capture(hookInput);
 
@@ -286,6 +290,16 @@ function parseHookInput(stdin: string): HarnessHookInput {
   if (trimmed === "") return {};
   const parsed = JSON.parse(trimmed) as unknown;
   return isRecord(parsed) ? parsed : { payload: parsed };
+}
+
+function markManualHookInput(source: HarnessSource, input: HarnessHookInput): HarnessHookInput {
+  return {
+    ...input,
+    captureMode: "manual",
+    ingestOrigin: `saga ingest ${source}-hook <file>`,
+    manual: true,
+    sagaManualIngest: true,
+  };
 }
 
 async function readHookInput(input: IngestHookOptions): Promise<string> {

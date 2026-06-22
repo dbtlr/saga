@@ -105,7 +105,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "missing; binding and hooks are not installed; activation: missing-binding; workspace binding is missing; run saga init",
+          "missing; binding and hooks are not installed; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install codex before checking activation",
         label: "harness:codex",
         status: "warn",
       }),
@@ -137,7 +137,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "divergent; Saga hooks are partially installed but local binding is missing; activation: missing-binding; workspace binding is missing; run saga init",
+          "divergent; Saga hooks are partially installed but local binding is missing; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install codex before checking activation",
         label: "harness:codex",
         status: "fail",
       }),
@@ -276,6 +276,67 @@ describe("doctorProject", () => {
     );
   });
 
+  test("fails stale Codex harness state even when activation evidence is active", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const shimPath = join(cwd, ".codex", "saga-codex-hook.sh");
+    const hooksPath = join(cwd, ".codex", "hooks.json");
+    mkdirSync(join(cwd, ".codex"));
+    writeFileSync(
+      join(cwd, ".saga.local.json"),
+      JSON.stringify({
+        harnesses: {
+          codex: {
+            hookCommand: `'${shimPath}'`,
+            hookTrust: "requires-review",
+            hooksPath,
+            installedAt: new Date().toISOString(),
+            sourceBindingId: "codex-source-id",
+            sourceUri: "codex://local",
+            target: "codex",
+          },
+        },
+        project: {
+          root: cwd,
+        },
+        schemaVersion: 1,
+        service: {
+          databaseUrl: "env:DATABASE_URL",
+        },
+        sourceBinding: {
+          id: "source-id",
+        },
+        workspace: {
+          handle: "saga",
+          id: "workspace-id",
+        },
+      }),
+    );
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      verifyHarnessActivation: async () => activeActivation(),
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "stale; local binding host id is missing; activation: active; recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact",
+        label: "harness:codex",
+        status: "fail",
+      }),
+    );
+  });
+
   test("fails Codex harness when SessionStart matcher misses continuation sources", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
     const hostId = "host-id";
@@ -340,7 +401,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "divergent; local binding exists but SessionStart sources configured: startup, resume; missing: clear, compact; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h",
+          "divergent; local binding exists but SessionStart sources configured: startup, resume; missing: clear, compact; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; next step: approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again",
         label: "harness:codex",
         status: "fail",
       }),
@@ -399,7 +460,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "invalid; invalid harness binding: sourceBindingId must be a non-empty string; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h",
+          "invalid; invalid harness binding: sourceBindingId must be a non-empty string; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; next step: approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again",
         label: "harness:codex",
         status: "fail",
       }),

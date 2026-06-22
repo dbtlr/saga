@@ -785,6 +785,31 @@ describe("classifyCodexActivationEvidence", () => {
     expect(status.detail).toContain("manual/synthetic or lack hook provenance");
   });
 
+  test("treats file-ingested Codex hook markers as manual-only", () => {
+    const status = classifyCodexActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "codex.UserPromptSubmit",
+          occurredAt: "2026-06-22T11:15:00.000Z",
+          payload: {
+            captureMode: "manual",
+            hook_event_name: "UserPromptSubmit",
+            sagaManualIngest: true,
+          },
+          provenance: {
+            captureMode: "manual",
+            hookEventName: "UserPromptSubmit",
+            sagaManualIngest: true,
+          },
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("manual-only");
+    expect(status.nextStep).toContain("interactive Codex session");
+  });
+
   test("reports no evidence when no matching rows are present", () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
@@ -839,6 +864,52 @@ describe("inspectHarnessWithActivation", () => {
     expect(status.hookTrust).toBe("trusted by evidence");
     expect(status.nextStep).toBeUndefined();
     expect(status.stateDetail).toContain("recent Codex hook raw_event found");
+  });
+
+  test("does not promote stale static integration state with active evidence", async () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".codex", "hooks.json");
+    const shimPath = join(projectRoot, ".codex", "saga-codex-hook.sh");
+    const { host: _host, ...legacyBinding } = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".codex"));
+    writeFileSync(
+      join(projectRoot, ".saga.local.json"),
+      `${JSON.stringify({
+        ...legacyBinding,
+        harnesses: {
+          codex: {
+            hookCommand: `'${shimPath}'`,
+            hookTrust: "requires-review",
+            hooksPath,
+            installedAt: new Date().toISOString(),
+            sourceBindingId: "codex-source-id",
+            sourceUri: "codex://local",
+            target: "codex",
+          },
+        },
+      })}\n`,
+    );
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = await inspectHarnessWithActivation({
+      cwd: projectRoot,
+      target: "codex",
+      verifyActivation: async () => activeActivation(),
+    });
+
+    expect(status.state).toBe("stale");
+    expect(status.hookTrust).toBe("requires review");
+    expect(status.stateDetail).toContain("local binding host id is missing");
+    expect(status.activation.state).toBe("active");
   });
 });
 
@@ -897,6 +968,25 @@ describe("runHarnessCommand", () => {
     expect(output).toContain(
       "next step       set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status codex again",
     );
+  });
+
+  test("renders activation next steps for not-proven non-pending states", async () => {
+    const projectRoot = realpathSync(boundProject());
+    const output = await withCwd(projectRoot, () =>
+      runHarnessCommand(["status", "codex"], {
+        ascii: true,
+        color: "never",
+        format: "records",
+        isTty: false,
+      }),
+    );
+
+    expect(output).toContain("state           missing");
+    expect(output).toContain("detail          binding and hooks are not installed");
+    expect(output).toContain(
+      "activation      missing-binding; Codex harness source binding is missing; run saga harness install codex",
+    );
+    expect(output).toContain("next step       run saga init and saga harness install codex");
   });
 
   test("reports all harness targets when status target is omitted", async () => {

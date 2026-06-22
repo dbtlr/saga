@@ -325,11 +325,10 @@ export function serviceDoctorStatus(service: {
 
 function harnessDoctorStatus(
   state: HarnessIntegrationState,
-  activation: HarnessActivationState,
+  _activation: HarnessActivationState,
 ): DoctorStatus {
   if (state === "configured") return "ok";
-  if (state === "divergent" || state === "invalid") return "fail";
-  if (activation === "active") return "ok";
+  if (state === "divergent" || state === "invalid" || state === "stale") return "fail";
   return "warn";
 }
 

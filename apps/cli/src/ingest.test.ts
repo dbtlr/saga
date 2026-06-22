@@ -86,6 +86,7 @@ describe("ingestCodexHook", () => {
     const dir = mkdtempSync(join(tmpdir(), "saga-ingest-"));
     const inputPath = join(dir, "hook.json");
     writeFileSync(inputPath, JSON.stringify({ hook_event_name: "Stop", session_id: "session-id" }));
+    let capturedInput: Record<string, unknown> | undefined;
 
     const output = await ingestCodexHook(
       {
@@ -95,12 +96,15 @@ describe("ingestCodexHook", () => {
         isTty: false,
       },
       {
-        capture: async (input) => ({
-          accepted: input.session_id === "session-id",
-          eventId: "event-id",
-          mode: "captured",
-          source: "codex",
-        }),
+        capture: async (input) => {
+          capturedInput = input;
+          return {
+            accepted: input.session_id === "session-id",
+            eventId: "event-id",
+            mode: "captured",
+            source: "codex",
+          };
+        },
         inputPath,
       },
     );
@@ -110,6 +114,12 @@ describe("ingestCodexHook", () => {
       eventId: "event-id",
       mode: "captured",
       source: "codex",
+    });
+    expect(capturedInput).toMatchObject({
+      captureMode: "manual",
+      ingestOrigin: "saga ingest codex-hook <file>",
+      manual: true,
+      sagaManualIngest: true,
     });
   });
 });

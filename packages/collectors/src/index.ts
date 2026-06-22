@@ -74,6 +74,10 @@ export function rawEventFromHarnessHook(
     occurredAt: now.toISOString(),
     payload: { ...input },
     provenance: {
+      ...(input.sagaManualIngest === true ? { sagaManualIngest: true } : {}),
+      ...(input.manual === true ? { manual: true } : {}),
+      ...(typeof input.captureMode === "string" ? { captureMode: input.captureMode } : {}),
+      ...(typeof input.ingestOrigin === "string" ? { ingestOrigin: input.ingestOrigin } : {}),
       cwd: input.cwd,
       hookEventName,
       model: input.model,

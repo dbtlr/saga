@@ -744,7 +744,11 @@ function applyActivationStatus(
       stateDetail: `binding and hooks are installed, but ${activation.detail}`,
     };
   }
-  return { ...status, activation };
+  return {
+    ...status,
+    activation,
+    nextStep: status.nextStep ?? activation.nextStep,
+  };
 }
 
 function isRealCodexActivationEvent(event: RawEvent): boolean {
@@ -762,7 +766,7 @@ function isRealCodexActivationEvent(event: RawEvent): boolean {
 }
 
 function hasManualSyntheticMarker(value: Record<string, unknown>): boolean {
-  const markerKeys = ["manual", "synthetic", "isManual", "isSynthetic"];
+  const markerKeys = ["manual", "synthetic", "isManual", "isSynthetic", "sagaManualIngest"];
   if (markerKeys.some((key) => value[key] === true)) return true;
   const markerValues = ["manual", "synthetic"];
   return ["origin", "source", "mode", "captureMode"].some((key) => {

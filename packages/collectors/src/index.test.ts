@@ -54,6 +54,37 @@ describe("rawEventFromCodexHook", () => {
       workspaceId: "workspace-id",
     });
   });
+
+  test("copies manual ingest markers into payload and provenance", () => {
+    const event = rawEventFromCodexHook(
+      {
+        captureMode: "manual",
+        hook_event_name: "UserPromptSubmit",
+        ingestOrigin: "saga ingest codex-hook <file>",
+        manual: true,
+        sagaManualIngest: true,
+        session_id: "session-id",
+      },
+      {
+        codexSourceBinding: { id: "codex-source-binding-id" },
+        workspace: { id: "workspace-id" },
+      },
+      new Date("2026-06-19T20:00:00.000Z"),
+    );
+
+    expect(event.payload).toMatchObject({
+      captureMode: "manual",
+      ingestOrigin: "saga ingest codex-hook <file>",
+      manual: true,
+      sagaManualIngest: true,
+    });
+    expect(event.provenance).toMatchObject({
+      captureMode: "manual",
+      ingestOrigin: "saga ingest codex-hook <file>",
+      manual: true,
+      sagaManualIngest: true,
+    });
+  });
 });
 
 describe("rawEventFromClaudeHook", () => {
