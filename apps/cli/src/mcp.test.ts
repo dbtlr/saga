@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  redactMcpStructuredOutput,
   redactResolvedSagaLink,
   rewriteResolvedSagaLinkReferences,
   runMcpCommand,
@@ -241,6 +242,71 @@ describe("redactResolvedSagaLink", () => {
     });
     expect(JSON.stringify(redacted)).not.toContain("config");
     expect(JSON.stringify(redacted)).not.toContain("secret-token");
+  });
+});
+
+describe("redactMcpStructuredOutput", () => {
+  test("removes unsafe locator keys and redacts local path values", () => {
+    const redacted = redactMcpStructuredOutput({
+      rawSessionRecord: {
+        id: "raw-1",
+        metadata: {
+          inputPath: "/Volumes/data/workspaces/saga/session.jsonl",
+          nested: {
+            sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
+          },
+          sourceLocatorHash: "sha256:local-path-hash",
+        },
+        provenance: {
+          projectRoot: "/Users/drew/work/saga",
+          transcript: "loaded from file:///tmp/saga/session.jsonl",
+        },
+        sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
+      },
+      session: {
+        id: "session-1",
+        sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
+      },
+      sourceBinding: {
+        config: {
+          token: "secret-token",
+        },
+        displayName: "Codex",
+        enabled: true,
+        id: "source-1",
+        sourceType: "codex",
+        sourceUri: "codex://local",
+      },
+    });
+
+    expect(redacted).toMatchObject({
+      rawSessionRecord: {
+        id: "raw-1",
+        metadata: {
+          inputPath: "[local-path-redacted]",
+          nested: {},
+        },
+        provenance: {
+          projectRoot: "[local-path-redacted]",
+          transcript: "loaded from [local-path-redacted]",
+        },
+      },
+      session: {
+        id: "session-1",
+      },
+      sourceBinding: {
+        displayName: "Codex",
+        enabled: true,
+        id: "source-1",
+        sourceType: "codex",
+        sourceUri: "codex://local",
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toContain("sourceLocator");
+    expect(JSON.stringify(redacted)).not.toContain("config");
+    expect(JSON.stringify(redacted)).not.toContain("secret-token");
+    expect(JSON.stringify(redacted)).not.toContain("/Volumes/data/workspaces/saga");
+    expect(JSON.stringify(redacted)).not.toContain("/Users/drew/work/saga");
   });
 });
 

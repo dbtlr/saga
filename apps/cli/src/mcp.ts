@@ -304,7 +304,7 @@ export async function listProjectRecentSessions(
     );
     return {
       markdown: renderRecentSessionsMarkdown(sessions),
-      sessions: sessions.map((session) => redactSourceBindingConfig(session)),
+      sessions: sessions.map((session) => redactMcpStructuredOutput(session)),
     };
   });
 }
@@ -327,7 +327,7 @@ export async function searchProjectSessions(
     );
     return {
       markdown: renderSessionSearchMarkdown(recall),
-      recall: redactSourceBindingConfig(recall),
+      recall: redactMcpStructuredOutput(recall),
     };
   });
 }
@@ -347,7 +347,7 @@ export async function getProjectSessionContext(
       }),
     );
     return {
-      context: redactSourceBindingConfig(context),
+      context: redactMcpStructuredOutput(context),
       markdown: renderSessionContextMarkdown(context),
     };
   });
@@ -807,21 +807,22 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
   return lines.join("\n");
 }
 
-function redactSourceBindingConfig(value: unknown): unknown {
+export function redactMcpStructuredOutput(value: unknown): unknown {
   if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((entry) => redactSourceBindingConfig(entry));
+  if (Array.isArray(value)) return value.map((entry) => redactMcpStructuredOutput(entry));
+  if (typeof value === "string") return redactLocalPathString(value);
   if (!isRecord(value)) return value;
 
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (key === "sourceBinding" && isRecord(entry)) {
-      const { config: _config, ...sourceBinding } = entry;
-      redacted[key] = redactSourceBindingConfig(sourceBinding);
-      continue;
-    }
-    redacted[key] = redactSourceBindingConfig(entry);
+    if (isUnsafeMcpStructuredKey(key)) continue;
+    redacted[key] = redactMcpStructuredOutput(entry);
   }
   return redacted;
+}
+
+function isUnsafeMcpStructuredKey(key: string): boolean {
+  return key === "config" || key.toLowerCase().includes("sourcelocator");
 }
 
 function formatSourceBinding(sourceBinding: {
@@ -875,11 +876,8 @@ function redactLocalTextValues(value: unknown): unknown {
 }
 
 function redactLocalPathString(value: string): string {
-  if (/(?:file:\/\/|^\/(?:Users|Volumes|tmp|var\/folders)\b)/u.test(value)) {
-    return "[local-path-redacted]";
-  }
   return value.replaceAll(
-    /(?:file:\/\/|\/(?:Users|Volumes|tmp|var\/folders)\b)[^\s"',}]*/gu,
+    /(?:file:\/\/|\/(?:Users|Volumes|private\/var|tmp|var\/folders)\b)[^\s"',}]*/gu,
     "[local-path-redacted]",
   );
 }

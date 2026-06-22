@@ -84,7 +84,10 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(recentResult?.content[0]?.text).toContain("Host user");
     expect(recentResult?.content[0]?.text).not.toContain(inputPath);
     expect(recentResult?.content[0]?.text).not.toContain(projectRoot);
-    expect(JSON.stringify(recentResult?.structuredContent)).not.toContain('"config"');
+    expectNoUnsafeMcpStructuredContent(recentResult?.structuredContent, {
+      inputPath,
+      projectRoot,
+    });
 
     const search = await server.handle({
       id: "search",
@@ -104,7 +107,10 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(searchResult?.content[0]?.text).toContain("Retrieved Content");
     expect(searchResult?.content[0]?.text).not.toContain(inputPath);
     expect(searchResult?.content[0]?.text).not.toContain(projectRoot);
-    expect(JSON.stringify(searchResult?.structuredContent)).not.toContain('"config"');
+    expectNoUnsafeMcpStructuredContent(searchResult?.structuredContent, {
+      inputPath,
+      projectRoot,
+    });
 
     const segmentId = firstSegmentId(searchResult?.structuredContent);
     expect(segmentId).toMatch(/[0-9a-f-]{36}/u);
@@ -128,7 +134,10 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(contextResult?.content[0]?.text).toContain("MCP surrounding context");
     expect(contextResult?.content[0]?.text).not.toContain(inputPath);
     expect(contextResult?.content[0]?.text).not.toContain(projectRoot);
-    expect(JSON.stringify(contextResult?.structuredContent)).not.toContain('"config"');
+    expectNoUnsafeMcpStructuredContent(contextResult?.structuredContent, {
+      inputPath,
+      projectRoot,
+    });
   });
 });
 
@@ -153,6 +162,17 @@ function firstSegmentId(structuredContent: unknown): string {
   const segment = firstMatch.segment;
   if (!isRecord(segment)) return "";
   return typeof segment.id === "string" ? segment.id : "";
+}
+
+function expectNoUnsafeMcpStructuredContent(
+  structuredContent: unknown,
+  input: { inputPath: string; projectRoot: string },
+) {
+  const serialized = JSON.stringify(structuredContent);
+  expect(serialized).not.toContain(input.inputPath);
+  expect(serialized).not.toContain(input.projectRoot);
+  expect(serialized).not.toContain("sourceLocator");
+  expect(serialized).not.toContain('"config"');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
