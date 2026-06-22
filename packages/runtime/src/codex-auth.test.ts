@@ -1,0 +1,136 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, test } from "vitest";
+import { resolveCodexAuth } from "./codex-auth.js";
+
+describe("resolveCodexAuth", () => {
+  test("uses CODEX_HOME/auth.json before ~/.codex/auth.json", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    const userHome = join(cwd, "home");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-codex" }));
+    writeFileSync(
+      join(userHome, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-home" }),
+    );
+
+    const auth = resolveCodexAuth({
+      env: { CODEX_HOME: codexHome },
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      displayPath: "CODEX_HOME/auth.json",
+      mode: "api-key",
+      source: "codex-home",
+      status: "available",
+    });
+    expect(auth.status === "available" ? auth.openaiApiKey : undefined).toBe("sk-codex");
+    expect(auth.detail).not.toContain("sk-codex");
+  });
+
+  test("falls back to ~/.codex/auth.json when CODEX_HOME/auth.json is absent", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    const codexHome = join(cwd, "codex-home");
+    const userHome = join(cwd, "home");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(
+      join(userHome, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-home" }),
+    );
+
+    const auth = resolveCodexAuth({
+      env: { CODEX_HOME: codexHome },
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      displayPath: "~/.codex/auth.json",
+      mode: "api-key",
+      source: "user-home",
+      status: "available",
+    });
+    expect(auth.status === "available" ? auth.openaiApiKey : undefined).toBe("sk-home");
+  });
+
+  test("reports Codex login tokens without treating them as embedding credentials", () => {
+    const userHome = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(
+      join(userHome, ".codex", "auth.json"),
+      JSON.stringify({
+        account_id: "acct_123",
+        tokens: {
+          access_token: "token",
+          refresh_token: "refresh",
+        },
+      }),
+    );
+
+    const auth = resolveCodexAuth({
+      env: {},
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      mode: "login",
+      reason: "login-without-api-key",
+      status: "unavailable",
+    });
+    expect(auth.detail).toContain("no cached OPENAI_API_KEY");
+    expect(auth.detail).not.toContain("acct_123");
+    expect(auth.detail).not.toContain("refresh");
+    expect(auth.guidance).toContain("Lexical recall remains available");
+  });
+
+  test("reports missing auth files as unavailable", () => {
+    const auth = resolveCodexAuth({
+      env: {},
+      homeDir: mkdtempSync(join(tmpdir(), "saga-codex-auth-")),
+    });
+
+    expect(auth).toMatchObject({
+      mode: "missing",
+      reason: "missing-auth-file",
+      status: "unavailable",
+    });
+  });
+
+  test("reports malformed auth files as unavailable without throwing", () => {
+    const userHome = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    mkdirSync(join(userHome, ".codex"), { recursive: true });
+    writeFileSync(join(userHome, ".codex", "auth.json"), "{nope");
+
+    const auth = resolveCodexAuth({
+      env: {},
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      mode: "malformed",
+      reason: "malformed-auth-file",
+      status: "unavailable",
+    });
+    expect(auth.guidance).toContain("Lexical recall remains available");
+  });
+
+  test("reports unreadable auth files as unavailable without trying to mutate them", () => {
+    const userHome = mkdtempSync(join(tmpdir(), "saga-codex-auth-"));
+    mkdirSync(join(userHome, ".codex", "auth.json"), { recursive: true });
+
+    const auth = resolveCodexAuth({
+      env: {},
+      homeDir: userHome,
+    });
+
+    expect(auth).toMatchObject({
+      mode: "unreadable",
+      reason: "unreadable-auth-file",
+      status: "unavailable",
+    });
+  });
+});
