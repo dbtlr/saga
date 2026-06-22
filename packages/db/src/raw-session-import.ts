@@ -37,8 +37,12 @@ export type RawSessionHarness = "claude" | "codex";
 export type RawSessionContentType = "json" | "jsonl" | "text";
 export type RawSessionImportStatus = "inserted" | "unchanged";
 type JsonBody = boolean | null | number | string | JsonBody[] | { [key: string]: JsonBody };
+type ActivityIntervalSettlementReason = "clear_context" | "idle_timeout" | "manual" | "stop_event";
+
+const ACTIVITY_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface RawSessionImportInput {
+  activity?: RawSessionImportActivityInput | undefined;
   author: {
     displayName?: string | undefined;
     handle: string;
@@ -73,9 +77,16 @@ export interface RawSessionImportInput {
       }
     | undefined;
   rawContent: string;
+  sourceBindingId?: string | undefined;
   status?: "active" | "completed" | undefined;
   title?: string | undefined;
   workspaceId: string;
+}
+
+export interface RawSessionImportActivityInput {
+  hookEventName?: string | undefined;
+  sessionStartSource?: string | undefined;
+  settlementTriggerRawEventId?: string | undefined;
 }
 
 export interface RawSessionImportResult {
@@ -153,37 +164,7 @@ async function importRawSessionRecordUnsafe(
       throw new RawSessionImportError({ message: "host user attribution returned no row" });
     }
 
-    const sourceUri = harnessSourceUri(input.harness, input.host.id);
-    const [sourceBinding] = await tx
-      .insert(sourceBindings)
-      .values({
-        config: {
-          hostId: input.host.id,
-          hostLabel: input.host.label,
-          projectRoot: input.host.projectRoot,
-        },
-        displayName: `${harnessDisplayName(input.harness)} on ${input.host.label ?? input.host.id}`,
-        sourceType: input.harness,
-        sourceUri,
-        workspaceId: input.workspaceId,
-      })
-      .onConflictDoUpdate({
-        set: {
-          config: {
-            hostId: input.host.id,
-            hostLabel: input.host.label,
-            projectRoot: input.host.projectRoot,
-          },
-          displayName: `${harnessDisplayName(input.harness)} on ${input.host.label ?? input.host.id}`,
-          enabled: true,
-          updatedAt: now,
-        },
-        target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],
-      })
-      .returning();
-    if (sourceBinding === undefined) {
-      throw new RawSessionImportError({ message: "source binding returned no row" });
-    }
+    const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
 
     const existingSession = await findSession(tx, input);
     const session =
@@ -194,10 +175,6 @@ async function importRawSessionRecordUnsafe(
         sourceBindingId: sourceBinding.id,
       }));
 
-    const activityInterval = await ensureActivityInterval(tx, {
-      input,
-      sessionId: session.id,
-    });
     const transcriptNormalization = normalizeTranscript(input);
 
     const [activeRecord] = await tx
@@ -218,27 +195,46 @@ async function importRawSessionRecordUnsafe(
       sessionId: session.id,
     });
     if (existingRecord !== undefined) {
+      const existingInterval =
+        existingRecord.activityIntervalId === null
+          ? await resolveActivityInterval(tx, {
+              input,
+              now,
+              session,
+              transcriptNormalization,
+            }).then((resolution) => resolution.activityInterval)
+          : await findActivityIntervalById(tx, {
+              id: existingRecord.activityIntervalId,
+              workspaceId: input.workspaceId,
+            });
       const repairedRecord =
         existingRecord.isActive && transcriptNormalization !== undefined
           ? await repairActiveRawSessionRecordDerivedRows(tx, {
-              activityIntervalId: activityInterval.id,
+              activityIntervalId: existingInterval.id,
               existingRecord,
               input,
               sessionId: session.id,
               transcriptNormalization,
             })
           : existingRecord;
+      const existingSettlement = settlementForExistingRawSessionRecord({
+        activityInterval: existingInterval,
+        input,
+        now,
+        transcriptNormalization,
+      });
       const refreshed =
         existingRecord.isActive && transcriptNormalization !== undefined
           ? await refreshSessionAndActivityInterval(tx, {
-              activityInterval,
+              activityInterval: existingInterval,
               input,
               now,
               rawSessionRecordId: repairedRecord.id,
+              settlement: existingSettlement,
               session,
               transcriptNormalization,
             })
-          : { activityInterval, session };
+          : { activityInterval: existingInterval, session };
       return {
         activityInterval: refreshed.activityInterval,
         authorUser,
@@ -257,6 +253,13 @@ async function importRawSessionRecordUnsafe(
       .orderBy(desc(rawSessionRecords.snapshotOrdinal))
       .limit(1);
 
+    const activityResolution = await resolveActivityInterval(tx, {
+      input,
+      now,
+      session,
+      transcriptNormalization,
+    });
+    const activityInterval = activityResolution.activityInterval;
     const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
     if (activeRecord !== undefined) {
       const inactivePrevious = input.rawRecord?.inactivePrevious;
@@ -337,6 +340,7 @@ async function importRawSessionRecordUnsafe(
       input,
       now,
       rawSessionRecordId: rawSessionRecord.id,
+      settlement: activityResolution.settlement,
       session,
       transcriptNormalization,
     });
@@ -368,6 +372,7 @@ async function refreshSessionAndActivityInterval(
     input: NormalizedRawSessionImportInput;
     now: Date;
     rawSessionRecordId: string;
+    settlement?: ActivityIntervalSettlement | undefined;
     session: Session;
     transcriptNormalization?: TranscriptNormalization | undefined;
   },
@@ -375,7 +380,9 @@ async function refreshSessionAndActivityInterval(
   const [updatedSession] = await tx
     .update(sessions)
     .set({
-      endedAt: input.transcriptNormalization?.session.endedAt,
+      endedAt:
+        input.transcriptNormalization?.session.endedAt ??
+        (input.settlement?.reason === "stop_event" ? input.settlement.endedAt : undefined),
       lastActivityAt:
         input.transcriptNormalization?.session.lastActivityAt ?? input.input.capturedAt,
       metadata: {
@@ -387,7 +394,9 @@ async function refreshSessionAndActivityInterval(
         input.transcriptNormalization?.session.model ?? input.input.model ?? input.session.model,
       startedAt: input.transcriptNormalization?.session.startedAt ?? input.session.startedAt,
       status:
-        input.transcriptNormalization?.session.status ?? input.input.status ?? input.session.status,
+        input.transcriptNormalization?.session.status ??
+        input.input.status ??
+        (input.settlement?.reason === "stop_event" ? "completed" : input.session.status),
       title:
         input.transcriptNormalization?.session.title ?? input.input.title ?? input.session.title,
       updatedAt: input.now,
@@ -401,16 +410,23 @@ async function refreshSessionAndActivityInterval(
   const [updatedActivityInterval] = await tx
     .update(activityIntervals)
     .set({
-      endedAt: input.transcriptNormalization?.activityInterval.endedAt,
+      endedAt: input.settlement?.endedAt ?? input.transcriptNormalization?.activityInterval.endedAt,
       metadata: {
         ...asRecord(input.activityInterval.metadata),
         ...input.transcriptNormalization?.activityInterval.metadata,
+        ...input.settlement?.metadata,
       },
+      settledAt: input.settlement?.settledAt,
+      settlementReason: input.settlement?.reason,
+      settlementTriggerRawEventId: input.settlement?.triggerRawEventId,
       startedAt:
         input.transcriptNormalization?.activityInterval.startedAt ??
         input.activityInterval.startedAt,
       status:
-        input.transcriptNormalization?.activityInterval.status ?? input.activityInterval.status,
+        input.settlement === undefined
+          ? (input.transcriptNormalization?.activityInterval.status ??
+            input.activityInterval.status)
+          : "settled",
       updatedAt: input.now,
     })
     .where(eq(activityIntervals.id, input.activityInterval.id))
@@ -539,6 +555,19 @@ interface NormalizedRawSessionImportInput extends RawSessionImportInput {
   sourceLocatorHash: string | undefined;
 }
 
+interface ActivityIntervalSettlement {
+  endedAt: Date;
+  metadata?: Record<string, unknown> | undefined;
+  reason: ActivityIntervalSettlementReason;
+  settledAt: Date;
+  triggerRawEventId?: string | undefined;
+}
+
+interface ActivityIntervalResolution {
+  activityInterval: ActivityInterval;
+  settlement?: ActivityIntervalSettlement | undefined;
+}
+
 function normalizeTranscript(
   input: NormalizedRawSessionImportInput,
 ): TranscriptNormalization | undefined {
@@ -630,6 +659,7 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
     },
     locator,
     model: input.model ?? transcriptHints?.model,
+    sourceBindingId: cleanOptional(input.sourceBindingId),
     sourceLocatorHash,
     workspaceId,
   };
@@ -719,11 +749,185 @@ async function insertSession(
   return session;
 }
 
-async function ensureActivityInterval(
+async function resolveRawSessionSourceBinding(
   tx: DatabaseService["db"],
   input: {
     input: NormalizedRawSessionImportInput;
+    now: Date;
+  },
+): Promise<SourceBinding> {
+  const sourceUri = harnessSourceUri(input.input.harness, input.input.host.id);
+  const config = {
+    hostId: input.input.host.id,
+    hostLabel: input.input.host.label,
+    projectRoot: input.input.host.projectRoot,
+  };
+  const displayName = `${harnessDisplayName(input.input.harness)} on ${
+    input.input.host.label ?? input.input.host.id
+  }`;
+
+  if (input.input.sourceBindingId !== undefined) {
+    const [sourceBinding] = await tx
+      .update(sourceBindings)
+      .set({
+        config,
+        displayName,
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(sourceBindings.workspaceId, input.input.workspaceId),
+          eq(sourceBindings.id, input.input.sourceBindingId),
+          eq(sourceBindings.sourceType, input.input.harness),
+          eq(sourceBindings.sourceUri, sourceUri),
+        ),
+      )
+      .returning();
+    if (sourceBinding === undefined) {
+      throw new RawSessionImportError({
+        message: "source binding does not match the requested harness and host",
+      });
+    }
+    return sourceBinding;
+  }
+
+  const [sourceBinding] = await tx
+    .insert(sourceBindings)
+    .values({
+      config,
+      displayName,
+      sourceType: input.input.harness,
+      sourceUri,
+      workspaceId: input.input.workspaceId,
+    })
+    .onConflictDoUpdate({
+      set: {
+        config,
+        displayName,
+        updatedAt: input.now,
+      },
+      target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],
+    })
+    .returning();
+  if (sourceBinding === undefined) {
+    throw new RawSessionImportError({ message: "source binding returned no row" });
+  }
+  return sourceBinding;
+}
+
+async function resolveActivityInterval(
+  tx: DatabaseService["db"],
+  input: {
+    input: NormalizedRawSessionImportInput;
+    now: Date;
+    session: Session;
+    transcriptNormalization?: TranscriptNormalization | undefined;
+  },
+): Promise<ActivityIntervalResolution> {
+  const observedStart =
+    input.transcriptNormalization?.activityInterval.startedAt ?? input.input.capturedAt;
+  const observedLast =
+    input.transcriptNormalization?.session.lastActivityAt ??
+    input.transcriptNormalization?.activityInterval.endedAt ??
+    input.input.capturedAt;
+  const triggerRawEventId = cleanOptional(input.input.activity?.settlementTriggerRawEventId);
+  const activeInterval = await findActiveActivityInterval(tx, {
+    sessionId: input.session.id,
+    workspaceId: input.input.workspaceId,
+  });
+  const latestOrdinal = await findLatestActivityIntervalOrdinal(tx, {
+    sessionId: input.session.id,
+  });
+  const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
+  const hookEventName = cleanOptional(input.input.activity?.hookEventName);
+  const shouldOpenAfterClear =
+    hookEventName === "SessionStart" &&
+    (sessionStartSource === "clear" || sessionStartSource === "compact") &&
+    activeInterval !== undefined;
+  const idleSettlement =
+    activeInterval === undefined || shouldOpenAfterClear
+      ? undefined
+      : idleTimeoutSettlement({
+          lastActivityAt: input.session.lastActivityAt,
+          observedStart,
+          triggerRawEventId,
+        });
+
+  if (shouldOpenAfterClear) {
+    await settleActivityInterval(tx, {
+      interval: activeInterval,
+      now: input.now,
+      settlement: {
+        endedAt: observedStart,
+        metadata: {
+          settlementSource: sessionStartSource,
+        },
+        reason: "clear_context",
+        settledAt: input.now,
+        triggerRawEventId,
+      },
+    });
+    return {
+      activityInterval: await insertActivityInterval(tx, {
+        input: input.input,
+        ordinal: latestOrdinal + 1,
+        sessionId: input.session.id,
+        startedAt: observedStart,
+      }),
+    };
+  }
+
+  if (idleSettlement !== undefined && activeInterval !== undefined) {
+    await settleActivityInterval(tx, {
+      interval: activeInterval,
+      now: input.now,
+      settlement: idleSettlement,
+    });
+    return {
+      activityInterval: await insertActivityInterval(tx, {
+        input: input.input,
+        ordinal: latestOrdinal + 1,
+        sessionId: input.session.id,
+        startedAt: observedStart,
+      }),
+    };
+  }
+
+  const activityInterval =
+    activeInterval ??
+    (await insertActivityInterval(tx, {
+      input: input.input,
+      ordinal: latestOrdinal + 1,
+      sessionId: input.session.id,
+      startedAt: observedStart,
+    }));
+
+  const stopSettlement =
+    hookEventName === "Stop"
+      ? {
+          endedAt: observedLast,
+          metadata: {
+            settlementSource: "hook",
+          },
+          reason: "stop_event" as const,
+          settledAt: input.now,
+          triggerRawEventId,
+        }
+      : undefined;
+
+  return {
+    activityInterval,
+    settlement: stopSettlement,
+  };
+}
+
+async function insertActivityInterval(
+  tx: DatabaseService["db"],
+  input: {
+    input: NormalizedRawSessionImportInput;
+    ordinal: number;
     sessionId: string;
+    startedAt: Date;
   },
 ): Promise<ActivityInterval> {
   const [interval] = await tx
@@ -732,23 +936,143 @@ async function ensureActivityInterval(
       metadata: {
         importBoundary: "raw_session",
       },
-      ordinal: 0,
+      ordinal: input.ordinal,
       sessionId: input.sessionId,
-      startedAt: input.input.capturedAt,
+      startedAt: input.startedAt,
       status: "active",
       workspaceId: input.input.workspaceId,
-    })
-    .onConflictDoUpdate({
-      set: {
-        updatedAt: new Date(),
-      },
-      target: [activityIntervals.sessionId, activityIntervals.ordinal],
     })
     .returning();
   if (interval === undefined) {
     throw new RawSessionImportError({ message: "activity interval returned no row" });
   }
   return interval;
+}
+
+async function findActivityIntervalById(
+  tx: DatabaseService["db"],
+  input: { id: string; workspaceId: string },
+): Promise<ActivityInterval> {
+  const [interval] = await tx
+    .select()
+    .from(activityIntervals)
+    .where(
+      and(eq(activityIntervals.id, input.id), eq(activityIntervals.workspaceId, input.workspaceId)),
+    )
+    .limit(1);
+  if (interval === undefined) {
+    throw new RawSessionImportError({ message: "raw session activity interval is missing" });
+  }
+  return interval;
+}
+
+async function findActiveActivityInterval(
+  tx: DatabaseService["db"],
+  input: { sessionId: string; workspaceId: string },
+): Promise<ActivityInterval | undefined> {
+  const [interval] = await tx
+    .select()
+    .from(activityIntervals)
+    .where(
+      and(
+        eq(activityIntervals.sessionId, input.sessionId),
+        eq(activityIntervals.workspaceId, input.workspaceId),
+        eq(activityIntervals.status, "active"),
+      ),
+    )
+    .orderBy(desc(activityIntervals.ordinal))
+    .limit(1);
+  return interval;
+}
+
+async function findLatestActivityIntervalOrdinal(
+  tx: DatabaseService["db"],
+  input: { sessionId: string },
+): Promise<number> {
+  const [interval] = await tx
+    .select({ ordinal: activityIntervals.ordinal })
+    .from(activityIntervals)
+    .where(eq(activityIntervals.sessionId, input.sessionId))
+    .orderBy(desc(activityIntervals.ordinal))
+    .limit(1);
+  return interval?.ordinal ?? -1;
+}
+
+async function settleActivityInterval(
+  tx: DatabaseService["db"],
+  input: {
+    interval: ActivityInterval;
+    now: Date;
+    settlement: ActivityIntervalSettlement;
+  },
+): Promise<void> {
+  const [settled] = await tx
+    .update(activityIntervals)
+    .set({
+      endedAt: input.settlement.endedAt,
+      metadata: {
+        ...asRecord(input.interval.metadata),
+        ...input.settlement.metadata,
+      },
+      settledAt: input.settlement.settledAt,
+      settlementReason: input.settlement.reason,
+      settlementTriggerRawEventId: input.settlement.triggerRawEventId,
+      status: "settled",
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(activityIntervals.id, input.interval.id),
+        eq(activityIntervals.workspaceId, input.interval.workspaceId),
+        eq(activityIntervals.status, "active"),
+      ),
+    )
+    .returning({ id: activityIntervals.id });
+  if (settled === undefined) {
+    throw new RawSessionImportError({ message: "active activity interval changed during import" });
+  }
+}
+
+function idleTimeoutSettlement(input: {
+  lastActivityAt: Date | null;
+  observedStart: Date;
+  triggerRawEventId?: string | undefined;
+}): ActivityIntervalSettlement | undefined {
+  if (input.lastActivityAt === null) return undefined;
+  const idleMs = input.observedStart.getTime() - input.lastActivityAt.getTime();
+  if (idleMs <= ACTIVITY_IDLE_TIMEOUT_MS) return undefined;
+  const endedAt = new Date(input.lastActivityAt.getTime() + ACTIVITY_IDLE_TIMEOUT_MS);
+  return {
+    endedAt,
+    metadata: {
+      idleThresholdMinutes: 30,
+    },
+    reason: "idle_timeout",
+    settledAt: input.observedStart,
+    triggerRawEventId: input.triggerRawEventId,
+  };
+}
+
+function settlementForExistingRawSessionRecord(input: {
+  activityInterval: ActivityInterval;
+  input: NormalizedRawSessionImportInput;
+  now: Date;
+  transcriptNormalization?: TranscriptNormalization | undefined;
+}): ActivityIntervalSettlement | undefined {
+  if (input.activityInterval.status !== "active") return undefined;
+  if (cleanOptional(input.input.activity?.hookEventName) !== "Stop") return undefined;
+  return {
+    endedAt:
+      input.transcriptNormalization?.session.lastActivityAt ??
+      input.transcriptNormalization?.activityInterval.endedAt ??
+      input.input.capturedAt,
+    metadata: {
+      settlementSource: "hook",
+    },
+    reason: "stop_event",
+    settledAt: input.now,
+    triggerRawEventId: cleanOptional(input.input.activity?.settlementTriggerRawEventId),
+  };
 }
 
 async function findRawSessionRecordByContentHash(

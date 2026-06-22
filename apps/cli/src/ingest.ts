@@ -1,4 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { extname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { extractCandidateClaimsFromRawEvents } from "@saga/claims";
 import {
   rawEventFromClaudeHook,
@@ -11,14 +14,17 @@ import {
 import {
   insertExtractedCandidateClaims,
   insertRawEvent,
+  importRawSessionRecord,
   listRecentRawEvents,
   makeDatabase,
   type ClaimProjectionResult,
   type RawEvent,
+  type RawSessionContentType,
+  type RawSessionImportInput,
 } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
-import { findProjectRoot, readBindingFile } from "./init.js";
+import { findProjectRoot, readBindingFile, type WorkspaceBindingFileWithHost } from "./init.js";
 import { formatCommandOutput } from "./output.js";
 import { recordBlock, type RenderOptions } from "./render.js";
 
@@ -27,6 +33,8 @@ export interface HookIngestResult {
   error?: string | undefined;
   eventId?: string | undefined;
   mode: "captured" | "skipped";
+  rawSessionImport?: "inserted" | "skipped" | "unchanged" | undefined;
+  rawSessionRecordId?: string | undefined;
   source: HarnessSource;
 }
 
@@ -110,6 +118,12 @@ export async function ingestHook(
           { label: "mode", value: result.mode },
           { label: "accepted", value: String(result.accepted) },
           ...(result.eventId === undefined ? [] : [{ label: "event", value: result.eventId }]),
+          ...(result.rawSessionImport === undefined
+            ? []
+            : [{ label: "raw session import", value: result.rawSessionImport }]),
+          ...(result.rawSessionRecordId === undefined
+            ? []
+            : [{ label: "raw session record", value: result.rawSessionRecordId }]),
           ...(result.error === undefined ? [] : [{ label: "error", value: result.error }]),
         ],
         options,
@@ -227,6 +241,12 @@ export async function captureHook(
         `${sourceDisplayName(source)} harness binding is invalid: sourceBindingId is missing`,
       );
     }
+    if (binding.host === undefined || binding.host.id.trim() === "") {
+      throw new Error(
+        `${sourceDisplayName(source)} harness binding is stale: local host id is missing`,
+      );
+    }
+    const bindingWithHost = binding as WorkspaceBindingFileWithHost;
 
     const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
     const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
@@ -246,10 +266,25 @@ export async function captureHook(
               workspace: binding.workspace,
             });
       const row = await Effect.runPromise(insertRawEvent(service, event));
+      const rawSessionImportInput = buildAmbientRawSessionImportInput({
+        binding: bindingWithHost,
+        hookInput: input,
+        projectRoot,
+        rawEventId: row.id,
+        rawEventOccurredAt: row.occurredAt,
+        source,
+        sourceBindingId: sourceBinding.sourceBindingId,
+      });
+      const rawSessionImport =
+        rawSessionImportInput === undefined
+          ? undefined
+          : await Effect.runPromise(importRawSessionRecord(service, rawSessionImportInput));
       return {
         accepted: true,
         eventId: row.id,
         mode: "captured",
+        rawSessionImport: rawSessionImport === undefined ? "skipped" : rawSessionImport.operation,
+        rawSessionRecordId: rawSessionImport?.rawSessionRecord.id,
         source,
       };
     } finally {
@@ -263,6 +298,97 @@ export async function captureHook(
       source,
     };
   }
+}
+
+function buildAmbientRawSessionImportInput(input: {
+  binding: WorkspaceBindingFileWithHost;
+  hookInput: HarnessHookInput;
+  projectRoot: string;
+  rawEventId: string;
+  rawEventOccurredAt: Date;
+  source: HarnessSource;
+  sourceBindingId: string;
+}): RawSessionImportInput | undefined {
+  const transcriptPath =
+    typeof input.hookInput.transcript_path === "string" &&
+    input.hookInput.transcript_path.trim() !== ""
+      ? input.hookInput.transcript_path
+      : undefined;
+  if (transcriptPath === undefined || !existsSync(transcriptPath)) return undefined;
+
+  const rawContent = readFileSync(transcriptPath, "utf8");
+  const hookEventName =
+    typeof input.hookInput.hook_event_name === "string"
+      ? input.hookInput.hook_event_name
+      : undefined;
+  const sessionStartSource =
+    readHookString(input.hookInput.source) ?? readHookString(input.hookInput.session_start_source);
+  const author = defaultAuthor();
+
+  return {
+    activity: {
+      hookEventName,
+      sessionStartSource,
+      settlementTriggerRawEventId: input.rawEventId,
+    },
+    author,
+    capturedAt: input.rawEventOccurredAt,
+    contentType: inferSessionContentType(transcriptPath, rawContent),
+    harness: input.source,
+    harnessMetadata: {
+      hookEventName,
+      permissionMode: readHookString(input.hookInput.permission_mode),
+      sessionStartSource,
+    },
+    harnessSessionId: readHookString(input.hookInput.session_id),
+    host: {
+      id: input.binding.host.id,
+      label: input.binding.host.label,
+      projectRoot: input.projectRoot,
+    },
+    locator: pathToFileURL(resolve(transcriptPath)).href,
+    metadata: {
+      importMode: "ambient_hook",
+      triggerRawEventId: input.rawEventId,
+    },
+    model: readHookString(input.hookInput.model),
+    provenance: {
+      hookEventName,
+      importedBy: `saga ingest ${input.source}-hook`,
+      rawEventId: input.rawEventId,
+      transcriptPath,
+    },
+    rawContent,
+    sourceBindingId: input.sourceBindingId,
+    status: hookEventName === "Stop" ? "completed" : "active",
+    workspaceId: input.binding.workspace.id,
+  };
+}
+
+function inferSessionContentType(path: string, rawContent: string): RawSessionContentType {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".json") return "json";
+  if (extension === ".jsonl" || extension === ".ndjson") return "jsonl";
+
+  const trimmed = rawContent.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return "json";
+  if (trimmed.split(/\r?\n/u).every((line) => line.trim() === "" || line.trim().startsWith("{"))) {
+    return "jsonl";
+  }
+  return "text";
+}
+
+function defaultAuthor(): RawSessionImportInput["author"] {
+  const user = userInfo();
+  return {
+    displayName: user.username,
+    handle: user.username,
+    externalSubject: user.username,
+  };
+}
+
+function readHookString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 function renderClaimIngest(

@@ -547,6 +547,378 @@ describePostgres("raw session import", () => {
     ]);
   });
 
+  test("uses an explicit harness source binding without re-enabling disabled bindings", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-disabled-source");
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        config: {
+          hostId: "host-disabled-source",
+        },
+        enabled: false,
+        sourceType: "codex",
+        sourceUri: "codex://host/host-disabled-source",
+        workspaceId,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-disabled-source",
+        },
+        locator: "/tmp/codex-disabled-source.jsonl",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-disabled-source-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Import without enabling source." }],
+            },
+          },
+        ]),
+        sourceBindingId: sourceBinding.id,
+        workspaceId,
+      }),
+    );
+
+    expect(result.sourceBinding.id).toBe(sourceBinding.id);
+    expect(result.sourceBinding.enabled).toBe(false);
+
+    const [storedBinding] = await service.db
+      .select()
+      .from(sourceBindings)
+      .where(eq(sourceBindings.id, sourceBinding.id))
+      .limit(1);
+    expect(storedBinding?.enabled).toBe(false);
+  });
+
+  test("settles the active Activity Interval from ambient Stop lifecycle input", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-stop-interval");
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-stop-interval",
+      },
+      locator: "/tmp/codex-stop-interval.jsonl",
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "UserPromptSubmit",
+        },
+        capturedAt: "2026-06-22T19:10:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:10:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-stop-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:10:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Start a stoppable interval." }],
+            },
+          },
+        ]),
+      }),
+    );
+    const stopped = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "Stop",
+        },
+        capturedAt: "2026-06-22T19:15:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:10:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-stop-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:10:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Start a stoppable interval." }],
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:15:00.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              id: "assistant-stop-interval",
+              role: "assistant",
+              content: [{ type: "output_text", text: "The interval can settle." }],
+            },
+          },
+        ]),
+      }),
+    );
+
+    expect(stopped.activityInterval.id).toBe(first.activityInterval.id);
+    expect(stopped.activityInterval).toMatchObject({
+      endedAt: new Date("2026-06-22T19:15:00.000Z"),
+      settlementReason: "stop_event",
+      status: "settled",
+    });
+    expect(stopped.session.status).toBe("completed");
+  });
+
+  test("settles an unchanged active raw snapshot from ambient Stop lifecycle input", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-unchanged-stop-interval");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T19:16:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-unchanged-stop-interval-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T19:16:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Stop without transcript growth." }],
+        },
+      },
+    ]);
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T19:16:01.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-unchanged-stop-interval",
+      },
+      locator: "/tmp/codex-unchanged-stop-interval.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "UserPromptSubmit",
+        },
+      }),
+    );
+    const stopped = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: {
+          hookEventName: "Stop",
+        },
+        capturedAt: "2026-06-22T19:17:00.000Z",
+      }),
+    );
+
+    expect(stopped.operation).toBe("unchanged");
+    expect(stopped.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+    expect(stopped.activityInterval.id).toBe(first.activityInterval.id);
+    expect(stopped.activityInterval).toMatchObject({
+      endedAt: new Date("2026-06-22T19:16:01.000Z"),
+      settlementReason: "stop_event",
+      status: "settled",
+    });
+    expect(stopped.session.status).toBe("completed");
+  });
+
+  test("opens new Activity Intervals for clear-context lifecycle and idle timeout", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-interval-boundaries");
+    const clearBaseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-clear-interval",
+      },
+      locator: "/tmp/codex-clear-interval.jsonl",
+      workspaceId,
+    } as const;
+    const clearFirst = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...clearBaseInput,
+        capturedAt: "2026-06-22T19:20:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:20:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-clear-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:20:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Before clear context." }],
+            },
+          },
+        ]),
+      }),
+    );
+    const clearSecond = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...clearBaseInput,
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "clear",
+        },
+        capturedAt: "2026-06-22T19:22:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T19:20:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-clear-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T19:22:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "After clear context." }],
+            },
+          },
+        ]),
+      }),
+    );
+
+    expect(clearSecond.activityInterval.id).not.toBe(clearFirst.activityInterval.id);
+    expect(clearSecond.activityInterval.ordinal).toBe(1);
+    const clearIntervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, clearFirst.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(clearIntervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+    expect(clearIntervals[0]).toMatchObject({
+      settlementReason: "clear_context",
+    });
+
+    const idleBaseInput = {
+      author: {
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-idle-interval",
+      },
+      locator: "/tmp/codex-idle-interval.jsonl",
+      workspaceId,
+    } as const;
+    const idleFirst = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...idleBaseInput,
+        capturedAt: "2026-06-22T20:00:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T20:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-idle-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T20:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Before idle timeout." }],
+            },
+          },
+        ]),
+      }),
+    );
+    const idleSecond = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...idleBaseInput,
+        capturedAt: "2026-06-22T20:45:01.000Z",
+        rawContent: codexTranscript([
+          {
+            timestamp: "2026-06-22T20:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "codex-idle-interval-session",
+            },
+          },
+          {
+            timestamp: "2026-06-22T20:45:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "After idle timeout." }],
+            },
+          },
+        ]),
+      }),
+    );
+
+    expect(idleSecond.activityInterval.id).not.toBe(idleFirst.activityInterval.id);
+    expect(idleSecond.activityInterval.ordinal).toBe(1);
+    const idleIntervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, idleFirst.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(idleIntervals.map((interval) => interval.status)).toEqual(["settled", "active"]);
+    expect(idleIntervals[0]).toMatchObject({
+      endedAt: new Date("2026-06-22T20:30:01.000Z"),
+      settlementReason: "idle_timeout",
+    });
+  });
+
   test("normalizes Codex transcript JSONL into session metadata, turns, parts, and spans", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("codex-normalize");

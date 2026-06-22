@@ -1,0 +1,276 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { and, eq } from "drizzle-orm";
+import {
+  activityIntervals,
+  makeDatabase,
+  rawEvents,
+  rawSessionRecords,
+  runMigrations,
+  sessionSegments,
+  sessions,
+  sourceBindings,
+  type DatabaseService,
+} from "@saga/db";
+import { Effect } from "effect";
+import postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { installHarness } from "./harness.js";
+import { captureHook } from "./ingest.js";
+import { initProject, readBindingFile } from "./init.js";
+
+const databaseUrl = process.env.SAGA_TEST_DATABASE_URL;
+const describePostgres = databaseUrl === undefined ? describe.skip : describe;
+
+describePostgres("ambient hook ingest postgres integration", () => {
+  const databaseName = `saga_ingest_${Date.now().toString(36)}`;
+  const adminSql = postgres(databaseUrl ?? "", { max: 1 });
+  let previousDatabaseUrl: string | undefined;
+  let service: DatabaseService | undefined;
+
+  beforeAll(async () => {
+    await adminSql.unsafe(`create database "${databaseName}"`);
+    const url = new URL(databaseUrl ?? "");
+    url.pathname = `/${databaseName}`;
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = url.toString();
+    service = await Effect.runPromise(
+      makeDatabase(
+        {
+          databaseUrl: url.toString(),
+          environment: "test",
+          logLevel: "info",
+          service: {
+            host: "127.0.0.1",
+            port: 4766,
+          },
+          secrets: {
+            openaiApiKey: undefined,
+          },
+        },
+        {
+          postgres: {
+            max: 1,
+          },
+        },
+      ),
+    );
+    await Effect.runPromise(runMigrations(service));
+  });
+
+  afterAll(async () => {
+    if (service !== undefined) {
+      await Effect.runPromise(service.close());
+    }
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
+    await adminSql.end({ timeout: 5 });
+  });
+
+  test("skips ambient capture outside an initialized workspace without database writes", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-unbound-"));
+    const transcriptPath = join(projectRoot, "codex-unbound.jsonl");
+    writeFileSync(
+      transcriptPath,
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T21:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "codex-unbound-session",
+          },
+        },
+      ]),
+    );
+
+    const result = await captureHook("codex", {
+      cwd: projectRoot,
+      hook_event_name: "UserPromptSubmit",
+      session_id: "codex-unbound-session",
+      transcript_path: transcriptPath,
+    });
+
+    expect(result).toMatchObject({
+      mode: "skipped",
+      source: "codex",
+    });
+    expect(result.error).toContain("workspace binding is missing");
+
+    const rawEventRows = await service.db.select().from(rawEvents);
+    const rawSessionRows = await service.db.select().from(rawSessionRecords);
+    expect(rawEventRows).toHaveLength(0);
+    expect(rawSessionRows).toHaveLength(0);
+  });
+
+  test("imports Codex transcript snapshots idempotently through ambient hooks", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-codex-"));
+    await initProject({ cwd: projectRoot, handle: "Ambient Codex" });
+    await installHarness({ cwd: projectRoot, target: "codex" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+    const transcriptPath = join(projectRoot, "codex-ambient.jsonl");
+    writeFileSync(
+      transcriptPath,
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T21:10:00.000Z",
+          type: "session_meta",
+          payload: {
+            cwd: projectRoot,
+            id: "codex-ambient-session",
+          },
+        },
+        {
+          timestamp: "2026-06-22T21:10:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Ambient Codex import sentinel." }],
+          },
+        },
+      ]),
+    );
+
+    const hookInput = {
+      cwd: projectRoot,
+      hook_event_name: "UserPromptSubmit",
+      session_id: "codex-ambient-session",
+      transcript_path: transcriptPath,
+    };
+    const first = await captureHook("codex", hookInput);
+    const second = await captureHook("codex", hookInput);
+
+    expect(first).toMatchObject({
+      mode: "captured",
+      rawSessionImport: "inserted",
+      source: "codex",
+    });
+    expect(second).toMatchObject({
+      eventId: first.eventId,
+      mode: "captured",
+      rawSessionImport: "unchanged",
+      rawSessionRecordId: first.rawSessionRecordId,
+      source: "codex",
+    });
+
+    const [sourceBinding] = await service.db
+      .select()
+      .from(sourceBindings)
+      .where(
+        and(
+          eq(sourceBindings.workspaceId, binding.workspace.id),
+          eq(sourceBindings.sourceUri, `codex://host/${binding.host.id}`),
+        ),
+      )
+      .limit(1);
+    expect(sourceBinding?.id).toBe(binding.harnesses?.codex?.sourceBindingId);
+    expect(sourceBinding?.enabled).toBe(true);
+
+    const sessionRows = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.workspaceId, binding.workspace.id));
+    const rawRecordRows = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.workspaceId, binding.workspace.id));
+    const segmentRows = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.workspaceId, binding.workspace.id));
+    const rawEventRows = await service.db
+      .select()
+      .from(rawEvents)
+      .where(eq(rawEvents.workspaceId, binding.workspace.id));
+
+    expect(sessionRows).toHaveLength(1);
+    expect(rawRecordRows).toHaveLength(1);
+    expect(segmentRows).toHaveLength(1);
+    expect(segmentRows[0]?.searchText).toBe("Ambient Codex import sentinel.");
+    expect(rawEventRows).toHaveLength(1);
+  });
+
+  test("imports and settles Claude transcript snapshots through ambient Stop hooks", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-claude-"));
+    await initProject({ cwd: projectRoot, handle: "Ambient Claude" });
+    await installHarness({ cwd: projectRoot, target: "claude" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+    const transcriptPath = join(projectRoot, "claude-ambient.jsonl");
+    writeFileSync(
+      transcriptPath,
+      claudeTranscript([
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: "Ambient Claude import sentinel.",
+          },
+          timestamp: "2026-06-22T21:20:00.000Z",
+          sessionId: "claude-ambient-session",
+          uuid: "claude-ambient-user",
+        },
+        {
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-5",
+            role: "assistant",
+            content: [{ type: "text", text: "Ambient Claude captured." }],
+          },
+          timestamp: "2026-06-22T21:20:01.000Z",
+          sessionId: "claude-ambient-session",
+          uuid: "claude-ambient-assistant",
+        },
+      ]),
+    );
+
+    const result = await captureHook("claude", {
+      cwd: projectRoot,
+      hook_event_name: "Stop",
+      session_id: "claude-ambient-session",
+      transcript_path: transcriptPath,
+    });
+
+    expect(result).toMatchObject({
+      mode: "captured",
+      rawSessionImport: "inserted",
+      source: "claude",
+    });
+
+    const [interval] = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.workspaceId, binding.workspace.id))
+      .limit(1);
+    expect(interval).toMatchObject({
+      settlementReason: "stop_event",
+      status: "settled",
+    });
+
+    const segmentRows = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.workspaceId, binding.workspace.id));
+    expect(segmentRows.map((segment) => segment.searchText)).toEqual([
+      "Ambient Claude import sentinel.",
+      "Ambient Claude captured.",
+    ]);
+  });
+});
+
+function codexTranscript(records: readonly Record<string, unknown>[]): string {
+  return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
+
+function claudeTranscript(records: readonly Record<string, unknown>[]): string {
+  return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
