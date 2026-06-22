@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Data, Effect } from "effect";
+import {
+  extractCodexTranscriptImportHints,
+  normalizeCodexTranscript,
+  type CodexTranscriptNormalization,
+  type NormalizedTranscriptTurn,
+} from "./codex-transcript-normalizer.js";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import {
   activityIntervals,
@@ -170,6 +176,15 @@ async function importRawSessionRecordUnsafe(
       input,
       sessionId: session.id,
     });
+    const transcriptNormalization =
+      input.harness === "codex"
+        ? normalizeCodexTranscript({
+            contentType: input.contentType,
+            fallbackHarnessSessionId: input.harnessSessionId,
+            fallbackModel: input.model,
+            rawContent: input.rawContent,
+          })
+        : undefined;
 
     const existingRecord = await findRawSessionRecordByContentHash(tx, {
       contentHash: input.contentHash,
@@ -227,6 +242,7 @@ async function importRawSessionRecordUnsafe(
           ...input.metadata,
           contentBytes: input.contentBytes,
           harness: input.harnessMetadata,
+          normalization: transcriptNormalization?.metadata,
           sourceLocatorHash: input.sourceLocatorHash,
         },
         provenance: input.provenance,
@@ -244,21 +260,40 @@ async function importRawSessionRecordUnsafe(
     await tx
       .update(sessions)
       .set({
-        lastActivityAt: input.capturedAt,
+        endedAt: transcriptNormalization?.session.endedAt,
+        lastActivityAt: transcriptNormalization?.session.lastActivityAt ?? input.capturedAt,
         metadata: {
           ...asRecord(session.metadata),
+          ...transcriptNormalization?.session.metadata,
           latestRawSessionRecordId: rawSessionRecord.id,
         },
-        model: input.model ?? session.model,
-        status: input.status ?? session.status,
-        title: input.title ?? session.title,
+        model: transcriptNormalization?.session.model ?? input.model ?? session.model,
+        startedAt: transcriptNormalization?.session.startedAt ?? session.startedAt,
+        status: transcriptNormalization?.session.status ?? input.status ?? session.status,
+        title: transcriptNormalization?.session.title ?? input.title ?? session.title,
         updatedAt: now,
       })
       .where(eq(sessions.id, session.id));
 
+    await tx
+      .update(activityIntervals)
+      .set({
+        endedAt: transcriptNormalization?.activityInterval.endedAt,
+        metadata: {
+          ...asRecord(activityInterval.metadata),
+          ...transcriptNormalization?.activityInterval.metadata,
+        },
+        startedAt:
+          transcriptNormalization?.activityInterval.startedAt ?? activityInterval.startedAt,
+        status: transcriptNormalization?.activityInterval.status ?? activityInterval.status,
+        updatedAt: now,
+      })
+      .where(eq(activityIntervals.id, activityInterval.id));
+
     await regenerateDerivedSessionRecords(tx, {
       activityIntervalId: activityInterval.id,
       input,
+      transcriptNormalization,
       rawSessionRecordId: rawSessionRecord.id,
       sessionId: session.id,
     });
@@ -298,7 +333,14 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
     throw new RawSessionImportError({ message: "author.handle is required" });
   }
 
-  const harnessSessionId = cleanOptional(input.harnessSessionId);
+  const codexHints =
+    input.harness === "codex"
+      ? extractCodexTranscriptImportHints({
+          contentType: input.contentType,
+          rawContent: input.rawContent,
+        })
+      : undefined;
+  const harnessSessionId = cleanOptional(input.harnessSessionId) ?? codexHints?.harnessSessionId;
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
   if (harnessSessionId === undefined && sourceLocatorHash === undefined) {
@@ -323,6 +365,7 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
       id: hostId,
     },
     locator,
+    model: input.model ?? codexHints?.model,
     sourceLocatorHash,
     workspaceId,
   };
@@ -452,6 +495,7 @@ async function regenerateDerivedSessionRecords(
     input: NormalizedRawSessionImportInput;
     rawSessionRecordId: string;
     sessionId: string;
+    transcriptNormalization?: CodexTranscriptNormalization | undefined;
   },
 ): Promise<void> {
   const rawSessionRecordIds = await tx
@@ -489,6 +533,17 @@ async function regenerateDerivedSessionRecords(
         eq(sessionTurns.workspaceId, input.input.workspaceId),
       ),
     );
+
+  if (input.transcriptNormalization !== undefined) {
+    await insertNormalizedTranscriptTurns(tx, {
+      activityIntervalId: input.activityIntervalId,
+      input: input.input,
+      rawSessionRecordId: input.rawSessionRecordId,
+      sessionId: input.sessionId,
+      turns: input.transcriptNormalization.turns,
+    });
+    return;
+  }
 
   const searchText = deriveSearchText(input.input);
   if (searchText === "") return;
@@ -533,6 +588,73 @@ async function regenerateDerivedSessionRecords(
   }
 }
 
+async function insertNormalizedTranscriptTurns(
+  tx: DatabaseService["db"],
+  input: {
+    activityIntervalId: string;
+    input: NormalizedRawSessionImportInput;
+    rawSessionRecordId: string;
+    sessionId: string;
+    turns: readonly NormalizedTranscriptTurn[];
+  },
+): Promise<void> {
+  let segmentOrdinal = 0;
+  for (const [turnIndex, normalizedTurn] of input.turns.entries()) {
+    const [turn] = await tx
+      .insert(sessionTurns)
+      .values({
+        activityIntervalId: input.activityIntervalId,
+        actorKind: normalizedTurn.actorKind,
+        actorLabel: normalizedTurn.actorLabel,
+        contentParts: normalizedTurn.contentParts,
+        endedAt: normalizedTurn.endedAt,
+        harnessTurnId: normalizedTurn.harnessTurnId,
+        metadata: normalizedTurn.metadata,
+        model: normalizedTurn.model,
+        ordinal: turnIndex,
+        rawEventIds: [],
+        rawSessionRecordId: input.rawSessionRecordId,
+        rawSpan: normalizedTurn.rawSpan,
+        role: normalizedTurn.role,
+        sessionId: input.sessionId,
+        startedAt: normalizedTurn.startedAt,
+        workspaceId: input.input.workspaceId,
+      })
+      .returning();
+    if (turn === undefined) {
+      throw new RawSessionImportError({ message: "session turn insert returned no row" });
+    }
+
+    const searchText = normalizedTurn.searchText.trim();
+    if (searchText === "") continue;
+    const rawSpan = asRecord(normalizedTurn.rawSpan);
+    const [segment] = await tx
+      .insert(sessionSegments)
+      .values({
+        activityIntervalId: input.activityIntervalId,
+        charEnd: readNumber(rawSpan.charEnd),
+        charStart: readNumber(rawSpan.charStart),
+        metadata: {
+          codexTurnId: normalizedTurn.codexTurnId,
+          normalizer: "codex-transcript-v1",
+          role: normalizedTurn.role,
+        },
+        ordinal: segmentOrdinal,
+        rawSessionRecordId: input.rawSessionRecordId,
+        searchText,
+        sessionId: input.sessionId,
+        snippet: searchText.slice(0, 240),
+        turnId: turn.id,
+        workspaceId: input.input.workspaceId,
+      })
+      .returning();
+    if (segment === undefined) {
+      throw new RawSessionImportError({ message: "session segment insert returned no row" });
+    }
+    segmentOrdinal += 1;
+  }
+}
+
 function buildRawBody(input: NormalizedRawSessionImportInput): {
   bodyJson: JsonBody | undefined;
   bodyText: string | undefined;
@@ -540,6 +662,13 @@ function buildRawBody(input: NormalizedRawSessionImportInput): {
   if (input.contentType === "json") {
     return {
       bodyJson: parseJsonBody(input.rawContent),
+      bodyText: input.rawContent,
+    };
+  }
+
+  if (input.contentType === "jsonl") {
+    return {
+      bodyJson: parseJsonlBody(input.rawContent),
       bodyText: input.rawContent,
     };
   }
@@ -556,6 +685,18 @@ function parseJsonBody(rawContent: string): JsonBody | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseJsonlBody(rawContent: string): JsonBody[] | undefined {
+  const values: JsonBody[] = [];
+  for (const line of rawContent.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const parsed = parseJsonBody(trimmed);
+    if (parsed === undefined) return undefined;
+    values.push(parsed);
+  }
+  return values;
 }
 
 function deriveSearchText(input: NormalizedRawSessionImportInput): string {
@@ -597,6 +738,10 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function errorMessage(cause: unknown): string {

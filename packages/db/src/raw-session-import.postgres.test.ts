@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -6,6 +6,7 @@ import { makeDatabase, runMigrations, type DatabaseService } from "./database.js
 import { importRawSessionRecord } from "./raw-session-import.js";
 import {
   rawSessionRecords,
+  sessions,
   sessionSegments,
   sessionTurns,
   sourceBindings,
@@ -226,6 +227,314 @@ describePostgres("raw session import", () => {
     expect(activeSegments[0]?.searchText).toContain("Second turn");
   });
 
+  test("normalizes Codex transcript JSONL into session metadata, turns, parts, and spans", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-normalize");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T14:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          agent_role: "subagent",
+          cli_version: "0.42.0-test",
+          cwd: "/work/saga",
+          id: "codex-transcript-session-1",
+          model_provider: "openai",
+          parent_thread_id: "parent-thread-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:01.000Z",
+        type: "event_msg",
+        payload: {
+          type: "task_started",
+          turn_id: "turn-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:02.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Normalize Codex transcripts." }],
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:04.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "msg-assistant-1",
+          role: "assistant",
+          content: [{ type: "output_text", text: "I will parse JSONL into structured turns." }],
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:05.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          id: "call-item-1",
+          call_id: "call-1",
+          name: "exec_command",
+          arguments: '{"cmd":"pnpm test"}',
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T14:00:06.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-1",
+          output: "tests passed",
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          displayName: "Drew",
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T14:00:10.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-codex-normalize",
+          label: "local-host",
+          projectRoot: "/work/saga",
+        },
+        locator: "/tmp/codex-transcript-session-1.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.operation).toBe("inserted");
+    expect(result.session.harnessSessionId).toBe("codex-transcript-session-1");
+
+    const [session] = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, result.session.id))
+      .limit(1);
+    expect(session).toMatchObject({
+      harness: "codex",
+      harnessSessionId: "codex-transcript-session-1",
+      model: "gpt-5-codex",
+    });
+    expect(session?.metadata).toMatchObject({
+      cliVersion: "0.42.0-test",
+      cwd: "/work/saga",
+      detectedHarnessSessionId: "codex-transcript-session-1",
+      normalizer: "codex-transcript-v1",
+      subagentEvidence: [
+        {
+          sourceRecordType: "session_meta",
+        },
+      ],
+      turnCount: 4,
+    });
+
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
+      .limit(1);
+    expect(rawRecord?.bodyJson).toEqual(
+      rawContent
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    );
+    expect(rawRecord?.metadata).toMatchObject({
+      normalization: {
+        cwd: "/work/saga",
+        detectedHarnessSessionId: "codex-transcript-session-1",
+        normalizer: "codex-transcript-v1",
+        subagentEvidence: [
+          {
+            sourceRecordType: "session_meta",
+          },
+        ],
+        turnCount: 4,
+      },
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "tool", "tool"]);
+    expect(turns[0]).toMatchObject({
+      actorKind: "host_user",
+      harnessTurnId: "turn-1:user:3",
+      model: "gpt-5-codex",
+      rawSpan: {
+        lineStart: 3,
+        lineEnd: 3,
+      },
+    });
+    expect(turns[0]?.metadata).toMatchObject({
+      codexTurnId: "turn-1",
+      cwd: "/work/saga",
+      normalizer: "codex-transcript-v1",
+    });
+    expect(turns[0]?.contentParts).toEqual([
+      { type: "text", text: "Normalize Codex transcripts." },
+    ]);
+    expect(turns[1]?.harnessTurnId).toBe("msg-assistant-1");
+    expect(turns[2]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "exec_command",
+        callId: "call-1",
+        arguments: { cmd: "pnpm test" },
+      },
+    ]);
+    expect(turns[3]?.contentParts).toEqual([
+      {
+        type: "tool_result",
+        name: "exec_command",
+        callId: "call-1",
+        output: "tests passed",
+      },
+    ]);
+
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+    expect(segments).toHaveLength(4);
+    expect(segments.map((segment) => segment.searchText)).toEqual([
+      "Normalize Codex transcripts.",
+      "I will parse JSONL into structured turns.",
+      'exec_command {"cmd":"pnpm test"}',
+      "exec_command tests passed",
+    ]);
+    expect(segments[0]).toMatchObject({
+      charStart: expect.any(Number),
+      charEnd: expect.any(Number),
+      metadata: {
+        codexTurnId: "turn-1",
+        normalizer: "codex-transcript-v1",
+        role: "user",
+      },
+    });
+  });
+
+  test("regenerates Codex derived rows from the active growing snapshot", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("codex-growing");
+    const baseRecords = [
+      {
+        timestamp: "2026-06-22T15:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          cwd: "/work/saga",
+          id: "codex-growing-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          cwd: "/work/saga",
+          model: "gpt-5-codex",
+          turn_id: "turn-1",
+        },
+      },
+      {
+        timestamp: "2026-06-22T15:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "First prompt" }],
+          metadata: { turn_id: "turn-1" },
+        },
+      },
+    ] as const;
+
+    const importInput = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T15:00:03.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: {
+        id: "host-codex-growing",
+      },
+      locator: "/tmp/codex-growing.jsonl",
+      rawContent: codexTranscript(baseRecords),
+      workspaceId,
+    } as const;
+    const first = await Effect.runPromise(importRawSessionRecord(service, importInput));
+    const second = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...importInput,
+        capturedAt: "2026-06-22T15:00:05.000Z",
+        rawContent: codexTranscript([
+          ...baseRecords,
+          {
+            timestamp: "2026-06-22T15:00:04.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              id: "assistant-growing-1",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Second answer" }],
+              metadata: { turn_id: "turn-1" },
+            },
+          },
+        ]),
+      }),
+    );
+
+    expect(second.operation).toBe("inserted");
+    expect(second.session.id).toBe(first.session.id);
+
+    const oldTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id));
+    expect(oldTurns).toHaveLength(0);
+
+    const newTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, second.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(newTurns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+
+    const activeSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, second.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+      "First prompt",
+      "Second answer",
+    ]);
+  });
+
   test("requires an existing bound workspace", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
 
@@ -248,3 +557,7 @@ describePostgres("raw session import", () => {
     ).rejects.toThrow("workspace binding is required before importing raw sessions");
   });
 });
+
+function codexTranscript(records: readonly Record<string, unknown>[]): string {
+  return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
