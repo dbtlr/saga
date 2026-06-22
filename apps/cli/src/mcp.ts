@@ -38,7 +38,8 @@ import { type RenderOptions } from "./render.js";
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
 const LOCAL_PATH_REDACTION = "[local-path-redacted]";
-const NON_FILE_URI_PATTERN = /\b(?!file:)[A-Za-z][A-Za-z0-9+.-]*:[^\s"',}\])]+/gu;
+const SAFE_URI_PATTERN =
+  /\b(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)/gu;
 const LOCAL_FILE_URI_PATTERN = /\bfile:\/\/[^\s"',}\])]+/gu;
 const POSIX_LOCAL_PATH_PATTERN =
   /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:(?:[A-Za-z0-9._@%+-]+\/){1,}[A-Za-z0-9._@%+-]*|(?:home|work|Users|Volumes|private|tmp|var|opt|etc|usr|bin|sbin|lib|lib64|mnt|media|srv|run|root|nix|workspace|app|repo|repos|projects|builds)\b[^\s"',}\])]*))/gu;
@@ -590,7 +591,7 @@ function renderSearchMemoryMarkdown(
     "",
     ...matches.map(
       (match) =>
-        `- [${match.source}/${match.state}/${match.kind}] ${match.text}${match.sagaLink === undefined ? "" : ` ${match.sagaLink}`} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${match.snippet}`,
+        `- [${match.source}/${match.state}/${match.kind}] ${redactMcpTextOutput(match.text)}${match.sagaLink === undefined ? "" : ` ${match.sagaLink}`} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${redactMcpTextOutput(match.snippet)}`,
     ),
   ].join("\n");
 }
@@ -642,7 +643,7 @@ function renderResolvedSagaLinkMarkdown(
   const contentLines =
     retrieval.content === undefined || retrieval.content.trim() === ""
       ? []
-      : ["", "## Retrieved Content", "", retrieval.content];
+      : ["", "## Retrieved Content", "", redactMcpTextOutput(retrieval.content)];
 
   return [
     "# Saga Link",
@@ -753,7 +754,7 @@ function renderSessionMatchMarkdown(match: RecallSegmentMatch, matchIndex: numbe
     "",
     "Retrieved Content:",
     "",
-    stripSearchMarkup(match.snippet),
+    redactMcpTextOutput(stripSearchMarkup(match.snippet)),
   ].join("\n");
 }
 
@@ -800,11 +801,11 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
         `- Kind: ${segment.segmentKind}`,
         `- Tokens: ${formatRange(segment.tokenStart, segment.tokenEnd)}`,
         `- Characters: ${formatRange(segment.charStart, segment.charEnd)}`,
-        `- Snippet: ${segment.snippet ?? "none"}`,
+        `- Snippet: ${segment.snippet === null ? "none" : redactMcpTextOutput(segment.snippet)}`,
         "",
         "Text:",
         "",
-        truncate(segment.searchText, 1200),
+        truncate(redactMcpTextOutput(segment.searchText), 1200),
       );
     }
   }
@@ -869,6 +870,10 @@ function compactSafeJson(value: unknown): string {
   return json === undefined ? "undefined" : truncate(json, 220);
 }
 
+function redactMcpTextOutput(value: string): string {
+  return redactLocalPathString(value);
+}
+
 function redactLocalTextValues(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return value.map((entry) => redactLocalTextValues(entry));
@@ -882,7 +887,7 @@ function redactLocalTextValues(value: unknown): unknown {
 
 function redactLocalPathString(value: string): string {
   const protectedUris: string[] = [];
-  const protectedValue = value.replaceAll(NON_FILE_URI_PATTERN, (match) => {
+  const protectedValue = value.replaceAll(SAFE_URI_PATTERN, (match) => {
     const token = `SAGA_MCP_PROTECTED_URI_${String(protectedUris.length)}_TOKEN`;
     protectedUris.push(match);
     return token;

@@ -48,16 +48,24 @@ describePostgres("MCP session recall postgres integration", () => {
     const linuxCwd = "/work/saga";
     const linuxProjectRoot = "/home/drew/work/saga";
     const linuxTranscriptPath = "/work/saga/mcp-session.jsonl";
-    const linuxUnsafePaths = [linuxCwd, linuxProjectRoot, linuxTranscriptPath] as const;
+    const customRoot = "/custom-root/saga";
+    const fileUri = "file:///tmp/saga/session.jsonl";
+    const linuxUnsafePaths = [
+      linuxCwd,
+      linuxProjectRoot,
+      linuxTranscriptPath,
+      customRoot,
+      fileUri,
+    ] as const;
     writeFileSync(
       inputPath,
       [
         JSON.stringify({
-          text: "MCP recall sentinel phrase for SGA-130 search",
+          text: `MCP recall sentinel phrase for SGA-130 search with imported path evidence ${linuxCwd} ${linuxProjectRoot} ${customRoot} ${fileUri} kept around plain words`,
           type: "user",
         }),
         JSON.stringify({
-          text: "The assistant response provides MCP surrounding context",
+          text: `The assistant response provides MCP surrounding context from ${customRoot}/session.log and ${fileUri} with non-sensitive summary intact`,
           type: "assistant",
         }),
         "",
@@ -116,7 +124,7 @@ describePostgres("MCP session recall postgres integration", () => {
       method: "tools/call",
       params: {
         arguments: {
-          query: "MCP recall sentinel",
+          query: "imported path evidence",
         },
         name: "search_sessions",
       },
@@ -124,7 +132,8 @@ describePostgres("MCP session recall postgres integration", () => {
     const searchResult = search?.result as ToolResult | undefined;
     expect(searchResult?.content[0]?.text).toContain("Saga Session Search");
     expect(searchResult?.content[0]?.text).toContain("Mode: lexical-only");
-    expect(searchResult?.content[0]?.text).toContain("MCP recall sentinel");
+    expect(searchResult?.content[0]?.text).toContain("imported path evidence");
+    expect(searchResult?.content[0]?.text).toContain("[local-path-redacted]");
     expect(searchResult?.content[0]?.text).toContain("Retrieved Content");
     expect(searchResult?.content[0]?.text).not.toContain(inputPath);
     expect(searchResult?.content[0]?.text).not.toContain(projectRoot);
@@ -157,6 +166,8 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(contextResult?.content[0]?.text).toContain("Segment 0 anchor");
     expect(contextResult?.content[0]?.text).toContain("MCP recall sentinel");
     expect(contextResult?.content[0]?.text).toContain("MCP surrounding context");
+    expect(contextResult?.content[0]?.text).toContain("imported path evidence");
+    expect(contextResult?.content[0]?.text).toContain("non-sensitive summary intact");
     expect(contextResult?.content[0]?.text).not.toContain(inputPath);
     expect(contextResult?.content[0]?.text).not.toContain(projectRoot);
     for (const unsafePath of linuxUnsafePaths) {

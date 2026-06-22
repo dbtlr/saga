@@ -251,6 +251,8 @@ describe("redactMcpStructuredOutput", () => {
       rawSessionRecord: {
         id: "raw-1",
         metadata: {
+          capturedText:
+            "Use /work/saga, /home/drew/work/saga, /custom-root/saga, and file:///tmp/saga/session.jsonl but keep https://example.com/docs/path and saga:context/workflow.",
           embedded: "cwd=/work/saga log=/custom-root/saga/session.log",
           genericInputPath: "/custom-root/saga/session.jsonl",
           inputPath: "/Volumes/data/workspaces/saga/session.jsonl",
@@ -259,7 +261,11 @@ describe("redactMcpStructuredOutput", () => {
             sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
           },
           nonLocalId: "github/dbtlr/saga",
+          pseudoSchemes: "cwd:/work/saga log:/custom-root/saga/session.log",
           referenceUrl: "https://example.com/docs/path?target=saga",
+          safeGithubUri: "github://dbtlr/saga/pull/12",
+          safeMimirUri: "mimir://project/SGA-130",
+          safeNornUri: "norn://workspace/notes/saga",
           sagaLink: "saga:context/workflow",
           sourceLocatorHash: "sha256:local-path-hash",
         },
@@ -294,13 +300,19 @@ describe("redactMcpStructuredOutput", () => {
       rawSessionRecord: {
         id: "raw-1",
         metadata: {
+          capturedText:
+            "Use [local-path-redacted], [local-path-redacted], [local-path-redacted], and [local-path-redacted] but keep https://example.com/docs/path and saga:context/workflow.",
           embedded: "cwd=[local-path-redacted] log=[local-path-redacted]",
           genericInputPath: "[local-path-redacted]",
           inputPath: "[local-path-redacted]",
           linuxInputPath: "[local-path-redacted]",
           nested: {},
           nonLocalId: "github/dbtlr/saga",
+          pseudoSchemes: "cwd:[local-path-redacted] log:[local-path-redacted]",
           referenceUrl: "https://example.com/docs/path?target=saga",
+          safeGithubUri: "github://dbtlr/saga/pull/12",
+          safeMimirUri: "mimir://project/SGA-130",
+          safeNornUri: "norn://workspace/notes/saga",
           sagaLink: "saga:context/workflow",
         },
         provenance: {
@@ -332,6 +344,7 @@ describe("redactMcpStructuredOutput", () => {
     expect(JSON.stringify(redacted)).not.toContain("/home/drew/work/saga");
     expect(JSON.stringify(redacted)).not.toContain("/work/saga");
     expect(JSON.stringify(redacted)).not.toContain("/custom-root/saga");
+    expect(JSON.stringify(redacted)).not.toContain("file:///tmp/saga/session.jsonl");
   });
 });
 
