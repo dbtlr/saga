@@ -6,6 +6,7 @@ import { normalizeClaudeTranscript } from "./claude-transcript-normalizer.js";
 import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
+import { getSessionDetail, listRecentSessionRecords } from "./session-records.js";
 import {
   activityIntervals,
   rawSessionRecords,
@@ -182,6 +183,143 @@ describePostgres("raw session import", () => {
       segmentKind: "turn",
       tokenStart: 0,
     });
+  });
+
+  test("lists recent raw session records with session and provenance metadata", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-list");
+    const imported = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          displayName: "Drew",
+          handle: "drew",
+        },
+        capturedAt: "2026-06-21T16:00:00.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessMetadata: {
+          cliVersion: "test",
+        },
+        harnessSessionId: "codex-session-list",
+        host: {
+          id: "host-list",
+          label: "test-host",
+          projectRoot: "/work/saga",
+        },
+        locator: "/tmp/codex-session-list.jsonl",
+        metadata: {
+          fixture: "recent",
+        },
+        model: "gpt-5",
+        provenance: {
+          importedBy: "test",
+        },
+        rawContent:
+          '{"type":"user","text":"List recent sessions"}\n{"type":"assistant","text":"Recent sessions listed"}\n',
+        workspaceId,
+      }),
+    );
+
+    const rows = await Effect.runPromise(
+      listRecentSessionRecords(service, {
+        harness: "codex",
+        limit: 5,
+        workspaceId,
+      }),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      activityInterval: {
+        id: imported.activityInterval.id,
+        ordinal: 0,
+      },
+      authorUser: {
+        displayName: "Drew",
+        handle: "drew",
+        identitySource: "host",
+      },
+      counts: {
+        activityIntervals: 1,
+        rawSessionRecords: 1,
+        segments: 2,
+        turns: 2,
+      },
+      rawSessionRecord: {
+        harness: "codex",
+        id: imported.rawSessionRecord.id,
+        isActive: true,
+        metadata: expect.objectContaining({
+          fixture: "recent",
+        }),
+        provenance: {
+          importedBy: "test",
+        },
+      },
+      session: {
+        harness: "codex",
+        id: imported.session.id,
+        model: "gpt-5",
+      },
+      sourceBinding: {
+        sourceType: "codex",
+        sourceUri: "codex://host/host-list",
+      },
+    });
+  });
+
+  test("shows a session detail through either session id or raw record id with bounded turns", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-show");
+    const imported = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-21T17:00:00.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-show",
+          label: "test-host",
+        },
+        locator: "/tmp/claude-session-show.jsonl",
+        rawContent:
+          '{"role":"user","content":"First detail turn"}\n{"role":"assistant","content":"Second detail turn"}\n',
+        workspaceId,
+      }),
+    );
+
+    const bySession = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: imported.session.id,
+        maxSegmentsPerTurn: 1,
+        maxTurns: 1,
+        workspaceId,
+      }),
+    );
+    const byRawRecord = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: imported.rawSessionRecord.id,
+        workspaceId,
+      }),
+    );
+
+    expect(bySession.session.id).toBe(imported.session.id);
+    expect(bySession.activeRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
+    expect(bySession.selectedRawSessionRecord).toBeNull();
+    expect(bySession.activityIntervals).toHaveLength(1);
+    expect(bySession.activityIntervals[0]?.turns).toHaveLength(1);
+    expect(bySession.activityIntervals[0]?.turns[0]?.segments).toHaveLength(1);
+    expect(bySession.truncated).toMatchObject({
+      rawSessionRecords: false,
+      segments: false,
+      turns: true,
+    });
+
+    expect(byRawRecord.session.id).toBe(imported.session.id);
+    expect(byRawRecord.selectedRawSessionRecord?.id).toBe(imported.rawSessionRecord.id);
+    expect(byRawRecord.activityIntervals[0]?.turns).toHaveLength(2);
   });
 
   test("imports growing raw content as a new active snapshot and regenerates derived rows", async () => {
