@@ -693,27 +693,55 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(segments).toHaveLength(6);
+    expect(segments).toHaveLength(9);
     expect(segments.map((segment) => segment.segmentKind)).toEqual([
       "turn",
       "turn",
-      "tool_group",
-      "tool_group",
+      "tool_group_call",
+      "tool_group_result",
+      "tool_group_call",
+      "tool_group_result",
       "turn",
-      "tool_group",
+      "tool_group_call",
+      "tool_group_result",
     ]);
     expect(segments[2]?.searchText).toContain("apply_patch");
-    expect(segments[2]?.searchText).toContain("Success. Updated files");
-    expect(segments[3]?.searchText).toContain("web.run");
-    expect(segments[3]?.searchText).toContain("Structured array output needle");
-    expect(segments[5]?.searchText).toContain("tool_search");
-    expect(segments[5]?.searchText).toContain("Runs a command in a PTY");
+    expect(segments[3]?.searchText).toContain("Success. Updated files");
+    expect(segments[4]?.searchText).toContain("web.run");
+    expect(segments[5]?.searchText).toContain("Structured array output needle");
+    expect(segments[7]?.searchText).toContain("tool_search");
+    expect(segments[8]?.searchText).toContain("Runs a command in a PTY");
+    expect(segments[2]?.turnId).toBe(turns[2]?.id);
+    expect(segments[3]?.turnId).toBe(turns[3]?.id);
     expect(segments[2]?.metadata).toMatchObject({
-      contentPartTypes: ["tool_call", "tool_result"],
+      contentPartTypes: ["tool_call"],
+      groupedContentPartTypes: [["tool_call"], ["tool_result"]],
       groupedTurnIds: [turns[2]?.id, turns[3]?.id],
       normalizer: "session-segments-v1",
       role: "tool",
+      toolGroup: {
+        callId: "call-1",
+        memberCount: 2,
+        memberIndex: 0,
+        turnIds: [turns[2]?.id, turns[3]?.id],
+      },
     });
+    expect(segments[3]?.metadata).toMatchObject({
+      contentPartTypes: ["tool_result"],
+      groupedTurnIds: [turns[2]?.id, turns[3]?.id],
+      segmentTurnId: turns[3]?.id,
+      toolGroup: {
+        callId: "call-1",
+        memberIndex: 1,
+      },
+    });
+
+    const resultTurnSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.turnId, turns[5]?.id ?? "00000000-0000-0000-0000-000000000000"));
+    expect(resultTurnSegments).toHaveLength(1);
+    expect(resultTurnSegments[0]?.searchText).toContain("Structured array output needle");
   });
 
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
@@ -1062,16 +1090,17 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(segments).toHaveLength(4);
+    expect(segments).toHaveLength(5);
     expect(segments.map((segment) => segment.segmentKind)).toEqual([
       "turn",
       "turn",
-      "tool_group",
+      "tool_group_call",
+      "tool_group_result",
       "turn",
     ]);
     expect(segments[2]?.searchText).toContain("Bash");
     expect(segments[2]?.searchText).toContain("pnpm test -- --run");
-    expect(segments[2]?.searchText).toContain("tests passed");
+    expect(segments[3]?.searchText).toContain("tests passed");
   });
 
   test("splits large turns into overlapping positioned lexical segments", async () => {
@@ -1145,10 +1174,147 @@ describePostgres("raw session import", () => {
       chunkCount: 3,
       chunkIndex: 0,
       normalizer: "session-segments-v1",
+      searchTextSpan: {
+        charStart: 0,
+        tokenStart: 0,
+      },
+      segmentRawSpan: {
+        lineStart: 2,
+        lineEnd: 2,
+      },
       sourceRawSpans: [
         {
           lineStart: 2,
           lineEnd: 2,
+        },
+      ],
+      sourceTurnSpans: [
+        {
+          turnOrdinal: 0,
+          rawSpan: {
+            lineStart: 2,
+            lineEnd: 2,
+          },
+        },
+      ],
+    });
+    const metadata = segments[0]?.metadata as {
+      segmentRawSpan?: { charEnd?: number; charStart?: number };
+      sourceRawSpans?: Array<{ charEnd?: number; charStart?: number }>;
+    };
+    expect(metadata.segmentRawSpan?.charStart).toBe(metadata.sourceRawSpans?.[0]?.charStart);
+    expect(metadata.segmentRawSpan?.charEnd).toBeLessThanOrEqual(
+      metadata.sourceRawSpans?.[0]?.charEnd ?? 0,
+    );
+  });
+
+  test("redacts structured secrets from tool call and result object payloads", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("segment-structured-secret");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:05:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-structured-secret-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:05:01.000Z",
+        type: "turn_context",
+        payload: {
+          model: "gpt-5-codex",
+          turn_id: "turn-structured-secret",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:05:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-secret",
+          name: "deploy",
+          arguments: JSON.stringify({
+            accessToken: "access-token-structured-secret-value",
+            api_key: "api-key-structured-secret-value",
+            target: "staging",
+          }),
+          metadata: { turn_id: "turn-structured-secret" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:05:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-secret",
+          output: {
+            ok: true,
+            password: "password-structured-secret-value",
+            url: "https://example.test/deploy/123",
+          },
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T18:05:04.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-structured-secret-segment",
+        },
+        locator: "/tmp/codex-structured-secret-segment.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+
+    expect(segments).toHaveLength(2);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "tool_group_call",
+      "tool_group_result",
+    ]);
+    expect(segments[0]?.turnId).toBe(turns[0]?.id);
+    expect(segments[1]?.turnId).toBe(turns[1]?.id);
+    expect(segments[0]?.searchText).toContain("deploy");
+    expect(segments[0]?.searchText).toContain("staging");
+    expect(segments[0]?.searchText).toContain("[REDACTED]");
+    expect(segments[1]?.searchText).toContain("https://example.test/deploy/123");
+    expect(segments[1]?.searchText).toContain("[REDACTED]");
+    const indexedText = segments.map((segment) => segment.searchText).join("\n");
+    expect(indexedText).not.toContain("access-token-structured-secret-value");
+    expect(indexedText).not.toContain("api-key-structured-secret-value");
+    expect(indexedText).not.toContain("password-structured-secret-value");
+    expect(segments[0]?.metadata).toMatchObject({
+      filters: [
+        {
+          reason: "secret",
+          type: "tool_call",
+        },
+      ],
+    });
+    expect(segments[1]?.metadata).toMatchObject({
+      filters: [
+        {
+          reason: "secret",
+          type: "tool_result",
         },
       ],
     });
@@ -1298,13 +1464,15 @@ describePostgres("raw session import", () => {
     );
     expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain("routeTree");
     expect(segments[1]?.metadata).toMatchObject({
-      filters: [
-        {
-          reason: "huge_raw_log",
-          type: "tool_result",
-        },
-      ],
-      skippedPartCount: 1,
+      toolGroup: {
+        filters: [
+          {
+            reason: "huge_raw_log",
+            type: "tool_result",
+          },
+        ],
+        skippedPartCount: 1,
+      },
     });
   });
 

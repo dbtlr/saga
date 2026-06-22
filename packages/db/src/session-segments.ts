@@ -42,6 +42,16 @@ interface FilterReason {
   type?: string | undefined;
 }
 
+interface ToolGroupContext {
+  callId?: string | undefined;
+  contentPartTypes: string[];
+  filters: FilterReason[];
+  memberCount: number;
+  memberIndex: number;
+  skippedPartCount: number;
+  turns: readonly SessionTurn[];
+}
+
 export async function insertDerivedSessionSegments(
   tx: DatabaseService["db"],
   input: {
@@ -140,18 +150,47 @@ async function selectSegmentSourceTurns(
 }
 
 function deriveDraftsForTurnGroup(turn: SessionTurn, groupedTurn?: SessionTurn): SegmentDraft[] {
-  const turns = groupedTurn === undefined ? [turn] : [turn, groupedTurn];
-  const extraction = extractGroupSearchText(turns);
+  if (groupedTurn !== undefined) {
+    const turns = [turn, groupedTurn] as const;
+    const turnParts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
+    const groupExtraction = extractGroupSearchText(turns);
+    const groupContext = {
+      callId: firstPartCallId(turnParts, "tool_call"),
+      contentPartTypes: groupExtraction.contentPartTypes,
+      filters: groupExtraction.filters,
+      memberCount: turns.length,
+      skippedPartCount: groupExtraction.skippedPartCount,
+      turns,
+    };
+    return turns.flatMap((memberTurn, memberIndex) =>
+      deriveDraftsForSingleTurn(memberTurn, {
+        ...groupContext,
+        memberIndex,
+      }),
+    );
+  }
+
+  return deriveDraftsForSingleTurn(turn);
+}
+
+function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext): SegmentDraft[] {
+  const extraction = extractGroupSearchText([turn]);
   if (extraction.searchText === "") return [];
 
-  const baseKind = groupedTurn === undefined ? "turn" : "tool_group";
+  const baseKind = group === undefined ? "turn" : toolGroupMemberKind(turn);
   const chunks = splitSearchText(extraction.searchText);
   return chunks.map((chunk, chunkIndex) => ({
     charEnd: chunk.charEnd,
     charStart: chunk.charStart,
-    metadata: buildSegmentMetadata(turns, extraction, {
+    metadata: buildSegmentMetadata(group?.turns ?? [turn], turn, extraction, {
+      charEnd: chunk.charEnd,
+      charStart: chunk.charStart,
       chunkCount: chunks.length,
       chunkIndex,
+      searchTextLength: extraction.searchText.length,
+      tokenEnd: chunk.tokenEnd,
+      tokenStart: chunk.tokenStart,
+      toolGroup: group,
     }),
     searchText: chunk.text,
     segmentKind: chunks.length === 1 ? baseKind : `${baseKind}_chunk`,
@@ -160,6 +199,13 @@ function deriveDraftsForTurnGroup(turn: SessionTurn, groupedTurn?: SessionTurn):
     tokenStart: chunk.tokenStart,
     turn,
   }));
+}
+
+function toolGroupMemberKind(turn: SessionTurn): string {
+  const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
+  if (parts.some((part) => readString(part.type) === "tool_call")) return "tool_group_call";
+  if (parts.some((part) => readString(part.type) === "tool_result")) return "tool_group_result";
+  return "tool_group_member";
 }
 
 function extractGroupSearchText(turns: readonly SessionTurn[]): TextExtraction {
@@ -250,17 +296,22 @@ function filterSearchText(rawText: string): { reason?: string | undefined; text:
   const coarseReason = coarseFilterReason(text);
   if (coarseReason !== undefined) return { reason: coarseReason, text: "" };
 
-  const redactedLines = text.split(/\r?\n/u).filter((line) => !containsObviousSecret(line));
-  if (redactedLines.length !== text.split(/\r?\n/u).length) {
+  const structuredRedaction = redactStructuredSecrets(text);
+  const candidateLines = structuredRedaction.text.split(/\r?\n/u);
+  const redactedLines = candidateLines.filter((line) => !containsObviousSecret(line));
+  if (redactedLines.length !== candidateLines.length) {
     return {
       reason: "secret",
       text: normalizeSearchText(redactedLines.join("\n")),
     };
   }
 
-  const normalized = normalizeSearchText(text);
+  const normalized = normalizeSearchText(structuredRedaction.text);
   if (!/[A-Za-z0-9]/u.test(normalized)) return { text: "" };
-  return { text: normalized };
+  return {
+    reason: structuredRedaction.redacted ? "secret" : undefined,
+    text: normalized,
+  };
 }
 
 function coarseFilterReason(text: string): string | undefined {
@@ -268,7 +319,6 @@ function coarseFilterReason(text: string): string | undefined {
   if (isHugeRawLog(text)) return "huge_raw_log";
   if (isUnboundedDiff(text)) return "unbounded_diff";
   if (isRepeatedGeneratedFile(text)) return "repeated_generated_file";
-  if (containsObviousSecret(text) && !text.includes("\n")) return "secret";
   return undefined;
 }
 
@@ -331,10 +381,24 @@ function isRepeatedGeneratedFile(text: string): boolean {
 function containsObviousSecret(text: string): boolean {
   return [
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/u,
-    /\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)\b\s*[:=]\s*["']?[^\s"']{8,}/iu,
+    /["']?\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)\b["']?\s*[:=]\s*["']?(?!\[REDACTED\])[^\s"',}\]]{8,}/iu,
     /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/u,
     /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/u,
   ].some((pattern) => pattern.test(text));
+}
+
+function redactStructuredSecrets(text: string): { redacted: boolean; text: string } {
+  let redacted = false;
+  const keyPattern = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)`;
+  const structuredKeyValue = new RegExp(
+    String.raw`(["'])(${keyPattern})\1\s*:\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,\s}\]]+)`,
+    "giu",
+  );
+  const redactedText = text.replace(structuredKeyValue, (_match, quote: string, key: string) => {
+    redacted = true;
+    return `${quote}${key}${quote}:"[REDACTED]"`;
+  });
+  return { redacted, text: redactedText };
 }
 
 function splitSearchText(text: string): Array<{
@@ -406,28 +470,98 @@ function tokenize(text: string): Array<{ end: number; start: number }> {
 
 function buildSegmentMetadata(
   turns: readonly SessionTurn[],
+  segmentTurn: SessionTurn,
   extraction: TextExtraction,
-  chunk: { chunkCount: number; chunkIndex: number },
+  chunk: {
+    charEnd: number;
+    charStart: number;
+    chunkCount: number;
+    chunkIndex: number;
+    searchTextLength: number;
+    tokenEnd: number;
+    tokenStart: number;
+    toolGroup?: ToolGroupContext | undefined;
+  },
 ): JsonRecord {
-  const primaryTurn = turns[0];
-  return {
-    actorKind: primaryTurn?.actorKind,
-    actorLabel: primaryTurn?.actorLabel,
+  const primaryTurn = segmentTurn;
+  const metadata = compactRecord({
+    actorKind: primaryTurn.actorKind,
+    actorLabel: primaryTurn.actorLabel,
     chunkCount: chunk.chunkCount,
     chunkIndex: chunk.chunkIndex,
     contentPartTypes: extraction.contentPartTypes,
     filters: extraction.filters,
     groupedActorKinds: turns.map((turn) => turn.actorKind),
+    groupedContentPartTypes: turns.map((turn) => contentPartTypes(turn)),
     groupedHarnessTurnIds: turns.map((turn) => turn.harnessTurnId).filter((id) => id !== null),
     groupedRoles: turns.map((turn) => turn.role),
     groupedTurnIds: turns.map((turn) => turn.id),
     groupedTurnOrdinals: turns.map((turn) => turn.ordinal),
-    harnessTurnId: primaryTurn?.harnessTurnId,
+    harnessTurnId: primaryTurn.harnessTurnId,
     normalizer: DERIVER,
-    role: primaryTurn?.role,
+    role: primaryTurn.role,
+    searchTextSpan: {
+      charEnd: chunk.charEnd,
+      charStart: chunk.charStart,
+      tokenEnd: chunk.tokenEnd,
+      tokenStart: chunk.tokenStart,
+    },
+    segmentRawSpan: segmentRawSpan(primaryTurn.rawSpan, chunk),
+    segmentSourceRawSpan: primaryTurn.rawSpan,
+    segmentTurnId: primaryTurn.id,
+    segmentTurnOrdinal: primaryTurn.ordinal,
     skippedPartCount: extraction.skippedPartCount,
     sourceRawSpans: turns.map((turn) => turn.rawSpan),
-    turnOrdinal: primaryTurn?.ordinal,
+    sourceTurnSpans: turns.map((turn) => ({
+      harnessTurnId: turn.harnessTurnId,
+      rawSpan: turn.rawSpan,
+      turnId: turn.id,
+      turnOrdinal: turn.ordinal,
+    })),
+    turnOrdinal: primaryTurn.ordinal,
+  });
+  if (chunk.toolGroup === undefined) return metadata;
+
+  return {
+    ...metadata,
+    toolGroup: compactRecord({
+      callId: chunk.toolGroup.callId,
+      contentPartTypes: chunk.toolGroup.contentPartTypes,
+      filters: chunk.toolGroup.filters,
+      memberCount: chunk.toolGroup.memberCount,
+      memberIndex: chunk.toolGroup.memberIndex,
+      skippedPartCount: chunk.toolGroup.skippedPartCount,
+      turnIds: chunk.toolGroup.turns.map((turn) => turn.id),
+      turnOrdinals: chunk.toolGroup.turns.map((turn) => turn.ordinal),
+    }),
+  };
+}
+
+function contentPartTypes(turn: SessionTurn): string[] {
+  const parts = Array.isArray(turn.contentParts) ? turn.contentParts : [];
+  return parts.map((part) => readString(asRecord(part).type) ?? "unknown");
+}
+
+function segmentRawSpan(
+  rawSpan: Record<string, unknown>,
+  chunk: { charEnd: number; charStart: number; searchTextLength: number },
+): JsonRecord | undefined {
+  const rawCharStart = typeof rawSpan.charStart === "number" ? rawSpan.charStart : undefined;
+  const rawCharEnd = typeof rawSpan.charEnd === "number" ? rawSpan.charEnd : undefined;
+  if (rawCharStart === undefined || rawCharEnd === undefined || rawCharEnd < rawCharStart) {
+    return undefined;
+  }
+
+  const isFullTurn = chunk.charStart === 0 && chunk.charEnd === chunk.searchTextLength;
+  if (isFullTurn) return rawSpan;
+
+  const estimatedStart = Math.min(rawCharStart + chunk.charStart, rawCharEnd);
+  const estimatedEnd = Math.min(rawCharStart + chunk.charEnd, rawCharEnd);
+  return {
+    ...rawSpan,
+    charEnd: Math.max(estimatedStart, estimatedEnd),
+    charStart: estimatedStart,
+    estimate: "search_text_offset_within_turn_raw_span",
   };
 }
 
@@ -506,6 +640,10 @@ function asRecord(value: unknown): JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonRecord)
     : {};
+}
+
+function compactRecord(record: JsonRecord): JsonRecord {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
