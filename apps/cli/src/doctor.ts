@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
+import {
+  inspectEmbeddingWorkflow,
+  loadRuntimeConfig,
+  type CodexAuthResolutionOptions,
+  type EmbeddingWorkflowBoundary,
+} from "@saga/runtime";
 import { Effect } from "effect";
 import {
   inspectHarnessesWithActivation,
@@ -38,6 +43,7 @@ export async function runDoctor(_args: readonly string[], options: RenderOptions
 export async function doctorProject(
   input: {
     cwd?: string;
+    embeddingAuth?: CodexAuthResolutionOptions;
     verifyHarnessActivation?: HarnessActivationVerifier;
   } = {},
 ): Promise<DoctorCheck[]> {
@@ -55,6 +61,7 @@ export async function doctorProject(
     label: "service",
     status: serviceDoctorStatus(service),
   });
+  checks.push(checkEmbeddings(input.embeddingAuth));
   checks.push(...(await checkHarnesses(projectRoot, input.verifyHarnessActivation)));
 
   return checks;
@@ -283,6 +290,24 @@ async function inspectService(): Promise<{
       process: "not running",
     };
   }
+}
+
+function checkEmbeddings(authOptions?: CodexAuthResolutionOptions): DoctorCheck {
+  const workflow = inspectEmbeddingWorkflow(authOptions);
+  return {
+    detail: renderEmbeddingWorkflow(workflow),
+    label: "embeddings",
+    status: workflow.availability.state === "available" ? "ok" : "warn",
+  };
+}
+
+function renderEmbeddingWorkflow(workflow: EmbeddingWorkflowBoundary): string {
+  const provider = `${workflow.provider.id}/${workflow.provider.model} (${String(workflow.provider.dimensions)} dimensions)`;
+  if (workflow.availability.state === "available") {
+    return `${provider} available; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
+  }
+
+  return `${provider} skipped; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
 }
 
 async function checkHarnesses(

@@ -97,6 +97,66 @@ describe("doctorProject", () => {
     );
   });
 
+  test("reports available embedding provider without exposing the cached API key", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const homeDir = mkdtempSync(join(tmpdir(), "saga-codex-home-"));
+    mkdirSync(join(homeDir, ".codex"), { recursive: true });
+    writeFileSync(
+      join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-do-not-print" }),
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: {},
+        homeDir,
+      },
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "openai/text-embedding-3-small (1536 dimensions) available; cached OPENAI_API_KEY present in ~/.codex/auth.json; lexical fallback: standby",
+        label: "embeddings",
+        status: "ok",
+      }),
+    );
+    expect(JSON.stringify(checks)).not.toContain("sk-do-not-print");
+  });
+
+  test("warns when embeddings are skipped and lexical recall remains available", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const homeDir = mkdtempSync(join(tmpdir(), "saga-codex-home-"));
+    mkdirSync(join(homeDir, ".codex"), { recursive: true });
+    writeFileSync(
+      join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({
+        account_id: "acct_123",
+        tokens: {
+          access_token: "token",
+        },
+      }),
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: {},
+        homeDir,
+      },
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "openai/text-embedding-3-small (1536 dimensions) skipped; Codex login/account tokens found in ~/.codex/auth.json, but no cached OPENAI_API_KEY is present; Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.",
+        label: "embeddings",
+        status: "warn",
+      }),
+    );
+  });
+
   test("reports harness target states", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
 
