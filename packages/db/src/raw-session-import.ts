@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import {
   extractCodexTranscriptImportHints,
@@ -108,12 +108,27 @@ export function importRawSessionRecord(
   input: RawSessionImportInput,
 ): Effect.Effect<RawSessionImportResult, DatabaseError | RawSessionImportError> {
   return Effect.tryPromise({
-    try: () => importRawSessionRecordUnsafe(service, normalizeInput(input)),
+    try: () => importRawSessionRecordWithConflictRetry(service, normalizeInput(input)),
     catch: (cause) =>
       cause instanceof RawSessionImportError
         ? cause
         : new RawSessionImportError({ message: errorMessage(cause) }),
   });
+}
+
+async function importRawSessionRecordWithConflictRetry(
+  service: DatabaseService,
+  input: NormalizedRawSessionImportInput,
+): Promise<RawSessionImportResult> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await importRawSessionRecordUnsafe(service, input);
+    } catch (cause) {
+      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) throw cause;
+    }
+  }
+  throw new RawSessionImportError({ message: "raw session import retry exhausted" });
 }
 
 async function importRawSessionRecordUnsafe(
@@ -166,14 +181,11 @@ async function importRawSessionRecordUnsafe(
 
     const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
 
-    const existingSession = await findSession(tx, input);
-    const session =
-      existingSession ??
-      (await insertSession(tx, {
-        authorUserId: authorUser.id,
-        input,
-        sourceBindingId: sourceBinding.id,
-      }));
+    const session = await resolveSession(tx, {
+      authorUserId: authorUser.id,
+      input,
+      sourceBindingId: sourceBinding.id,
+    });
 
     const transcriptNormalization = normalizeTranscript(input);
 
@@ -195,53 +207,20 @@ async function importRawSessionRecordUnsafe(
       sessionId: session.id,
     });
     if (existingRecord !== undefined) {
-      const existingInterval =
-        existingRecord.activityIntervalId === null
-          ? await resolveActivityInterval(tx, {
-              input,
-              now,
-              session,
-              transcriptNormalization,
-            }).then((resolution) => resolution.activityInterval)
-          : await findActivityIntervalById(tx, {
-              id: existingRecord.activityIntervalId,
-              workspaceId: input.workspaceId,
-            });
-      const repairedRecord =
-        existingRecord.isActive && transcriptNormalization !== undefined
-          ? await repairActiveRawSessionRecordDerivedRows(tx, {
-              activityIntervalId: existingInterval.id,
-              existingRecord,
-              input,
-              sessionId: session.id,
-              transcriptNormalization,
-            })
-          : existingRecord;
-      const existingSettlement = settlementForExistingRawSessionRecord({
-        activityInterval: existingInterval,
+      const existing = await reuseExistingRawSessionRecord(tx, {
+        existingRecord,
         input,
         now,
+        session,
         transcriptNormalization,
       });
-      const refreshed =
-        existingRecord.isActive && transcriptNormalization !== undefined
-          ? await refreshSessionAndActivityInterval(tx, {
-              activityInterval: existingInterval,
-              input,
-              now,
-              rawSessionRecordId: repairedRecord.id,
-              settlement: existingSettlement,
-              session,
-              transcriptNormalization,
-            })
-          : { activityInterval: existingInterval, session };
       return {
-        activityInterval: refreshed.activityInterval,
+        activityInterval: existing.activityInterval,
         authorUser,
         contentHash: input.contentHash,
         operation: "unchanged",
-        rawSessionRecord: repairedRecord,
-        session: refreshed.session,
+        rawSessionRecord: existing.rawSessionRecord,
+        session: existing.session,
         sourceBinding,
       };
     }
@@ -293,6 +272,30 @@ async function importRawSessionRecordUnsafe(
         )
         .returning({ id: rawSessionRecords.id });
       if (inactiveRawSessionRecord === undefined) {
+        if (input.rawRecord?.expectedActiveRawSessionRecordId === undefined) {
+          const racedRecord = await findRawSessionRecordByContentHash(tx, {
+            contentHash: input.contentHash,
+            sessionId: session.id,
+          });
+          if (racedRecord !== undefined) {
+            const existing = await reuseExistingRawSessionRecord(tx, {
+              existingRecord: racedRecord,
+              input,
+              now,
+              session,
+              transcriptNormalization,
+            });
+            return {
+              activityInterval: existing.activityInterval,
+              authorUser,
+              contentHash: input.contentHash,
+              operation: "unchanged",
+              rawSessionRecord: existing.rawSessionRecord,
+              session: existing.session,
+              sourceBinding,
+            };
+          }
+        }
         throw new RawSessionImportError({
           message: "active raw session record changed during import",
         });
@@ -300,7 +303,7 @@ async function importRawSessionRecordUnsafe(
     }
 
     const rawBody = buildRawBody(input);
-    const [rawSessionRecord] = await tx
+    const [insertedRawSessionRecord] = await tx
       .insert(rawSessionRecords)
       .values({
         activityIntervalId: activityInterval.id,
@@ -330,16 +333,41 @@ async function importRawSessionRecordUnsafe(
         status: input.rawRecord?.status ?? "captured",
         workspaceId: input.workspaceId,
       })
+      .onConflictDoNothing({
+        target: [rawSessionRecords.sessionId, rawSessionRecords.contentHash],
+      })
       .returning();
-    if (rawSessionRecord === undefined) {
-      throw new RawSessionImportError({ message: "raw session record insert returned no row" });
+    if (insertedRawSessionRecord === undefined) {
+      const racedRecord = await findRawSessionRecordByContentHash(tx, {
+        contentHash: input.contentHash,
+        sessionId: session.id,
+      });
+      if (racedRecord === undefined) {
+        throw new RawSessionImportError({ message: "raw session record insert returned no row" });
+      }
+      const existing = await reuseExistingRawSessionRecord(tx, {
+        existingRecord: racedRecord,
+        input,
+        now,
+        session,
+        transcriptNormalization,
+      });
+      return {
+        activityInterval: existing.activityInterval,
+        authorUser,
+        contentHash: input.contentHash,
+        operation: "unchanged",
+        rawSessionRecord: existing.rawSessionRecord,
+        session: existing.session,
+        sourceBinding,
+      };
     }
 
     const updated = await refreshSessionAndActivityInterval(tx, {
       activityInterval,
       input,
       now,
-      rawSessionRecordId: rawSessionRecord.id,
+      rawSessionRecordId: insertedRawSessionRecord.id,
       settlement: activityResolution.settlement,
       session,
       transcriptNormalization,
@@ -349,7 +377,7 @@ async function importRawSessionRecordUnsafe(
       activityIntervalId: activityInterval.id,
       input,
       transcriptNormalization,
-      rawSessionRecordId: rawSessionRecord.id,
+      rawSessionRecordId: insertedRawSessionRecord.id,
       sessionId: session.id,
     });
 
@@ -358,11 +386,72 @@ async function importRawSessionRecordUnsafe(
       authorUser,
       contentHash: input.contentHash,
       operation: "inserted",
-      rawSessionRecord,
+      rawSessionRecord: insertedRawSessionRecord,
       session: updated.session,
       sourceBinding,
     };
   });
+}
+
+async function reuseExistingRawSessionRecord(
+  tx: DatabaseService["db"],
+  input: {
+    existingRecord: RawSessionRecord;
+    input: NormalizedRawSessionImportInput;
+    now: Date;
+    session: Session;
+    transcriptNormalization?: TranscriptNormalization | undefined;
+  },
+): Promise<{
+  activityInterval: ActivityInterval;
+  rawSessionRecord: RawSessionRecord;
+  session: Session;
+}> {
+  const existingInterval =
+    input.existingRecord.activityIntervalId === null
+      ? await resolveActivityInterval(tx, {
+          input: input.input,
+          now: input.now,
+          session: input.session,
+          transcriptNormalization: input.transcriptNormalization,
+        }).then((resolution) => resolution.activityInterval)
+      : await findActivityIntervalById(tx, {
+          id: input.existingRecord.activityIntervalId,
+          workspaceId: input.input.workspaceId,
+        });
+  const repairedRecord =
+    input.existingRecord.isActive && input.transcriptNormalization !== undefined
+      ? await repairActiveRawSessionRecordDerivedRows(tx, {
+          activityIntervalId: existingInterval.id,
+          existingRecord: input.existingRecord,
+          input: input.input,
+          sessionId: input.session.id,
+          transcriptNormalization: input.transcriptNormalization,
+        })
+      : input.existingRecord;
+  const existingSettlement = settlementForExistingRawSessionRecord({
+    activityInterval: existingInterval,
+    input: input.input,
+    now: input.now,
+    transcriptNormalization: input.transcriptNormalization,
+  });
+  const refreshed =
+    input.existingRecord.isActive && input.transcriptNormalization !== undefined
+      ? await refreshSessionAndActivityInterval(tx, {
+          activityInterval: existingInterval,
+          input: input.input,
+          now: input.now,
+          rawSessionRecordId: repairedRecord.id,
+          settlement: existingSettlement,
+          session: input.session,
+          transcriptNormalization: input.transcriptNormalization,
+        })
+      : { activityInterval: existingInterval, session: input.session };
+  return {
+    activityInterval: refreshed.activityInterval,
+    rawSessionRecord: repairedRecord,
+    session: refreshed.session,
+  };
 }
 
 async function refreshSessionAndActivityInterval(
@@ -716,6 +805,25 @@ async function findSession(
   return session;
 }
 
+async function resolveSession(
+  tx: DatabaseService["db"],
+  input: {
+    authorUserId: string;
+    input: NormalizedRawSessionImportInput;
+    sourceBindingId: string;
+  },
+): Promise<Session> {
+  const existingSession = await findSession(tx, input.input);
+  return (
+    existingSession ??
+    (await insertSession(tx, {
+      authorUserId: input.authorUserId,
+      input: input.input,
+      sourceBindingId: input.sourceBindingId,
+    }))
+  );
+}
+
 async function insertSession(
   tx: DatabaseService["db"],
   input: {
@@ -724,25 +832,40 @@ async function insertSession(
     sourceBindingId: string;
   },
 ): Promise<Session> {
-  const [session] = await tx
-    .insert(sessions)
-    .values({
-      authorUserId: input.authorUserId,
-      harness: input.input.harness,
-      harnessSessionId: input.input.harnessSessionId,
-      lastActivityAt: input.input.capturedAt,
-      metadata: input.input.harnessMetadata ?? {},
-      model: input.input.model,
-      provenance: input.input.provenance,
-      sourceBindingId: input.sourceBindingId,
-      sourceLocator: input.input.locator,
-      sourceLocatorHash: input.input.sourceLocatorHash,
-      startedAt: input.input.capturedAt,
-      status: input.input.status ?? "active",
-      title: input.input.title,
-      workspaceId: input.input.workspaceId,
-    })
-    .returning();
+  const insert = tx.insert(sessions).values({
+    authorUserId: input.authorUserId,
+    harness: input.input.harness,
+    harnessSessionId: input.input.harnessSessionId,
+    lastActivityAt: input.input.capturedAt,
+    metadata: input.input.harnessMetadata ?? {},
+    model: input.input.model,
+    provenance: input.input.provenance,
+    sourceBindingId: input.sourceBindingId,
+    sourceLocator: input.input.locator,
+    sourceLocatorHash: input.input.sourceLocatorHash,
+    startedAt: input.input.capturedAt,
+    status: input.input.status ?? "active",
+    title: input.input.title,
+    workspaceId: input.input.workspaceId,
+  });
+
+  const [insertedSession] =
+    input.input.harnessSessionId === undefined
+      ? await insert
+          .onConflictDoNothing({
+            target: [sessions.workspaceId, sessions.harness, sessions.sourceLocatorHash],
+            where: sql`${sessions.harnessSessionId} is null and ${sessions.sourceLocatorHash} is not null`,
+          })
+          .returning()
+      : await insert
+          .onConflictDoNothing({
+            target: [sessions.workspaceId, sessions.harness, sessions.harnessSessionId],
+            where: sql`${sessions.harnessSessionId} is not null`,
+          })
+          .returning();
+  if (insertedSession !== undefined) return insertedSession;
+
+  const session = await findSession(tx, input.input);
   if (session === undefined) {
     throw new RawSessionImportError({ message: "session insert returned no row" });
   }
@@ -943,11 +1066,26 @@ async function insertActivityInterval(
       status: "active",
       workspaceId: input.input.workspaceId,
     })
+    .onConflictDoNothing({
+      target: [activityIntervals.sessionId, activityIntervals.ordinal],
+    })
     .returning();
-  if (interval === undefined) {
+  if (interval !== undefined) return interval;
+
+  const [existingInterval] = await tx
+    .select()
+    .from(activityIntervals)
+    .where(
+      and(
+        eq(activityIntervals.sessionId, input.sessionId),
+        eq(activityIntervals.ordinal, input.ordinal),
+      ),
+    )
+    .limit(1);
+  if (existingInterval === undefined) {
     throw new RawSessionImportError({ message: "activity interval returned no row" });
   }
-  return interval;
+  return existingInterval;
 }
 
 async function findActivityIntervalById(
@@ -1343,4 +1481,19 @@ function canonicalJson(value: unknown): unknown {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isRetryableImportConflict(cause: unknown): boolean {
+  const conflict = asRecord(cause);
+  if (conflict.code === "40001" || conflict.code === "40P01") return true;
+  if (conflict.code !== "23505") return false;
+
+  return (
+    conflict.constraint === "activity_intervals_session_ordinal_unique" ||
+    conflict.constraint === "raw_session_records_one_active_per_session_idx" ||
+    conflict.constraint === "raw_session_records_session_content_hash_unique" ||
+    conflict.constraint === "raw_session_records_session_snapshot_unique" ||
+    conflict.constraint === "sessions_workspace_harness_locator_unique" ||
+    conflict.constraint === "sessions_workspace_harness_session_unique"
+  );
 }

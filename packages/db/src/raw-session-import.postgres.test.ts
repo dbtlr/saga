@@ -52,7 +52,7 @@ describePostgres("raw session import", () => {
         },
         {
           postgres: {
-            max: 1,
+            max: 10,
           },
         },
       ),
@@ -188,6 +188,92 @@ describePostgres("raw session import", () => {
       segmentKind: "turn",
       tokenStart: 0,
     });
+  });
+
+  test("handles concurrent duplicate first imports without duplicate sessions or raw records", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const db = service;
+    const workspaceId = await createBoundWorkspace("raw-import-concurrent-first");
+    const input = {
+      author: {
+        displayName: "Drew",
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T21:00:00.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      harnessMetadata: {
+        cliVersion: "concurrent-test",
+      },
+      harnessSessionId: "codex-concurrent-first",
+      host: {
+        id: "host-concurrent-first",
+        label: "concurrent-host",
+        projectRoot: "/work/saga",
+      },
+      locator: "/tmp/codex-concurrent-first.jsonl",
+      rawContent: '{"type":"user","text":"Concurrent duplicate first import"}\n',
+      workspaceId,
+    } as const;
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => Effect.runPromise(importRawSessionRecord(db, input))),
+    );
+    const [first] = results;
+    if (first === undefined) throw new Error("concurrent imports returned no results");
+
+    expect(results.filter((result) => result.operation === "inserted")).toHaveLength(1);
+    expect(results.filter((result) => result.operation === "unchanged")).toHaveLength(7);
+    expect(new Set(results.map((result) => result.session.id))).toEqual(
+      new Set([first.session.id]),
+    );
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+      new Set([first.rawSessionRecord.id]),
+    );
+    expect(new Set(results.map((result) => result.sourceBinding.id))).toEqual(
+      new Set([first.sourceBinding.id]),
+    );
+    expect(new Set(results.map((result) => result.authorUser.id))).toEqual(
+      new Set([first.authorUser.id]),
+    );
+
+    const [counts] = await service.sql<
+      {
+        active_raw_records: number;
+        activity_intervals: number;
+        raw_records: number;
+        sessions: number;
+        source_bindings: number;
+        users: number;
+      }[]
+    >`
+      select
+        (select count(*)::int from sessions where workspace_id = ${workspaceId}) as sessions,
+        (select count(*)::int from raw_session_records where workspace_id = ${workspaceId}) as raw_records,
+        (select count(*)::int from raw_session_records where workspace_id = ${workspaceId} and is_active) as active_raw_records,
+        (select count(*)::int from activity_intervals where workspace_id = ${workspaceId}) as activity_intervals,
+        (select count(*)::int from source_bindings where workspace_id = ${workspaceId}) as source_bindings,
+        (select count(*)::int from users where workspace_id = ${workspaceId}) as users
+    `;
+    expect(counts).toEqual({
+      active_raw_records: 1,
+      activity_intervals: 1,
+      raw_records: 1,
+      sessions: 1,
+      source_bindings: 1,
+      users: 1,
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id));
+    expect(turns).toHaveLength(1);
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id));
+    expect(segments).toHaveLength(1);
   });
 
   test("keeps same-handle host users distinct across host subjects", async () => {
@@ -621,6 +707,83 @@ describePostgres("raw session import", () => {
     expect(activeSegments.map((segment) => segment.searchText)).toEqual([
       "First turn",
       "Second turn",
+    ]);
+  });
+
+  test("handles concurrent duplicate growing imports as one new active snapshot", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const db = service;
+    const workspaceId = await createBoundWorkspace("raw-import-concurrent-growing");
+    const baseInput = {
+      author: {
+        handle: "drew",
+      },
+      capturedAt: "2026-06-22T21:30:00.000Z",
+      contentType: "jsonl",
+      harness: "claude",
+      host: {
+        id: "host-concurrent-growing",
+        label: "concurrent-host",
+      },
+      locator: "/tmp/claude-concurrent-growing.jsonl",
+      rawContent: '{"role":"user","content":"Before concurrent growth"}\n',
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, baseInput));
+    const growingInput = {
+      ...baseInput,
+      capturedAt: "2026-06-22T21:35:00.000Z",
+      rawContent:
+        '{"role":"user","content":"Before concurrent growth"}\n{"role":"assistant","content":"Concurrent growth response"}\n',
+    } as const;
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => Effect.runPromise(importRawSessionRecord(db, growingInput))),
+    );
+    const [grown] = results;
+    if (grown === undefined) throw new Error("concurrent growing imports returned no results");
+
+    expect(results.filter((result) => result.operation === "inserted")).toHaveLength(1);
+    expect(results.filter((result) => result.operation === "unchanged")).toHaveLength(7);
+    expect(new Set(results.map((result) => result.session.id))).toEqual(
+      new Set([first.session.id]),
+    );
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+      new Set([grown.rawSessionRecord.id]),
+    );
+    expect(grown.rawSessionRecord.id).not.toBe(first.rawSessionRecord.id);
+    expect(grown.rawSessionRecord.snapshotOrdinal).toBe(1);
+
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, first.session.id))
+      .orderBy(asc(rawSessionRecords.snapshotOrdinal));
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.snapshotOrdinal)).toEqual([0, 1]);
+    expect(records.find((record) => record.id === first.rawSessionRecord.id)?.isActive).toBe(false);
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+      grown.rawSessionRecord.id,
+    ]);
+
+    const oldTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id));
+    expect(oldTurns).toHaveLength(0);
+    const newTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, grown.rawSessionRecord.id));
+    expect(newTurns).toHaveLength(2);
+    const activeSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, grown.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+      "Before concurrent growth",
+      "Concurrent growth response",
     ]);
   });
 
