@@ -559,8 +559,8 @@ export function getSessionDetail(
           r.captured_at as raw_record_captured_at,
           r.provenance as raw_record_provenance,
           r.metadata as raw_record_metadata,
-          case when ${includeRawBody}::boolean then r.body_text else null end as raw_record_body_text,
-          case when ${includeRawBody}::boolean then r.body_json else null end as raw_record_body_json
+          case when ${includeRawBody}::boolean and r.is_active = true then r.body_text else null end as raw_record_body_text,
+          case when ${includeRawBody}::boolean and r.is_active = true then r.body_json else null end as raw_record_body_json
         from raw_session_records r
         inner join sessions s
           on s.id = r.session_id
@@ -629,8 +629,8 @@ export function getSessionDetail(
             r.captured_at as raw_record_captured_at,
             r.provenance as raw_record_provenance,
             r.metadata as raw_record_metadata,
-            case when ${includeRawBody}::boolean then r.body_text else null end as raw_record_body_text,
-            case when ${includeRawBody}::boolean then r.body_json else null end as raw_record_body_json
+            case when ${includeRawBody}::boolean and r.is_active = true then r.body_text else null end as raw_record_body_text,
+            case when ${includeRawBody}::boolean and r.is_active = true then r.body_json else null end as raw_record_body_json
           from raw_session_records r
           inner join sessions s
             on s.id = r.session_id

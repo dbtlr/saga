@@ -7,6 +7,7 @@ export * from "./raw-event.js";
 export * from "./raw-session-import.js";
 export * from "./session-records.js";
 export * from "./session-recall.js";
+export * from "./session-safety.js";
 export * from "./session-segments.js";
 export * from "./schema.js";
 export * from "./workspace.js";

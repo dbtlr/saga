@@ -58,6 +58,19 @@ export interface RawSessionImportInput {
   metadata?: Record<string, unknown> | undefined;
   model?: string | undefined;
   provenance?: Record<string, unknown> | undefined;
+  rawRecord?:
+    | {
+        inactivePrevious?:
+          | {
+              metadata?: Record<string, unknown> | undefined;
+              provenance?: Record<string, unknown> | undefined;
+              status?: string | undefined;
+            }
+          | undefined;
+        redactedFromRawSessionRecordId?: string | undefined;
+        status?: string | undefined;
+      }
+    | undefined;
   rawContent: string;
   status?: "active" | "completed" | undefined;
   title?: string | undefined;
@@ -238,9 +251,28 @@ async function importRawSessionRecordUnsafe(
 
     const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
     if (activeRecord !== undefined) {
+      const inactivePrevious = input.rawRecord?.inactivePrevious;
       await tx
         .update(rawSessionRecords)
-        .set({ isActive: false, updatedAt: now })
+        .set({
+          isActive: false,
+          metadata:
+            inactivePrevious?.metadata === undefined
+              ? activeRecord.metadata
+              : {
+                  ...asRecord(activeRecord.metadata),
+                  ...inactivePrevious.metadata,
+                },
+          provenance:
+            inactivePrevious?.provenance === undefined
+              ? activeRecord.provenance
+              : {
+                  ...asRecord(activeRecord.provenance),
+                  ...inactivePrevious.provenance,
+                },
+          status: inactivePrevious?.status ?? activeRecord.status,
+          updatedAt: now,
+        })
         .where(eq(rawSessionRecords.id, activeRecord.id));
     }
 
@@ -267,10 +299,12 @@ async function importRawSessionRecordUnsafe(
           sourceLocatorHash: input.sourceLocatorHash,
         },
         provenance: input.provenance,
+        redactedFromRawSessionRecordId: input.rawRecord?.redactedFromRawSessionRecordId,
         sessionId: session.id,
         snapshotOrdinal: nextSnapshotOrdinal,
         sourceBindingId: sourceBinding.id,
         sourceLocator: input.locator,
+        status: input.rawRecord?.status ?? "captured",
         workspaceId: input.workspaceId,
       })
       .returning();
