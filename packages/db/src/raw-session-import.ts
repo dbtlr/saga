@@ -521,6 +521,7 @@ function extractTranscriptImportHints(input: RawSessionImportInput): TranscriptI
   return extractClaudeTranscriptImportHints({
     contentType: input.contentType,
     rawContent: input.rawContent,
+    sourceLocator: input.locator,
   });
 }
 

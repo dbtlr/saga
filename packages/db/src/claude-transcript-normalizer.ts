@@ -47,6 +47,7 @@ export type ClaudeTranscriptNormalization = TranscriptNormalization;
 export function extractClaudeTranscriptImportHints(input: {
   contentType: "json" | "jsonl" | "text";
   rawContent: string;
+  sourceLocator?: string | undefined;
 }): ClaudeTranscriptImportHints {
   const { records } = parseClaudeJsonRecords(input);
   const sessionRecord = records.find((record) => readSessionId(record.value) !== undefined)?.value;
@@ -57,7 +58,7 @@ export function extractClaudeTranscriptImportHints(input: {
 
   return {
     cwd: readString(sessionRecord?.cwd),
-    harnessSessionId: readSessionId(sessionRecord),
+    harnessSessionId: deriveClaudeHarnessSessionId(records, input.sourceLocator),
     model: readString(message?.model),
   };
 }
@@ -81,6 +82,18 @@ export function normalizeClaudeTranscript(input: {
     title: undefined,
     toolUseIdToName: new Map(),
   };
+  const sourceHarnessSessionId = deriveSourceHarnessSessionId(
+    records,
+    input.fallbackHarnessSessionId,
+  );
+  const harnessSessionId = deriveClaudeHarnessSessionId(
+    records,
+    input.sourceLocator,
+    input.fallbackHarnessSessionId,
+  );
+  const isSubagentTranscript =
+    harnessSessionId !== undefined && harnessSessionId !== sourceHarnessSessionId;
+  state.sessionId = harnessSessionId ?? sourceHarnessSessionId;
 
   const turns: NormalizedTranscriptTurn[] = [];
   for (const record of records) {
@@ -92,7 +105,6 @@ export function normalizeClaudeTranscript(input: {
     ...turn,
     metadata: compactRecord({
       ...turn.metadata,
-      cwd: state.cwd,
       normalizer: "claude-transcript-v1",
     }),
   }));
@@ -117,6 +129,7 @@ export function normalizeClaudeTranscript(input: {
       detectedHarnessSessionId: state.sessionId,
       lifecycleEvents: state.lifecycleEvents,
       normalizer: "claude-transcript-v1",
+      parentHarnessSessionId: isSubagentTranscript ? sourceHarnessSessionId : undefined,
       parseErrors: state.parseErrors,
       sourceLocator: input.sourceLocator,
       subagentEvidence,
@@ -129,6 +142,7 @@ export function normalizeClaudeTranscript(input: {
         cwd: state.cwd,
         detectedHarnessSessionId: state.sessionId,
         normalizer: "claude-transcript-v1",
+        parentHarnessSessionId: isSubagentTranscript ? sourceHarnessSessionId : undefined,
         subagentEvidence,
         turnCount: sortedTurns.length,
         version: firstString(records, "version"),
@@ -147,7 +161,6 @@ function recordToTurns(
 ): NormalizedTranscriptTurn[] {
   const value = record.value;
   const type = readString(value.type);
-  state.sessionId = readSessionId(value) ?? state.sessionId;
   state.cwd = readString(value.cwd) ?? state.cwd;
 
   if (type === "ai-title") {
@@ -196,16 +209,20 @@ function recordToTurns(
     return contentParts.map((part, index) => {
       const callId = readString(part.callId);
       const name = callId === undefined ? undefined : state.toolUseIdToName.get(callId);
+      const contentPart = compactRecord({
+        ...part,
+        name,
+      });
       return {
         actorKind: "tool",
         actorLabel: name,
-        contentParts: [compactRecord({ ...part, name })],
+        contentParts: [contentPart],
         harnessTurnId:
           callId === undefined ? stableHarnessTurnId(record, "tool", index) : `${callId}:result`,
         metadata,
         rawSpan: rawSpan(record),
         role: "tool",
-        searchText: contentPartsToSearchText([compactRecord({ ...part, name })]),
+        searchText: contentPartsToSearchText([contentPart]),
         startedAt: timestamp,
       };
     });
@@ -275,7 +292,6 @@ function legacyTopLevelTurn(
   const text = readString(record.value.text) ?? readString(record.value.content);
   if (text === undefined) return [];
   state.cwd = readString(record.value.cwd) ?? state.cwd;
-  state.sessionId = readSessionId(record.value) ?? state.sessionId;
   return [
     {
       actorKind: actorKindForRole(role),
@@ -408,9 +424,14 @@ function normalizeContentPart(entry: unknown): Record<string, unknown>[] {
   if (type === "tool_use") {
     return [
       compactRecord({
+        attributionMcpServer: readString(record.attributionMcpServer),
+        attributionMcpTool: readString(record.attributionMcpTool),
         callId: readString(record.id),
+        caller: readString(record.caller),
         input: record.input,
         name: readString(record.name),
+        toolUseID: readString(record.toolUseID),
+        toolUseResult: record.toolUseResult,
         type: "tool_call",
       }),
     ];
@@ -418,8 +439,13 @@ function normalizeContentPart(entry: unknown): Record<string, unknown>[] {
   if (type === "tool_result") {
     return [
       compactRecord({
+        attributionMcpServer: readString(record.attributionMcpServer),
+        attributionMcpTool: readString(record.attributionMcpTool),
         callId: readString(record.tool_use_id),
+        isError: typeof record.is_error === "boolean" ? record.is_error : undefined,
         output: normalizeToolResultContent(record.content),
+        toolUseID: readString(record.toolUseID),
+        toolUseResult: record.toolUseResult,
         type: "tool_result",
       }),
     ];
@@ -460,7 +486,7 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
 
 function isLifecycleRecord(value: Record<string, unknown>): boolean {
   const type = readString(value.type);
-  return (
+  if (
     type === "ai-title" ||
     type === "attachment" ||
     type === "bridge-session" ||
@@ -468,25 +494,26 @@ function isLifecycleRecord(value: Record<string, unknown>): boolean {
     type === "last-prompt" ||
     type === "mode" ||
     type === "permission-mode" ||
+    type === "pr-link" ||
+    type === "system-stop-hook" ||
+    type === "worktree-state" ||
     type === "queue-operation"
-  );
+  ) {
+    return true;
+  }
+
+  if (type === "system" && readString(value.content) !== undefined) return false;
+  if (type === "system") return true;
+  if (asRecord(value.message) !== undefined) return false;
+  if (readString(value.text) !== undefined || readString(value.content) !== undefined) return false;
+  return type !== undefined && normalizeRole(type) === undefined;
 }
 
 function lifecycleEvent(record: ParsedJsonRecord): Record<string, unknown> {
   const value = record.value;
   return compactRecord({
-    aiTitle: readString(value.aiTitle),
-    bridgeSessionId: readString(value.bridgeSessionId),
-    leafUuid: readString(value.leafUuid),
-    mode: readString(value.mode),
-    operation: readString(value.operation),
-    permissionMode: readString(value.permissionMode),
+    ...value,
     rawSpan: rawSpan(record),
-    sessionId: readSessionId(value),
-    subtype: readString(value.subtype),
-    timestamp: readString(value.timestamp),
-    type: readString(value.type),
-    uuid: readString(value.uuid),
   });
 }
 
@@ -537,9 +564,13 @@ function collectSubagentEvidence(
 function baseTurnMetadata(record: ParsedJsonRecord): Record<string, unknown> {
   return compactRecord({
     agentId: readString(record.value.agentId),
+    attributionMcpServer: readString(record.value.attributionMcpServer),
+    attributionMcpTool: readString(record.value.attributionMcpTool),
     attributionAgent: record.value.attributionAgent,
     attributionPlugin: record.value.attributionPlugin,
     attributionSkill: record.value.attributionSkill,
+    caller: readString(record.value.caller),
+    cwd: readString(record.value.cwd),
     gitBranch: readString(record.value.gitBranch),
     isMeta: record.value.isMeta,
     isSidechain: record.value.isSidechain,
@@ -552,6 +583,8 @@ function baseTurnMetadata(record: ParsedJsonRecord): Record<string, unknown> {
     sourceToolAssistantUUID: readString(record.value.sourceToolAssistantUUID),
     sourceToolUseID: readString(record.value.sourceToolUseID),
     subtype: readString(record.value.subtype),
+    toolUseID: readString(record.value.toolUseID),
+    toolUseResult: record.value.toolUseResult,
     userType: readString(record.value.userType),
     uuid: readString(record.value.uuid),
     version: readString(record.value.version),
@@ -588,6 +621,47 @@ function firstString(records: readonly ParsedJsonRecord[], field: string): strin
     if (value !== undefined) return value;
   }
   return undefined;
+}
+
+function deriveSourceHarnessSessionId(
+  records: readonly ParsedJsonRecord[],
+  fallbackHarnessSessionId?: string,
+): string | undefined {
+  for (const record of records) {
+    const sessionId = readSessionId(record.value);
+    if (sessionId !== undefined) return sessionId;
+  }
+  return fallbackHarnessSessionId;
+}
+
+function deriveClaudeHarnessSessionId(
+  records: readonly ParsedJsonRecord[],
+  sourceLocator?: string,
+  fallbackHarnessSessionId?: string,
+): string | undefined {
+  const sourceSessionId = deriveSourceHarnessSessionId(records, fallbackHarnessSessionId);
+  if (!isClaudeSubagentTranscript(records, sourceLocator)) return sourceSessionId;
+
+  const agentId = firstString(records, "agentId");
+  if (sourceSessionId !== undefined && agentId !== undefined) {
+    return `${sourceSessionId}:subagent:${agentId}`;
+  }
+  if (sourceSessionId !== undefined && sourceLocator !== undefined) {
+    return `${sourceSessionId}:subagent-locator:${sourceLocator}`;
+  }
+  if (agentId !== undefined) return `subagent:${agentId}`;
+  if (sourceLocator !== undefined) return `subagent-locator:${sourceLocator}`;
+  return sourceSessionId;
+}
+
+function isClaudeSubagentTranscript(
+  records: readonly ParsedJsonRecord[],
+  sourceLocator?: string,
+): boolean {
+  if (sourceLocator?.replaceAll(/\\/g, "/").includes("/subagents/") === true) return true;
+  return records.some(
+    (record) => record.value.isSidechain === true || readString(record.value.agentId) !== undefined,
+  );
 }
 
 function normalizeRole(value: string | undefined): NormalizedTurnRole | undefined {

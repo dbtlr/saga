@@ -727,9 +727,12 @@ describePostgres("raw session import", () => {
               type: "tool_use",
               id: "toolu-bash-1",
               name: "Bash",
+              attributionMcpServer: "claude-bash-mcp",
+              attributionMcpTool: "run_command",
               input: {
                 command: "pnpm test -- --run",
               },
+              toolUseID: "legacy-toolu-bash-1",
             },
           ],
           stop_reason: "tool_use",
@@ -756,7 +759,14 @@ describePostgres("raw session import", () => {
             {
               type: "tool_result",
               tool_use_id: "toolu-bash-1",
+              attributionMcpServer: "claude-bash-mcp",
+              attributionMcpTool: "run_command",
               content: "tests passed",
+              is_error: false,
+              toolUseID: "legacy-toolu-bash-1",
+              toolUseResult: {
+                outputBytes: 12,
+              },
             },
           ],
         },
@@ -786,6 +796,7 @@ describePostgres("raw session import", () => {
               type: "tool_use",
               id: "toolu-agent-1",
               name: "Agent",
+              caller: "agent-caller-1",
               input: {
                 description: "Inspect related code",
                 prompt: "Summarize the importer extension point.",
@@ -940,9 +951,12 @@ describePostgres("raw session import", () => {
         type: "tool_call",
         name: "Bash",
         callId: "toolu-bash-1",
+        attributionMcpServer: "claude-bash-mcp",
+        attributionMcpTool: "run_command",
         input: {
           command: "pnpm test -- --run",
         },
+        toolUseID: "legacy-toolu-bash-1",
       },
     ]);
     expect(turns[3]).toMatchObject({
@@ -955,20 +969,441 @@ describePostgres("raw session import", () => {
         type: "tool_result",
         name: "Bash",
         callId: "toolu-bash-1",
+        attributionMcpServer: "claude-bash-mcp",
+        attributionMcpTool: "run_command",
+        isError: false,
         output: "tests passed",
+        toolUseID: "legacy-toolu-bash-1",
+        toolUseResult: {
+          outputBytes: 12,
+        },
       },
     ]);
+    expect(turns[3]?.metadata).toMatchObject({
+      toolUseResult: {
+        success: true,
+      },
+    });
     expect(turns[4]).toMatchObject({
       actorKind: "subagent",
       actorLabel: "Agent",
       harnessTurnId: "toolu-agent-1",
     });
+    expect(turns[4]?.contentParts).toEqual([
+      {
+        type: "tool_call",
+        name: "Agent",
+        callId: "toolu-agent-1",
+        caller: "agent-caller-1",
+        input: {
+          description: "Inspect related code",
+          prompt: "Summarize the importer extension point.",
+        },
+      },
+    ]);
 
     const segments = await service.db
       .select()
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id));
     expect(segments).toHaveLength(0);
+  });
+
+  test("imports Claude sidechain subagent transcripts as separate sessions from their parent", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("claude-sidechain");
+    const parentRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: "parent-prompt",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Delegate a focused inspection.",
+        },
+        uuid: "parent-user",
+        timestamp: "2026-06-22T17:00:00.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-parent-session",
+      },
+      {
+        parentUuid: "parent-user",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "parent-msg",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu-agent-parent",
+              name: "Agent",
+              input: {
+                description: "Inspect importer",
+                prompt: "Check subagent identity.",
+              },
+            },
+          ],
+        },
+        type: "assistant",
+        uuid: "parent-assistant",
+        timestamp: "2026-06-22T17:00:01.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-parent-session",
+      },
+    ]);
+    const subagentRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: true,
+        agentId: "agent-1",
+        promptId: "subagent-prompt",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Inspect the importer.",
+        },
+        uuid: "subagent-user",
+        timestamp: "2026-06-22T17:00:02.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-parent-session",
+        sourceToolAssistantUUID: "parent-assistant",
+        sourceToolUseID: "toolu-agent-parent",
+      },
+      {
+        parentUuid: "subagent-user",
+        isSidechain: true,
+        agentId: "agent-1",
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "subagent-msg",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "The importer currently collapses sessions." }],
+        },
+        type: "assistant",
+        uuid: "subagent-assistant",
+        timestamp: "2026-06-22T17:00:03.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-parent-session",
+        sourceToolAssistantUUID: "parent-assistant",
+        sourceToolUseID: "toolu-agent-parent",
+      },
+    ]);
+
+    const parent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T17:00:04.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-claude-sidechain",
+        },
+        locator: "/tmp/claude-parent-session.jsonl",
+        rawContent: parentRawContent,
+        workspaceId,
+      }),
+    );
+    const subagent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T17:00:05.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-claude-sidechain",
+        },
+        locator: "/tmp/claude-parent-session/subagents/agent-1.jsonl",
+        rawContent: subagentRawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(parent.session.id).not.toBe(subagent.session.id);
+    expect(parent.session.harnessSessionId).toBe("claude-parent-session");
+    expect(subagent.session.harnessSessionId).toBe("claude-parent-session:subagent:agent-1");
+    expect(subagent.rawSessionRecord.harnessSessionId).toBe(
+      "claude-parent-session:subagent:agent-1",
+    );
+    expect(subagent.session.metadata).toMatchObject({
+      detectedHarnessSessionId: "claude-parent-session:subagent:agent-1",
+      parentHarnessSessionId: "claude-parent-session",
+    });
+    expect(subagent.session.metadata.subagentEvidence).toEqual(
+      expect.arrayContaining([
+        {
+          sourceLocatorKind: "claude-subagent-transcript",
+          sourceLocator: "/tmp/claude-parent-session/subagents/agent-1.jsonl",
+        },
+        expect.objectContaining({
+          agentId: "agent-1",
+          isSidechain: true,
+          sourceToolUseID: "toolu-agent-parent",
+        }),
+      ]),
+    );
+
+    const workspaceSessions = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.workspaceId, workspaceId));
+    expect(workspaceSessions).toHaveLength(2);
+
+    const workspaceRecords = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.workspaceId, workspaceId));
+    expect(workspaceRecords).toHaveLength(2);
+
+    const parentTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, parent.session.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    const subagentTurns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, subagent.session.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(parentTurns.map((turn) => turn.role)).toEqual(["user", "subagent"]);
+    expect(subagentTurns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+    expect(subagentTurns[0]?.metadata).toMatchObject({
+      agentId: "agent-1",
+      isSidechain: true,
+      sessionId: "claude-parent-session",
+      sourceToolUseID: "toolu-agent-parent",
+    });
+  });
+
+  test("preserves Claude lifecycle payloads without creating turns", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("claude-lifecycle");
+    const rawContent = claudeTranscript([
+      {
+        type: "system",
+        subtype: "stop-hook-summary",
+        hookSummaries: [{ hook: "Stop", status: "success" }],
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        type: "worktree-state",
+        branch: "sga-122-claude-normalization",
+        changedFiles: ["packages/db/src/claude-transcript-normalizer.ts"],
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        type: "pr-link",
+        number: 12,
+        url: "https://example.invalid/pr/12",
+        title: "Normalize Claude transcripts",
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        type: "attachment",
+        attachment: {
+          fileName: "review.txt",
+          mediaType: "text/plain",
+        },
+        lastPrompt: "Review this blocker.",
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        type: "file-history-snapshot",
+        files: [{ path: "packages/db/src/raw-session-import.ts", status: "modified" }],
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        type: "queue-operation",
+        operation: "enqueue",
+        queue: [{ id: "SGA-135", title: "Derive subagent relationships" }],
+        sessionId: "claude-lifecycle-session",
+      },
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: "lifecycle-prompt",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Keep the actual prompt as the only turn.",
+        },
+        uuid: "lifecycle-user",
+        timestamp: "2026-06-22T17:10:00.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-lifecycle-session",
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T17:10:01.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-claude-lifecycle",
+        },
+        locator: "/tmp/claude-lifecycle-session.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.activityInterval.metadata).toMatchObject({
+      lifecycleEvents: [
+        {
+          type: "system",
+          subtype: "stop-hook-summary",
+          hookSummaries: [{ hook: "Stop", status: "success" }],
+        },
+        {
+          type: "worktree-state",
+          branch: "sga-122-claude-normalization",
+          changedFiles: ["packages/db/src/claude-transcript-normalizer.ts"],
+        },
+        {
+          type: "pr-link",
+          number: 12,
+          url: "https://example.invalid/pr/12",
+        },
+        {
+          type: "attachment",
+          attachment: {
+            fileName: "review.txt",
+          },
+          lastPrompt: "Review this blocker.",
+        },
+        {
+          type: "file-history-snapshot",
+          files: [{ path: "packages/db/src/raw-session-import.ts", status: "modified" }],
+        },
+        {
+          type: "queue-operation",
+          queue: [{ id: "SGA-135", title: "Derive subagent relationships" }],
+        },
+      ],
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id));
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.role).toBe("user");
+
+    const [rawRecord] = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
+      .limit(1);
+    expect(rawRecord?.metadata).toMatchObject({
+      normalization: {
+        lifecycleEvents: [
+          {
+            type: "system",
+            hookSummaries: [{ hook: "Stop", status: "success" }],
+          },
+          {
+            type: "worktree-state",
+            changedFiles: ["packages/db/src/claude-transcript-normalizer.ts"],
+          },
+          {
+            type: "pr-link",
+            url: "https://example.invalid/pr/12",
+          },
+          {
+            type: "attachment",
+            lastPrompt: "Review this blocker.",
+          },
+          {
+            type: "file-history-snapshot",
+            files: [{ path: "packages/db/src/raw-session-import.ts", status: "modified" }],
+          },
+          {
+            type: "queue-operation",
+            queue: [{ id: "SGA-135", title: "Derive subagent relationships" }],
+          },
+        ],
+        turnCount: 1,
+      },
+    });
+  });
+
+  test("preserves per-record Claude cwd on turn metadata", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("claude-cwd");
+    const rawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: "cwd-prompt-1",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Start in the repo root.",
+        },
+        uuid: "cwd-user-1",
+        timestamp: "2026-06-22T17:20:00.000Z",
+        cwd: "/work/saga",
+        sessionId: "claude-cwd-session",
+      },
+      {
+        parentUuid: "cwd-user-1",
+        isSidechain: false,
+        message: {
+          model: "claude-sonnet-4-5",
+          id: "cwd-msg-1",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "Now I am in packages/db." }],
+        },
+        type: "assistant",
+        uuid: "cwd-assistant-1",
+        timestamp: "2026-06-22T17:20:01.000Z",
+        cwd: "/work/saga/packages/db",
+        sessionId: "claude-cwd-session",
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T17:20:02.000Z",
+        contentType: "jsonl",
+        harness: "claude",
+        host: {
+          id: "host-claude-cwd",
+        },
+        locator: "/tmp/claude-cwd-session.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(result.session.metadata).toMatchObject({
+      cwd: "/work/saga/packages/db",
+    });
+
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionTurns.ordinal));
+    expect(turns.map((turn) => turn.metadata.cwd)).toEqual([
+      "/work/saga",
+      "/work/saga/packages/db",
+    ]);
   });
 
   test("unchanged Claude reimport preserves current session turn ids", async () => {
