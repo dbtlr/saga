@@ -10,6 +10,7 @@ import {
   normalizeClaudeTranscript,
 } from "./claude-transcript-normalizer.js";
 import type { DatabaseError, DatabaseService } from "./database.js";
+import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from "./session-segments.js";
 import {
   activityIntervals,
   rawSessionRecords,
@@ -442,21 +443,9 @@ async function transcriptDerivedRowsAreCurrent(
       ),
     )
     .orderBy(sessionTurns.ordinal);
-  const segmentRows = await tx
-    .select({ id: sessionSegments.id })
-    .from(sessionSegments)
-    .where(
-      and(
-        eq(sessionSegments.sessionId, input.sessionId),
-        eq(sessionSegments.workspaceId, input.input.workspaceId),
-      ),
-    )
-    .limit(1);
-
-  if (segmentRows.length > 0) return false;
   if (turnRows.length !== input.transcriptNormalization.turns.length) return false;
 
-  return input.transcriptNormalization.turns.every((normalizedTurn, turnIndex) => {
+  const turnsAreCurrent = input.transcriptNormalization.turns.every((normalizedTurn, turnIndex) => {
     const turn = turnRows[turnIndex];
     if (turn === undefined) return false;
 
@@ -479,6 +468,13 @@ async function transcriptDerivedRowsAreCurrent(
       datesEqual(turn.startedAt, normalizedTurn.startedAt) &&
       turn.workspaceId === input.input.workspaceId
     );
+  });
+  if (!turnsAreCurrent) return false;
+
+  return sessionSegmentsAreCurrent(tx, {
+    rawSessionRecordId: input.rawSessionRecordId,
+    sessionId: input.sessionId,
+    workspaceId: input.input.workspaceId,
   });
 }
 
@@ -772,6 +768,11 @@ async function regenerateDerivedSessionRecords(
       sessionId: input.sessionId,
       turns: input.transcriptNormalization.turns,
     });
+    await insertDerivedSessionSegments(tx, {
+      rawSessionRecordId: input.rawSessionRecordId,
+      sessionId: input.sessionId,
+      workspaceId: input.input.workspaceId,
+    });
     return;
   }
 
@@ -797,25 +798,11 @@ async function regenerateDerivedSessionRecords(
     throw new RawSessionImportError({ message: "session turn insert returned no row" });
   }
 
-  const [segment] = await tx
-    .insert(sessionSegments)
-    .values({
-      activityIntervalId: input.activityIntervalId,
-      metadata: {
-        normalizer: "raw-session-import-stub",
-      },
-      ordinal: 0,
-      rawSessionRecordId: input.rawSessionRecordId,
-      searchText,
-      sessionId: input.sessionId,
-      snippet: searchText.slice(0, 240),
-      turnId: turn.id,
-      workspaceId: input.input.workspaceId,
-    })
-    .returning();
-  if (segment === undefined) {
-    throw new RawSessionImportError({ message: "session segment insert returned no row" });
-  }
+  await insertDerivedSessionSegments(tx, {
+    rawSessionRecordId: input.rawSessionRecordId,
+    sessionId: input.sessionId,
+    workspaceId: input.input.workspaceId,
+  });
 }
 
 async function insertNormalizedTranscriptTurns(

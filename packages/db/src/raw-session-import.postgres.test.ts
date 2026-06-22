@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -73,6 +73,30 @@ describePostgres("raw session import", () => {
     if (workspace === undefined) throw new Error("workspace insert returned no row");
     return workspace.id;
   }
+
+  test("migrates lexical indexes for session segment search", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const indexes = await service.db.execute<{ indexdef: string; indexname: string }>(sql`
+      select indexname, indexdef
+      from pg_indexes
+      where schemaname = 'public'
+        and tablename = 'session_segments'
+        and indexname in ('session_segments_search_tsv_idx', 'session_segments_search_trgm_idx')
+      order by indexname
+    `);
+
+    expect(indexes.map((index) => index.indexname)).toEqual([
+      "session_segments_search_trgm_idx",
+      "session_segments_search_tsv_idx",
+    ]);
+    expect(
+      indexes.find((index) => index.indexname === "session_segments_search_tsv_idx")?.indexdef,
+    ).toContain("to_tsvector");
+    expect(
+      indexes.find((index) => index.indexname === "session_segments_search_trgm_idx")?.indexdef,
+    ).toContain("gin_trgm_ops");
+  });
 
   test("imports the same raw record idempotently without duplicate active snapshots", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
@@ -149,8 +173,15 @@ describePostgres("raw session import", () => {
     const segments = await service.db
       .select()
       .from(sessionSegments)
-      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id));
-    expect(segments).toHaveLength(0);
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      ordinal: 0,
+      searchText: "Build SGA-120",
+      segmentKind: "turn",
+      tokenStart: 0,
+    });
   });
 
   test("imports growing raw content as a new active snapshot and regenerates derived rows", async () => {
@@ -226,7 +257,11 @@ describePostgres("raw session import", () => {
           eq(sessionSegments.sessionId, second.session.id),
         ),
       );
-    expect(activeSegments).toHaveLength(0);
+    expect(activeSegments).toHaveLength(2);
+    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+      "First turn",
+      "Second turn",
+    ]);
   });
 
   test("normalizes Codex transcript JSONL into session metadata, turns, parts, and spans", async () => {
@@ -658,7 +693,27 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(segments).toHaveLength(0);
+    expect(segments).toHaveLength(6);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "turn",
+      "turn",
+      "tool_group",
+      "tool_group",
+      "turn",
+      "tool_group",
+    ]);
+    expect(segments[2]?.searchText).toContain("apply_patch");
+    expect(segments[2]?.searchText).toContain("Success. Updated files");
+    expect(segments[3]?.searchText).toContain("web.run");
+    expect(segments[3]?.searchText).toContain("Structured array output needle");
+    expect(segments[5]?.searchText).toContain("tool_search");
+    expect(segments[5]?.searchText).toContain("Runs a command in a PTY");
+    expect(segments[2]?.metadata).toMatchObject({
+      contentPartTypes: ["tool_call", "tool_result"],
+      groupedTurnIds: [turns[2]?.id, turns[3]?.id],
+      normalizer: "session-segments-v1",
+      role: "tool",
+    });
   });
 
   test("normalizes Claude transcript JSONL into session metadata, turns, parts, and spans", async () => {
@@ -1005,8 +1060,252 @@ describePostgres("raw session import", () => {
     const segments = await service.db
       .select()
       .from(sessionSegments)
-      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id));
-    expect(segments).toHaveLength(0);
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+    expect(segments).toHaveLength(4);
+    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+      "turn",
+      "turn",
+      "tool_group",
+      "turn",
+    ]);
+    expect(segments[2]?.searchText).toContain("Bash");
+    expect(segments[2]?.searchText).toContain("pnpm test -- --run");
+    expect(segments[2]?.searchText).toContain("tests passed");
+  });
+
+  test("splits large turns into overlapping positioned lexical segments", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("segment-large-turn");
+    const longText = Array.from({ length: 2500 }, (_, index) => `token${index}`).join(" ");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-large-segment-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          model: "gpt-5-codex",
+          turn_id: "turn-large",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: longText }],
+          metadata: { turn_id: "turn-large" },
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T18:00:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-large-segment",
+        },
+        locator: "/tmp/codex-large-segment.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+
+    expect(segments).toHaveLength(3);
+    expect(segments.every((segment) => segment.segmentKind === "turn_chunk")).toBe(true);
+    expect(segments.map((segment) => [segment.tokenStart, segment.tokenEnd])).toEqual([
+      [0, 917],
+      [792, 1709],
+      [1584, 2500],
+    ]);
+    expect((segments[0]?.tokenEnd ?? 0) - (segments[1]?.tokenStart ?? 0)).toBe(125);
+    expect((segments[1]?.tokenEnd ?? 0) - (segments[2]?.tokenStart ?? 0)).toBe(125);
+    expect(segments[0]?.searchText).toContain("token0");
+    expect(segments[1]?.searchText).toContain("token792");
+    expect(segments[2]?.searchText).toContain("token2499");
+    expect(segments[0]?.metadata).toMatchObject({
+      chunkCount: 3,
+      chunkIndex: 0,
+      normalizer: "session-segments-v1",
+      sourceRawSpans: [
+        {
+          lineStart: 2,
+          lineEnd: 2,
+        },
+      ],
+    });
+  });
+
+  test("filters low-signal and high-risk content from lexical segments", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("segment-filter");
+    const hugeLog = Array.from(
+      { length: 850 },
+      (_, index) =>
+        `2026-06-22T18:10:${String(index % 60).padStart(2, "0")}Z noisy log line ${index}`,
+    ).join("\n");
+    const base64Blob = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=".repeat(30);
+    const unboundedDiff = Array.from({ length: 260 }, (_, index) =>
+      index % 2 === 0 ? `+added generated line ${index}` : `-removed generated line ${index}`,
+    ).join("\n");
+    const repeatedGenerated = [
+      "// generated file - do not edit",
+      ...Array.from({ length: 700 }, () => "export const routeTree = routeTree;"),
+    ].join("\n");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:10:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-filter-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:01.000Z",
+        type: "turn_context",
+        payload: {
+          model: "gpt-5-codex",
+          turn_id: "turn-filter",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Remember safe searchable context." }],
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          status: "completed",
+          call_id: "call-log",
+          name: "shell",
+          arguments: JSON.stringify({ command: "cat build.log" }),
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:04.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-log",
+          output: hugeLog,
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:05.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "api_key=sk-supersecretfixturevalue123456789" }],
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:06.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: base64Blob }],
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:07.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          id: "diff-message",
+          content: [{ type: "output_text", text: unboundedDiff }],
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:10:08.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          id: "generated-message",
+          content: [{ type: "output_text", text: repeatedGenerated }],
+          metadata: { turn_id: "turn-filter" },
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T18:10:09.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-filter-segment",
+        },
+        locator: "/tmp/codex-filter-segment.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+
+    expect(segments).toHaveLength(2);
+    expect(segments.map((segment) => segment.searchText)).toEqual([
+      "Remember safe searchable context.",
+      'shell {"command":"cat build.log"} completed',
+    ]);
+    expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain(
+      "supersecretfixture",
+    );
+    expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain(base64Blob);
+    expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain(
+      "added generated line",
+    );
+    expect(segments.map((segment) => segment.searchText).join("\n")).not.toContain("routeTree");
+    expect(segments[1]?.metadata).toMatchObject({
+      filters: [
+        {
+          reason: "huge_raw_log",
+          type: "tool_result",
+        },
+      ],
+      skippedPartCount: 1,
+    });
   });
 
   test("imports Claude sidechain subagent transcripts as separate sessions from an explicit parent id", async () => {
@@ -1473,6 +1772,11 @@ describePostgres("raw session import", () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
+    const firstSegments = await service.db
+      .select({ id: sessionSegments.id })
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
 
     const second = await Effect.runPromise(importRawSessionRecord(service, input));
     const secondTurns = await service.db
@@ -1480,11 +1784,19 @@ describePostgres("raw session import", () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
+    const secondSegments = await service.db
+      .select({ id: sessionSegments.id })
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
 
     expect(second.operation).toBe("unchanged");
     expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
     expect(second.session.id).toBe(first.session.id);
     expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
+    expect(secondSegments.map((segment) => segment.id)).toEqual(
+      firstSegments.map((segment) => segment.id),
+    );
   });
 
   test("records invalid Codex JSONL parse errors in normalization metadata", async () => {
@@ -1957,6 +2269,11 @@ describePostgres("raw session import", () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
+    const firstSegments = await service.db
+      .select({ id: sessionSegments.id })
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
 
     const second = await Effect.runPromise(importRawSessionRecord(service, input));
     const secondTurns = await service.db
@@ -1964,10 +2281,18 @@ describePostgres("raw session import", () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
+    const secondSegments = await service.db
+      .select({ id: sessionSegments.id })
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
 
     expect(second.operation).toBe("unchanged");
     expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
     expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
+    expect(secondSegments.map((segment) => segment.id)).toEqual(
+      firstSegments.map((segment) => segment.id),
+    );
   });
 
   test("regenerates Codex derived rows from the active growing snapshot", async () => {
@@ -2060,7 +2385,11 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, second.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(activeSegments).toHaveLength(0);
+    expect(activeSegments).toHaveLength(2);
+    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+      "First prompt",
+      "Second answer",
+    ]);
   });
 
   test("requires an existing bound workspace", async () => {
