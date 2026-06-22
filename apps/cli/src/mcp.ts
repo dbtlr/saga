@@ -37,6 +37,11 @@ import { findProjectRoot, readBindingFile } from "./init.js";
 import { type RenderOptions } from "./render.js";
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
+const LOCAL_PATH_REDACTION = "[local-path-redacted]";
+const NON_FILE_URI_PATTERN = /\b(?!file:)[A-Za-z][A-Za-z0-9+.-]*:[^\s"',}\])]+/gu;
+const LOCAL_FILE_URI_PATTERN = /\bfile:\/\/[^\s"',}\])]+/gu;
+const POSIX_LOCAL_PATH_PATTERN =
+  /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:(?:[A-Za-z0-9._@%+-]+\/){1,}[A-Za-z0-9._@%+-]*|(?:home|work|Users|Volumes|private|tmp|var|opt|etc|usr|bin|sbin|lib|lib64|mnt|media|srv|run|root|nix|workspace|app|repo|repos|projects|builds)\b[^\s"',}\])]*))/gu;
 
 export interface MemorySearchEntry {
   confidence: number;
@@ -876,9 +881,22 @@ function redactLocalTextValues(value: unknown): unknown {
 }
 
 function redactLocalPathString(value: string): string {
-  return value.replaceAll(
-    /(?:file:\/\/|\/(?:Users|Volumes|private\/var|tmp|var\/folders)\b)[^\s"',}]*/gu,
-    "[local-path-redacted]",
+  const protectedUris: string[] = [];
+  const protectedValue = value.replaceAll(NON_FILE_URI_PATTERN, (match) => {
+    const token = `SAGA_MCP_PROTECTED_URI_${String(protectedUris.length)}_TOKEN`;
+    protectedUris.push(match);
+    return token;
+  });
+  const redacted = protectedValue
+    .replaceAll(LOCAL_FILE_URI_PATTERN, LOCAL_PATH_REDACTION)
+    .replaceAll(
+      POSIX_LOCAL_PATH_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    );
+
+  return protectedUris.reduce(
+    (output, uri, index) => output.replaceAll(`SAGA_MCP_PROTECTED_URI_${String(index)}_TOKEN`, uri),
+    redacted,
   );
 }
 

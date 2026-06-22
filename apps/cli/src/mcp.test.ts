@@ -251,15 +251,22 @@ describe("redactMcpStructuredOutput", () => {
       rawSessionRecord: {
         id: "raw-1",
         metadata: {
+          embedded: "cwd=/work/saga log=/custom-root/saga/session.log",
+          genericInputPath: "/custom-root/saga/session.jsonl",
           inputPath: "/Volumes/data/workspaces/saga/session.jsonl",
+          linuxInputPath: "/work/saga/session.jsonl",
           nested: {
             sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
           },
+          nonLocalId: "github/dbtlr/saga",
+          referenceUrl: "https://example.com/docs/path?target=saga",
+          sagaLink: "saga:context/workflow",
           sourceLocatorHash: "sha256:local-path-hash",
         },
         provenance: {
+          homeProjectRoot: "/home/drew/work/saga",
           projectRoot: "/Users/drew/work/saga",
-          transcript: "loaded from file:///tmp/saga/session.jsonl",
+          transcript: "loaded from file:///tmp/saga/session.jsonl cwd=/work/saga",
         },
         sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
       },
@@ -277,18 +284,29 @@ describe("redactMcpStructuredOutput", () => {
         sourceType: "codex",
         sourceUri: "codex://local",
       },
+      target: {
+        apiUrl: "https://api.github.com/repos/dbtlr/saga/pulls/12",
+        sourceUri: "codex://local/session/abc",
+      },
     });
 
     expect(redacted).toMatchObject({
       rawSessionRecord: {
         id: "raw-1",
         metadata: {
+          embedded: "cwd=[local-path-redacted] log=[local-path-redacted]",
+          genericInputPath: "[local-path-redacted]",
           inputPath: "[local-path-redacted]",
+          linuxInputPath: "[local-path-redacted]",
           nested: {},
+          nonLocalId: "github/dbtlr/saga",
+          referenceUrl: "https://example.com/docs/path?target=saga",
+          sagaLink: "saga:context/workflow",
         },
         provenance: {
+          homeProjectRoot: "[local-path-redacted]",
           projectRoot: "[local-path-redacted]",
-          transcript: "loaded from [local-path-redacted]",
+          transcript: "loaded from [local-path-redacted] cwd=[local-path-redacted]",
         },
       },
       session: {
@@ -301,12 +319,19 @@ describe("redactMcpStructuredOutput", () => {
         sourceType: "codex",
         sourceUri: "codex://local",
       },
+      target: {
+        apiUrl: "https://api.github.com/repos/dbtlr/saga/pulls/12",
+        sourceUri: "codex://local/session/abc",
+      },
     });
     expect(JSON.stringify(redacted)).not.toContain("sourceLocator");
     expect(JSON.stringify(redacted)).not.toContain("config");
     expect(JSON.stringify(redacted)).not.toContain("secret-token");
     expect(JSON.stringify(redacted)).not.toContain("/Volumes/data/workspaces/saga");
     expect(JSON.stringify(redacted)).not.toContain("/Users/drew/work/saga");
+    expect(JSON.stringify(redacted)).not.toContain("/home/drew/work/saga");
+    expect(JSON.stringify(redacted)).not.toContain("/work/saga");
+    expect(JSON.stringify(redacted)).not.toContain("/custom-root/saga");
   });
 });
 

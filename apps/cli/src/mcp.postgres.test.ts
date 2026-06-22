@@ -45,6 +45,10 @@ describePostgres("MCP session recall postgres integration", () => {
   test("lists, searches, and expands imported session context through MCP tools", async () => {
     if (projectRoot === undefined) throw new Error("project root was not initialized");
     const inputPath = join(projectRoot, "mcp-session.jsonl");
+    const linuxCwd = "/work/saga";
+    const linuxProjectRoot = "/home/drew/work/saga";
+    const linuxTranscriptPath = "/work/saga/mcp-session.jsonl";
+    const linuxUnsafePaths = [linuxCwd, linuxProjectRoot, linuxTranscriptPath] as const;
     writeFileSync(
       inputPath,
       [
@@ -61,7 +65,20 @@ describePostgres("MCP session recall postgres integration", () => {
     );
 
     await runSessionsCommand(
-      ["import", inputPath, "--harness", "codex", "--harness-session-id", "mcp-recall-session"],
+      [
+        "import",
+        inputPath,
+        "--harness",
+        "codex",
+        "--harness-session-id",
+        "mcp-recall-session",
+        "--host-project-root",
+        linuxProjectRoot,
+        "--metadata",
+        JSON.stringify({ cwd: linuxCwd, note: `cwd=${linuxCwd}` }),
+        "--provenance",
+        JSON.stringify({ transcriptPath: linuxTranscriptPath }),
+      ],
       renderOptions,
       { cwd: projectRoot },
     );
@@ -84,7 +101,11 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(recentResult?.content[0]?.text).toContain("Host user");
     expect(recentResult?.content[0]?.text).not.toContain(inputPath);
     expect(recentResult?.content[0]?.text).not.toContain(projectRoot);
+    for (const unsafePath of linuxUnsafePaths) {
+      expect(recentResult?.content[0]?.text).not.toContain(unsafePath);
+    }
     expectNoUnsafeMcpStructuredContent(recentResult?.structuredContent, {
+      extraPaths: linuxUnsafePaths,
       inputPath,
       projectRoot,
     });
@@ -107,7 +128,11 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(searchResult?.content[0]?.text).toContain("Retrieved Content");
     expect(searchResult?.content[0]?.text).not.toContain(inputPath);
     expect(searchResult?.content[0]?.text).not.toContain(projectRoot);
+    for (const unsafePath of linuxUnsafePaths) {
+      expect(searchResult?.content[0]?.text).not.toContain(unsafePath);
+    }
     expectNoUnsafeMcpStructuredContent(searchResult?.structuredContent, {
+      extraPaths: linuxUnsafePaths,
       inputPath,
       projectRoot,
     });
@@ -134,7 +159,11 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(contextResult?.content[0]?.text).toContain("MCP surrounding context");
     expect(contextResult?.content[0]?.text).not.toContain(inputPath);
     expect(contextResult?.content[0]?.text).not.toContain(projectRoot);
+    for (const unsafePath of linuxUnsafePaths) {
+      expect(contextResult?.content[0]?.text).not.toContain(unsafePath);
+    }
     expectNoUnsafeMcpStructuredContent(contextResult?.structuredContent, {
+      extraPaths: linuxUnsafePaths,
       inputPath,
       projectRoot,
     });
@@ -166,11 +195,12 @@ function firstSegmentId(structuredContent: unknown): string {
 
 function expectNoUnsafeMcpStructuredContent(
   structuredContent: unknown,
-  input: { inputPath: string; projectRoot: string },
+  input: { extraPaths?: readonly string[]; inputPath: string; projectRoot: string },
 ) {
   const serialized = JSON.stringify(structuredContent);
-  expect(serialized).not.toContain(input.inputPath);
-  expect(serialized).not.toContain(input.projectRoot);
+  for (const unsafePath of [input.inputPath, input.projectRoot, ...(input.extraPaths ?? [])]) {
+    expect(serialized).not.toContain(unsafePath);
+  }
   expect(serialized).not.toContain("sourceLocator");
   expect(serialized).not.toContain('"config"');
 }
