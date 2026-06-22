@@ -2,7 +2,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import type { RecallContextExpansion, RecallSearchInput, RecallSearchResult } from "@saga/db";
+import type {
+  RecallContextExpansion,
+  RecallContextExpansionInput,
+  RecallSearchInput,
+  RecallSearchResult,
+} from "@saga/db";
 import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
 import { runRecallCommand } from "./recall.js";
 
@@ -67,7 +72,12 @@ describe("runRecallCommand", () => {
     expect(records).toContain("segment-id");
     expect(records).toContain("scores");
     expect(records).toContain("raw provenance");
+    expect(records).toContain("source type");
     expect(records).not.toContain("raw transcript body");
+    expect(records).not.toContain("source locator");
+    expect(records).not.toContain("file:///tmp/session.jsonl");
+    expect(records).not.toContain("projectRoot");
+    expect(records).not.toContain("/work/saga");
 
     const ids = await runRecallCommand(
       ["search", "lexical recall", "--no-embeddings"],
@@ -131,8 +141,10 @@ describe("runRecallCommand", () => {
         cwd: projectRoot,
         expandContext: async (input) => {
           expect(input).toEqual({
+            afterTurns: 3,
+            beforeTurns: 1,
             segmentId: "segment-id",
-            windowTurns: 3,
+            windowTurns: undefined,
             workspaceId: "workspace-id",
           });
           return recallContextExpansion();
@@ -145,9 +157,55 @@ describe("runRecallCommand", () => {
     expect(output).toContain("Raw Session Record");
     expect(output).toContain("Turn 0");
     expect(output).toContain("Segment 0 anchor");
+    expect(output).toContain("1 before / 3 after");
     expect(output).toContain("provenance");
     expect(output).toContain("expanded segment text");
     expect(output).not.toContain("raw transcript body");
+    expect(output).not.toContain("file:///tmp/session.jsonl");
+    expect(output).not.toContain("projectRoot");
+    expect(output).not.toContain("/work/saga");
+  });
+
+  test("lets specific context window flags override each side independently", async () => {
+    const projectRoot = boundProject();
+    const cases = [
+      {
+        args: ["show", "segment-id", "--window", "5"],
+        expected: { segmentId: "segment-id", windowTurns: 5, workspaceId: "workspace-id" },
+      },
+      {
+        args: ["show", "segment-id", "--window", "5", "--before", "1"],
+        expected: {
+          afterTurns: undefined,
+          beforeTurns: 1,
+          segmentId: "segment-id",
+          windowTurns: 5,
+          workspaceId: "workspace-id",
+        },
+      },
+      {
+        args: ["show", "segment-id", "--window", "5", "--after", "0"],
+        expected: {
+          afterTurns: 0,
+          beforeTurns: undefined,
+          segmentId: "segment-id",
+          windowTurns: 5,
+          workspaceId: "workspace-id",
+        },
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      let capturedInput: RecallContextExpansionInput | undefined;
+      await runRecallCommand(entry.args, renderOptions, {
+        cwd: projectRoot,
+        expandContext: async (input) => {
+          capturedInput = input;
+          return recallContextExpansion();
+        },
+      });
+      expect(capturedInput).toEqual(entry.expected);
+    }
   });
 
   test("renders structured JSON for expanded context", async () => {
@@ -334,6 +392,8 @@ function recallContextExpansion(): RecallContextExpansion {
         startedAt: now,
       },
     ],
+    afterTurns: 3,
+    beforeTurns: 1,
     windowTurns: 3,
     workspaceId: "workspace-id",
   };

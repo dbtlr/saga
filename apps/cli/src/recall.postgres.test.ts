@@ -76,6 +76,8 @@ describePostgres("recall CLI postgres integration", () => {
     expect(searchOutput).toContain("Match 1");
     expect(searchOutput).toContain("Postgres recall sentinel");
     expect(searchOutput).toContain("raw provenance");
+    expect(searchOutput).not.toContain(inputPath);
+    expect(searchOutput).not.toContain(projectRoot);
 
     const segmentIds = await runRecallCommand(
       ["search", "Postgres recall sentinel", "--no-embeddings"],
@@ -97,5 +99,8 @@ describePostgres("recall CLI postgres integration", () => {
     expect(showOutput).toContain("Postgres recall sentinel");
     expect(showOutput).toContain("surrounding context");
     expect(showOutput).toContain("provenance");
+    expect(showOutput).toContain("1 before / 1 after");
+    expect(showOutput).not.toContain(inputPath);
+    expect(showOutput).not.toContain(projectRoot);
   });
 });

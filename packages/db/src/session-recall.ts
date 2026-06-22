@@ -74,6 +74,8 @@ export interface RecallSegmentMatch {
 }
 
 export interface RecallContextExpansionInput {
+  afterTurns?: number | undefined;
+  beforeTurns?: number | undefined;
   segmentId: string;
   windowTurns?: number | undefined;
   workspaceId: string;
@@ -82,6 +84,8 @@ export interface RecallContextExpansionInput {
 export interface RecallContextExpansion {
   activityInterval: RecallActivityIntervalMetadata;
   anchor: RecallContextAnchor;
+  afterTurns: number;
+  beforeTurns: number;
   rawSessionRecord: RecallRawSessionRecordMetadata;
   session: RecallSessionMetadata;
   sourceBinding: RecallSourceBindingMetadata;
@@ -781,7 +785,7 @@ export function expandRecallContext(
 ): Effect.Effect<RecallContextExpansion, DatabaseError | RecallSearchError> {
   return Effect.tryPromise({
     try: async () => {
-      const windowTurns = normalizeWindowTurns(input.windowTurns);
+      const contextWindow = normalizeContextWindow(input);
       const rows = await service.sql<RecallContextRow[]>`
         with anchor as (
           select
@@ -826,8 +830,8 @@ export function expandRecallContext(
             and st.session_id = anchor.segment_session_id
             and st.activity_interval_id = anchor.segment_activity_interval_id
             and st.raw_session_record_id = anchor.segment_raw_session_record_id
-          where st.ordinal between anchor.anchor_turn_ordinal - ${windowTurns}
-            and anchor.anchor_turn_ordinal + ${windowTurns}
+          where st.ordinal between anchor.anchor_turn_ordinal - ${contextWindow.beforeTurns}
+            and anchor.anchor_turn_ordinal + ${contextWindow.afterTurns}
         )
         select
           s.id as session_id,
@@ -956,7 +960,9 @@ export function expandRecallContext(
       }
 
       return mapContextRows(rows, {
-        windowTurns,
+        afterTurns: contextWindow.afterTurns,
+        beforeTurns: contextWindow.beforeTurns,
+        windowTurns: contextWindow.windowTurns,
         workspaceId: input.workspaceId,
       });
     },
@@ -1013,7 +1019,7 @@ function groupRecallMatches(input: {
 
 function mapContextRows(
   rows: RecallContextRow[],
-  input: { windowTurns: number; workspaceId: string },
+  input: { afterTurns: number; beforeTurns: number; windowTurns: number; workspaceId: string },
 ): RecallContextExpansion {
   const first = rows[0];
   if (first === undefined) {
@@ -1065,6 +1071,8 @@ function mapContextRows(
       segment: mapSegment(first),
       turn: mapTurn(first),
     },
+    afterTurns: input.afterTurns,
+    beforeTurns: input.beforeTurns,
     rawSessionRecord: mapRawSessionRecord(first),
     session: mapSession(first),
     sourceBinding: mapSourceBinding(first),
@@ -1214,11 +1222,27 @@ function normalizeLimit(limit: number | undefined): number {
   return Math.min(limit, MAX_LIMIT);
 }
 
-function normalizeWindowTurns(windowTurns: number | undefined): number {
-  if (windowTurns === undefined) return DEFAULT_CONTEXT_WINDOW_TURNS;
+function normalizeContextWindow(input: RecallContextExpansionInput): {
+  afterTurns: number;
+  beforeTurns: number;
+  windowTurns: number;
+} {
+  const baseWindow =
+    normalizeWindowTurns(input.windowTurns, "window") ?? DEFAULT_CONTEXT_WINDOW_TURNS;
+  const beforeTurns = normalizeWindowTurns(input.beforeTurns, "before") ?? baseWindow;
+  const afterTurns = normalizeWindowTurns(input.afterTurns, "after") ?? baseWindow;
+  return {
+    afterTurns,
+    beforeTurns,
+    windowTurns: Math.max(beforeTurns, afterTurns),
+  };
+}
+
+function normalizeWindowTurns(windowTurns: number | undefined, label: string): number | undefined {
+  if (windowTurns === undefined) return undefined;
   if (!Number.isInteger(windowTurns) || windowTurns < 0) {
     throw new RecallSearchError({
-      message: "recall context window must be a non-negative integer",
+      message: `recall context ${label} window must be a non-negative integer`,
     });
   }
   return Math.min(windowTurns, MAX_CONTEXT_WINDOW_TURNS);

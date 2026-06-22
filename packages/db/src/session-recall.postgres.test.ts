@@ -397,6 +397,9 @@ describePostgres("session recall", () => {
 
     expect(expansion.anchor.segment.id).toBe(corpus.primary.segmentIds.authentication);
     expect(expansion.anchor.turn.id).toBe(corpus.primary.turnIds.authentication);
+    expect(expansion.beforeTurns).toBe(1);
+    expect(expansion.afterTurns).toBe(1);
+    expect(expansion.windowTurns).toBe(1);
     expect(expansion.session).toMatchObject({
       harness: "codex",
       model: "gpt-5-codex",
@@ -432,6 +435,39 @@ describePostgres("session recall", () => {
       }),
     );
     expect(zeroWindow.turns.map((turn) => turn.id)).toEqual([
+      corpus.primary.turnIds.authentication,
+    ]);
+
+    const asymmetricWindow = await Effect.runPromise(
+      expandRecallContext(service, {
+        afterTurns: 1,
+        beforeTurns: 0,
+        segmentId: corpus.primary.segmentIds.authentication,
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(asymmetricWindow.beforeTurns).toBe(0);
+    expect(asymmetricWindow.afterTurns).toBe(1);
+    expect(asymmetricWindow.windowTurns).toBe(1);
+    expect(asymmetricWindow.turns.map((turn) => turn.id)).toEqual([
+      corpus.primary.turnIds.authentication,
+      corpus.primary.turnIds.filtered,
+    ]);
+
+    const mixedWindow = await Effect.runPromise(
+      expandRecallContext(service, {
+        afterTurns: 0,
+        segmentId: corpus.primary.segmentIds.authentication,
+        windowTurns: 2,
+        workspaceId: corpus.workspaceId,
+      }),
+    );
+    expect(mixedWindow.beforeTurns).toBe(2);
+    expect(mixedWindow.afterTurns).toBe(0);
+    expect(mixedWindow.windowTurns).toBe(2);
+    expect(mixedWindow.turns.map((turn) => turn.id)).toEqual([
+      corpus.primary.turnIds.lexicalExact,
+      corpus.primary.turnIds.grouping,
       corpus.primary.turnIds.authentication,
     ]);
   });

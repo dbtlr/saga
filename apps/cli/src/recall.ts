@@ -150,7 +150,7 @@ async function showRecallCommand(
   const project = loadBoundProject(dependencies.cwd);
   const input: RecallContextExpansionInput = {
     segmentId,
-    windowTurns: parseWindowTurns(parsed.flags),
+    ...parseContextWindowFlags(parsed.flags),
     workspaceId: workspaceIdFromFlags(parsed.flags, project.binding),
   };
   const result =
@@ -264,9 +264,8 @@ function renderRecallSearch(result: RecallSearchResult, options: RenderOptions):
           { label: "harness session", value: sessionGroup.session.harnessSessionId ?? "none" },
           { label: "model", value: sessionGroup.session.model ?? "none" },
           { label: "host-user", value: sessionGroup.session.authorUser.handle },
-          { label: "source locator", value: sessionGroup.session.sourceLocator ?? "none" },
+          { label: "source binding", value: sessionGroup.session.sourceBindingId },
           { label: "last activity", value: formatDate(sessionGroup.session.lastActivityAt) },
-          { label: "metadata", value: compactJson(sessionGroup.session.metadata) },
           { label: "provenance", value: compactJson(sessionGroup.session.provenance) },
         ],
         options,
@@ -283,7 +282,6 @@ function renderRecallSearch(result: RecallSearchResult, options: RenderOptions):
             { label: "started", value: formatDate(intervalGroup.activityInterval.startedAt) },
             { label: "ended", value: formatDate(intervalGroup.activityInterval.endedAt) },
             { label: "matches", value: String(intervalGroup.matches.length) },
-            { label: "metadata", value: compactJson(intervalGroup.activityInterval.metadata) },
           ],
           options,
         ),
@@ -315,9 +313,9 @@ function renderMatch(
       { label: "tokens", value: formatRange(match.segment.tokenStart, match.segment.tokenEnd) },
       { label: "chars", value: formatRange(match.segment.charStart, match.segment.charEnd) },
       { label: "snippet", value: stripTsHeadline(match.snippet) },
-      { label: "raw metadata", value: compactJson(match.rawSessionRecord.metadata) },
       { label: "raw provenance", value: compactJson(match.rawSessionRecord.provenance) },
       { label: "source", value: match.sourceBinding.sourceUri },
+      { label: "source type", value: match.sourceBinding.sourceType },
     ],
     options,
   );
@@ -329,7 +327,7 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
       "Recall Context",
       [
         { label: "workspace", value: result.workspaceId },
-        { label: "window", value: `${String(result.windowTurns)} turns` },
+        { label: "window", value: formatContextWindow(result) },
         { label: "anchor segment", value: result.anchor.segment.id },
         { label: "anchor turn", value: result.anchor.turn.id },
         { label: "session", value: result.session.id },
@@ -349,7 +347,6 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
         { label: "status", value: result.session.status },
         { label: "started", value: formatDate(result.session.startedAt) },
         { label: "last activity", value: formatDate(result.session.lastActivityAt) },
-        { label: "metadata", value: compactJson(result.session.metadata) },
         { label: "provenance", value: compactJson(result.session.provenance) },
       ],
       options,
@@ -357,10 +354,11 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
     recordBlock(
       "Source",
       [
+        { label: "source binding", value: result.sourceBinding.id },
         { label: "source", value: result.sourceBinding.sourceUri },
         { label: "type", value: result.sourceBinding.sourceType },
+        { label: "display", value: result.sourceBinding.displayName ?? "none" },
         { label: "enabled", value: String(result.sourceBinding.enabled) },
-        { label: "metadata", value: compactJson(result.sourceBinding.config) },
       ],
       options,
     ),
@@ -373,11 +371,9 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
         { label: "status", value: result.rawSessionRecord.status },
         { label: "harness", value: result.rawSessionRecord.harness },
         { label: "harness session", value: result.rawSessionRecord.harnessSessionId ?? "none" },
-        { label: "locator", value: result.rawSessionRecord.sourceLocator ?? "none" },
         { label: "captured", value: formatDate(result.rawSessionRecord.capturedAt) },
         { label: "content", value: result.rawSessionRecord.contentType },
         { label: "hash", value: result.rawSessionRecord.contentHash },
-        { label: "metadata", value: compactJson(result.rawSessionRecord.metadata) },
         { label: "provenance", value: compactJson(result.rawSessionRecord.provenance) },
       ],
       options,
@@ -391,7 +387,6 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
         { label: "ended", value: formatDate(result.activityInterval.endedAt) },
         { label: "settled", value: formatDate(result.activityInterval.settledAt) },
         { label: "settlement", value: result.activityInterval.settlementReason ?? "none" },
-        { label: "metadata", value: compactJson(result.activityInterval.metadata) },
       ],
       options,
     ),
@@ -426,7 +421,6 @@ function renderExpandedTurn(
           value: turn.rawEventIds.length === 0 ? "none" : turn.rawEventIds.join(", "),
         },
         { label: "raw span", value: compactJson(turn.rawSpan) },
-        { label: "metadata", value: compactJson(turn.metadata) },
       ],
       options,
     ),
@@ -453,7 +447,6 @@ function renderExpandedSegment(
       { label: "chars", value: formatRange(segment.charStart, segment.charEnd) },
       { label: "snippet", value: segment.snippet ?? "none" },
       { label: "text", value: truncate(segment.searchText, 360) },
-      { label: "metadata", value: compactJson(segment.metadata) },
     ],
     options,
   );
@@ -532,12 +525,19 @@ function parseScoreFlag(value: string | undefined, label: string): number | unde
   return parsed;
 }
 
-function parseWindowTurns(flags: Record<string, string>): number | undefined {
+function parseContextWindowFlags(
+  flags: Record<string, string>,
+): Pick<RecallContextExpansionInput, "afterTurns" | "beforeTurns" | "windowTurns"> {
   const windowTurns = parseNonNegativeIntegerFlag(flags.window, "window");
   const before = parseNonNegativeIntegerFlag(flags.before, "before");
   const after = parseNonNegativeIntegerFlag(flags.after, "after");
-  if (windowTurns === undefined && before === undefined && after === undefined) return undefined;
-  return Math.max(windowTurns ?? 0, before ?? 0, after ?? 0);
+  if (windowTurns === undefined && before === undefined && after === undefined) return {};
+  if (before === undefined && after === undefined) return { windowTurns };
+  return {
+    afterTurns: after,
+    beforeTurns: before,
+    windowTurns,
+  };
 }
 
 function workspaceIdFromFlags(
@@ -567,6 +567,12 @@ function formatScores(scores: RecallSegmentMatch["scores"]): string {
 
 function formatScore(value: number): string {
   return value.toFixed(4).replace(/0+$/u, "").replace(/\.$/u, "");
+}
+
+function formatContextWindow(result: RecallContextExpansion): string {
+  const beforeTurns = result.beforeTurns ?? result.windowTurns;
+  const afterTurns = result.afterTurns ?? result.windowTurns;
+  return `${String(beforeTurns)} before / ${String(afterTurns)} after`;
 }
 
 function compactJson(value: unknown): string {
