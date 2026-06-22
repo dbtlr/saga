@@ -12,6 +12,7 @@ import {
   type RecentSessionRecord,
   type SessionDetail,
 } from "./session-records.js";
+import { searchSessionRecall } from "./session-recall.js";
 import {
   activityIntervals,
   rawSessionRecords,
@@ -938,6 +939,14 @@ describePostgres("raw session import", () => {
       .where(eq(sourceBindings.id, sourceBinding.id))
       .limit(1);
     expect(storedBinding?.enabled).toBe(false);
+
+    const recall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "Import without enabling source",
+        workspaceId,
+      }),
+    );
+    expect(recall.matchCount).toBe(0);
   });
 
   test("implicit manual imports re-enable an existing disabled harness source binding", async () => {
@@ -999,6 +1008,15 @@ describePostgres("raw session import", () => {
       .where(eq(sourceBindings.id, sourceBinding.id))
       .limit(1);
     expect(storedBinding?.enabled).toBe(true);
+
+    const recall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "Import and make manual source visible",
+        workspaceId,
+      }),
+    );
+    expect(recall.matchCount).toBe(1);
+    expect(recall.sessions[0]?.session.sourceBindingId).toBe(sourceBinding.id);
   });
 
   test("settles the active Activity Interval from ambient Stop lifecycle input", async () => {

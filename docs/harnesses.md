@@ -52,6 +52,12 @@ For Codex, `saga harness install codex`, `saga harness status codex`, and `saga 
 
 `hooksCoverage` and `sessionStartCoverage` are configuration checks, not proof that Codex has executed each lifecycle source in the current environment. Local dogfood evidence has shown Codex `SessionStart` hooks firing for `startup` and `resume` with the current matcher, while `clear` and `compact` coverage has not yet been observed in raw events. Activation verification should report runtime evidence by lifecycle source instead of collapsing startup, resume, clear, and compact into one "hooks work" result.
 
+## Raw Session Import and Disabled Bindings
+
+Ambient hook imports are bound imports: the local binding file supplies the target-specific `sourceBindingId`, and import preserves that binding's `enabled` state. If an operator disables a Codex or Claude source binding, later hook-driven raw session imports may still store snapshots for auditability, but they do not silently re-enable the binding; disabled snapshots stay hidden from recall, MCP recall, context expansion, and embedding jobs until the operator explicitly re-enables the source binding.
+
+Manual raw session imports that do not supply a `sourceBindingId` resolve the generic harness source by workspace, harness, and host. When that generic source already exists but is disabled, import re-enables it so the operator-requested import is recall-visible. Use the explicit source binding path for ambient capture or any import that must respect a previously disabled operator state.
+
 ## Edge Cases
 
 - Settings JSON may already contain user hooks. Saga removes only its own shim commands and preserves unrelated hooks.
