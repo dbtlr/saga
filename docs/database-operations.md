@@ -9,7 +9,7 @@ Start the local development database:
 ```sh
 pnpm deps:up
 cp .env.example .env.local
-pnpm --filter @saga/cli exec saga init
+pnpm --filter @saga/cli saga init
 ```
 
 The local development database listens on `localhost:55433` and stores data in the Docker volume `saga_saga-db-local-data`.

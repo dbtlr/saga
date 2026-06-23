@@ -17,6 +17,7 @@ redacted.
 - The documented `pnpm --filter @saga/cli exec saga --help` path failed with `Command "saga" not
 found`; the equivalent repo entrypoint used for validation was:
   `apps/cli/node_modules/.bin/tsx apps/cli/src/main.ts`.
+  After `SGA-142`, the replayable local command is `pnpm --filter @saga/cli saga --help`.
 
 ## Commands And Results
 
@@ -51,7 +52,8 @@ Expected skip:
 Known command failure:
 
 - `pnpm --filter @saga/cli exec saga --help`: failed with `Command "saga" not found`.
-  Follow-up: `SGA-142`.
+  Follow-up: `SGA-142`. The replayable local command is
+  `pnpm --filter @saga/cli saga --help`.
 
 ## Evidence
 

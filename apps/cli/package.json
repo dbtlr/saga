@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
+    "saga": "tsx src/main.ts",
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
