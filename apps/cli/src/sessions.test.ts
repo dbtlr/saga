@@ -475,6 +475,45 @@ describe("runSessionsCommand", () => {
     );
   });
 
+  test.each([
+    ["missing warning", { mode: "raw_forensic", requestedBy: "includeRawBody" }],
+    ["blank warning", { mode: "raw_forensic", requestedBy: "includeRawBody", warning: "   " }],
+    [
+      "missing requestedBy",
+      {
+        mode: "raw_forensic",
+        warning:
+          "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+      },
+    ],
+  ])(
+    "does not restore raw forensic body fields in structured output with %s metadata",
+    async (_name, rawBodyExposure) => {
+      const projectRoot = boundProject();
+      const detail = sessionDetail({ includeRawBody: true });
+      const rawRecord = detail.rawSessionRecords[0];
+      if (rawRecord === undefined) throw new Error("missing raw session record");
+      rawRecord.rawBodyExposure = rawBodyExposure as NonNullable<
+        SessionRawSessionRecordMetadata["rawBodyExposure"]
+      >;
+
+      const output = await runSessionsCommand(["show", "session-id", "--raw-body"], renderOptions, {
+        cwd: projectRoot,
+        getDetail: async () => detail,
+      });
+
+      const parsed = JSON.parse(output);
+      expect(parsed.rawSessionRecords[0].bodyText).toContain("[local-path-redacted]");
+      expect(parsed.rawSessionRecords[0].bodyJson.path).toBe("[local-path-redacted]");
+      expect(parsed.rawSessionRecords[0].bodyText).not.toContain(
+        "/Users/example/raw/session.jsonl",
+      );
+      expect(parsed.rawSessionRecords[0].bodyJson.path).not.toBe(
+        "/Users/example/raw/session.jsonl",
+      );
+    },
+  );
+
   test("renders the bounded raw session snapshot list without duplicate active or selected blocks", async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(

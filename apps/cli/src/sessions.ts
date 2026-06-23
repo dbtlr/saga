@@ -654,6 +654,7 @@ function renderRawSessionRecord(
   record: SessionRawSessionRecordMetadata,
   options: RenderOptions,
 ): string {
+  const exposesRawBody = hasRawBodyExposure(record);
   return recordBlock(
     title,
     [
@@ -673,7 +674,7 @@ function renderRawSessionRecord(
       { label: "hash", value: record.contentHash },
       { label: "metadata", value: safeCompactJson(record.metadata) },
       { label: "provenance", value: safeCompactJson(record.provenance) },
-      ...(record.rawBodyExposure === undefined
+      ...(!exposesRawBody
         ? []
         : [
             {
@@ -681,10 +682,10 @@ function renderRawSessionRecord(
               value: record.rawBodyExposure.warning,
             },
           ]),
-      ...(record.bodyText === undefined
+      ...(!exposesRawBody || record.bodyText === undefined
         ? []
         : [{ label: "raw forensic body text", value: record.bodyText ?? "none" }]),
-      ...(record.bodyJson === undefined
+      ...(!exposesRawBody || record.bodyJson === undefined
         ? []
         : [{ label: "raw forensic body json", value: compactJson(record.bodyJson) }]),
     ],
@@ -736,7 +737,13 @@ function hasRawBodyExposure(
 ): record is SessionRawSessionRecordMetadata & {
   rawBodyExposure: NonNullable<SessionRawSessionRecordMetadata["rawBodyExposure"]>;
 } {
-  return record?.rawBodyExposure?.mode === "raw_forensic";
+  const warning = record?.rawBodyExposure?.warning;
+  return (
+    record?.rawBodyExposure?.mode === "raw_forensic" &&
+    record.rawBodyExposure.requestedBy === "includeRawBody" &&
+    typeof warning === "string" &&
+    warning.trim().length > 0
+  );
 }
 
 function renderTurn(turn: SessionDetailTurn, options: RenderOptions): string {

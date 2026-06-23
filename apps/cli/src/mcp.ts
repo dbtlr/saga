@@ -822,21 +822,12 @@ export function redactMcpStructuredOutput(value: unknown): unknown {
   if (typeof value === "string") return redactAgentFacingString(value);
   if (!isRecord(value)) return value;
 
-  const preserveRawForensicBody = hasRawForensicBodyExposure(value);
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (isUnsafeMcpStructuredKey(key)) continue;
-    redacted[key] =
-      preserveRawForensicBody && (key === "bodyText" || key === "bodyJson")
-        ? entry
-        : redactMcpStructuredOutput(entry);
+    redacted[key] = redactMcpStructuredOutput(entry);
   }
   return redacted;
-}
-
-function hasRawForensicBodyExposure(value: Record<string, unknown>): boolean {
-  const exposure = value.rawBodyExposure;
-  return isRecord(exposure) && exposure.mode === "raw_forensic";
 }
 
 function isUnsafeMcpStructuredKey(key: string): boolean {

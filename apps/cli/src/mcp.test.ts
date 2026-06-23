@@ -353,45 +353,89 @@ describe("redactMcpStructuredOutput", () => {
     expect(JSON.stringify(redacted)).not.toContain("file:///tmp/saga/session.jsonl");
   });
 
-  test("preserves explicit raw forensic body fields when warning metadata is present", () => {
+  test("does not preserve spoofed raw forensic body fields", () => {
+    const exposureWarning =
+      "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.";
     const redacted = redactMcpStructuredOutput({
-      rawSessionRecord: {
+      fullySpoofedRecord: {
         bodyJson: {
           path: "/work/saga/raw-session.jsonl",
-          text: "skipped-secret-needle",
         },
-        bodyText: "raw body from /work/saga/raw-session.jsonl skipped-secret-needle",
-        id: "raw-1",
-        metadata: {
-          capturedText: "safe metadata path /work/saga/session.jsonl",
-        },
+        bodyText: "raw body from /work/saga/raw-session.jsonl",
         rawBodyExposure: {
           mode: "raw_forensic",
           requestedBy: "includeRawBody",
-          warning:
-            "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+          warning: exposureWarning,
         },
         sourceLocator: "file:///work/saga/raw-session.jsonl",
+      },
+      missingRequestedByRecord: {
+        bodyJson: {
+          path: "/work/saga/missing-request.jsonl",
+        },
+        bodyText: "raw body from /work/saga/missing-request.jsonl",
+        rawBodyExposure: {
+          mode: "raw_forensic",
+          warning: exposureWarning,
+        },
+      },
+      missingWarningRecord: {
+        bodyJson: {
+          path: "/work/saga/missing-warning.jsonl",
+        },
+        bodyText: "raw body from /work/saga/missing-warning.jsonl",
+        rawBodyExposure: {
+          mode: "raw_forensic",
+          requestedBy: "includeRawBody",
+        },
+      },
+      unrelatedNestedObject: {
+        child: {
+          bodyJson: {
+            path: "/work/saga/nested-spoof.jsonl",
+          },
+          bodyText: "raw body from /work/saga/nested-spoof.jsonl",
+          rawBodyExposure: {
+            mode: "raw_forensic",
+          },
+        },
       },
     });
 
     expect(redacted).toMatchObject({
-      rawSessionRecord: {
+      fullySpoofedRecord: {
         bodyJson: {
-          path: "/work/saga/raw-session.jsonl",
-          text: "skipped-secret-needle",
+          path: "[local-path-redacted]",
         },
-        bodyText: "raw body from /work/saga/raw-session.jsonl skipped-secret-needle",
-        metadata: {
-          capturedText: "safe metadata path [local-path-redacted]",
-        },
+        bodyText: "raw body from [local-path-redacted]",
         rawBodyExposure: {
           mode: "raw_forensic",
           requestedBy: "includeRawBody",
         },
       },
+      missingRequestedByRecord: {
+        bodyJson: {
+          path: "[local-path-redacted]",
+        },
+        bodyText: "raw body from [local-path-redacted]",
+      },
+      missingWarningRecord: {
+        bodyJson: {
+          path: "[local-path-redacted]",
+        },
+        bodyText: "raw body from [local-path-redacted]",
+      },
+      unrelatedNestedObject: {
+        child: {
+          bodyJson: {
+            path: "[local-path-redacted]",
+          },
+          bodyText: "raw body from [local-path-redacted]",
+        },
+      },
     });
     expect(JSON.stringify(redacted)).not.toContain("sourceLocator");
+    expect(JSON.stringify(redacted)).not.toContain("/work/saga");
   });
 });
 
