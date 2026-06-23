@@ -3,6 +3,8 @@ type JsonRecord = Record<string, unknown>;
 const LOCAL_PATH_REDACTION = "[local-path-redacted]";
 const SAFE_URI_PATTERN =
   /\b(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)/gu;
+const SAFE_SOURCE_LOCATOR_PATTERN =
+  /^(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)$/u;
 const LOCAL_FILE_URI_WITH_SPACES_PATTERN =
   /\bfile:\/\/[^=\r\n"',}\])]*\.[A-Za-z0-9][A-Za-z0-9._-]*(?=$|[\s"',}\])])/gu;
 const LOCAL_FILE_URI_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN =
@@ -55,8 +57,13 @@ export function redactAgentFacingSessionText(value: string): string {
   return typeof redacted === "string" ? redacted : value;
 }
 
-export function redactAgentFacingSourceLocator(_value: string | null): string | null {
-  return null;
+export function redactAgentFacingSourceLocator(value: string | null): string | null {
+  if (value === null) return null;
+
+  const redacted = redactLocalPathString(value);
+  if (redacted !== value) return null;
+
+  return SAFE_SOURCE_LOCATOR_PATTERN.test(value) ? value : null;
 }
 
 function redactLocalPathString(value: string): string {

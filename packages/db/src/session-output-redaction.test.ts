@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { redactAgentFacingSessionText } from "./session-output-redaction.js";
+import {
+  redactAgentFacingSessionText,
+  redactAgentFacingSourceLocator,
+} from "./session-output-redaction.js";
 
 describe("session output redaction", () => {
   test("redacts local transcript paths with spaces and UNC paths", () => {
@@ -67,5 +70,39 @@ describe("session output redaction", () => {
     expect(redacted).toContain("mimir://task/SGA-141");
     expect(redacted).toContain("saga:context/session-provenance");
     expect(redacted).not.toContain("[local-path-redacted]");
+  });
+
+  test("preserves safe agent-facing source locators", () => {
+    expect(redactAgentFacingSourceLocator("https://example.test/session/abc123")).toBe(
+      "https://example.test/session/abc123",
+    );
+    expect(redactAgentFacingSourceLocator("codex://session/abc123")).toBe("codex://session/abc123");
+    expect(redactAgentFacingSourceLocator("github://repo/owner/name/pull/1")).toBe(
+      "github://repo/owner/name/pull/1",
+    );
+    expect(redactAgentFacingSourceLocator("norn://workspace/note")).toBe("norn://workspace/note");
+    expect(redactAgentFacingSourceLocator("mimir://task/SGA-141")).toBe("mimir://task/SGA-141");
+    expect(redactAgentFacingSourceLocator("saga:context/session-provenance")).toBe(
+      "saga:context/session-provenance",
+    );
+  });
+
+  test("nulls unsafe local and file source locators", () => {
+    expect(redactAgentFacingSourceLocator(null)).toBeNull();
+    expect(
+      redactAgentFacingSourceLocator("file:///Users/Drew Smith/.codex/session.jsonl"),
+    ).toBeNull();
+    expect(redactAgentFacingSourceLocator("/Users/Drew Smith/.codex/session.jsonl")).toBeNull();
+    expect(
+      redactAgentFacingSourceLocator("C:\\Users\\Drew Smith\\.codex\\session.jsonl"),
+    ).toBeNull();
+    expect(
+      redactAgentFacingSourceLocator("\\\\server\\share\\Users\\drew\\.codex\\session.jsonl"),
+    ).toBeNull();
+    expect(
+      redactAgentFacingSourceLocator(
+        "https://example.test/session/abc123 /Users/Drew Smith/.codex/session.jsonl",
+      ),
+    ).toBeNull();
   });
 });
