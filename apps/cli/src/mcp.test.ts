@@ -252,7 +252,7 @@ describe("redactMcpStructuredOutput", () => {
         id: "raw-1",
         metadata: {
           capturedText:
-            "Use /work/saga, /home/drew/work/saga, /custom-root/saga, and file:///tmp/saga/session.jsonl but keep https://example.com/docs/path and saga:context/workflow.",
+            "Use /work/saga, /home/drew/work/saga, /custom-root/saga, C:\\Users\\drew\\.codex\\transcripts\\session.jsonl, and file:///tmp/saga/session.jsonl but keep https://example.com/docs/path and saga:context/workflow.",
           embedded: "cwd=/work/saga log=/custom-root/saga/session.log",
           genericInputPath: "/custom-root/saga/session.jsonl",
           inputPath: "/Volumes/data/workspaces/saga/session.jsonl",
@@ -272,7 +272,9 @@ describe("redactMcpStructuredOutput", () => {
         provenance: {
           homeProjectRoot: "/home/drew/work/saga",
           projectRoot: "/Users/drew/work/saga",
-          transcript: "loaded from file:///tmp/saga/session.jsonl cwd=/work/saga",
+          transcript:
+            "loaded from file:///tmp/saga/session.jsonl cwd=/work/saga windows=C:\\Users\\drew\\.codex\\transcripts\\session.jsonl",
+          windowsTranscriptPath: "C:\\Users\\drew\\.codex\\transcripts\\session.jsonl",
         },
         sourceLocator: "file:///Volumes/data/workspaces/saga/session.jsonl",
       },
@@ -301,7 +303,7 @@ describe("redactMcpStructuredOutput", () => {
         id: "raw-1",
         metadata: {
           capturedText:
-            "Use [local-path-redacted], [local-path-redacted], [local-path-redacted], and [local-path-redacted] but keep https://example.com/docs/path and saga:context/workflow.",
+            "Use [local-path-redacted], [local-path-redacted], [local-path-redacted], [local-path-redacted], and [local-path-redacted] but keep https://example.com/docs/path and saga:context/workflow.",
           embedded: "cwd=[local-path-redacted] log=[local-path-redacted]",
           genericInputPath: "[local-path-redacted]",
           inputPath: "[local-path-redacted]",
@@ -318,7 +320,9 @@ describe("redactMcpStructuredOutput", () => {
         provenance: {
           homeProjectRoot: "[local-path-redacted]",
           projectRoot: "[local-path-redacted]",
-          transcript: "loaded from [local-path-redacted] cwd=[local-path-redacted]",
+          transcript:
+            "loaded from [local-path-redacted] cwd=[local-path-redacted] windows=[local-path-redacted]",
+          windowsTranscriptPath: "[local-path-redacted]",
         },
       },
       session: {
@@ -344,6 +348,7 @@ describe("redactMcpStructuredOutput", () => {
     expect(JSON.stringify(redacted)).not.toContain("/home/drew/work/saga");
     expect(JSON.stringify(redacted)).not.toContain("/work/saga");
     expect(JSON.stringify(redacted)).not.toContain("/custom-root/saga");
+    expect(JSON.stringify(redacted)).not.toContain("C:\\\\Users\\\\drew");
     expect(JSON.stringify(redacted)).not.toContain("file:///tmp/saga/session.jsonl");
   });
 });

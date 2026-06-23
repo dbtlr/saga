@@ -50,22 +50,24 @@ describePostgres("MCP session recall postgres integration", () => {
     const linuxTranscriptPath = "/work/saga/mcp-session.jsonl";
     const customRoot = "/custom-root/saga";
     const fileUri = "file:///tmp/saga/session.jsonl";
+    const windowsTranscriptPath = "C:\\Users\\drew\\.codex\\transcripts\\session.jsonl";
     const linuxUnsafePaths = [
       linuxCwd,
       linuxProjectRoot,
       linuxTranscriptPath,
       customRoot,
       fileUri,
+      windowsTranscriptPath,
     ] as const;
     writeFileSync(
       inputPath,
       [
         JSON.stringify({
-          text: `MCP recall sentinel phrase for SGA-130 search with imported path evidence ${linuxCwd} ${linuxProjectRoot} ${customRoot} ${fileUri} kept around plain words`,
+          text: `MCP recall sentinel phrase for SGA-130 search with imported path evidence ${linuxCwd} ${linuxProjectRoot} ${customRoot} ${fileUri} ${windowsTranscriptPath} kept around plain words`,
           type: "user",
         }),
         JSON.stringify({
-          text: `The assistant response provides MCP surrounding context from ${customRoot}/session.log and ${fileUri} with non-sensitive summary intact`,
+          text: `The assistant response provides MCP surrounding context from ${customRoot}/session.log and ${fileUri} plus ${windowsTranscriptPath} with non-sensitive summary intact`,
           type: "assistant",
         }),
         "",
@@ -83,9 +85,13 @@ describePostgres("MCP session recall postgres integration", () => {
         "--host-project-root",
         linuxProjectRoot,
         "--metadata",
-        JSON.stringify({ cwd: linuxCwd, note: `cwd=${linuxCwd}` }),
+        JSON.stringify({
+          cwd: linuxCwd,
+          note: `cwd=${linuxCwd}`,
+          windowsTranscriptPath,
+        }),
         "--provenance",
-        JSON.stringify({ transcriptPath: linuxTranscriptPath }),
+        JSON.stringify({ transcriptPath: linuxTranscriptPath, windowsTranscriptPath }),
       ],
       renderOptions,
       { cwd: projectRoot },
@@ -211,6 +217,7 @@ function expectNoUnsafeMcpStructuredContent(
   const serialized = JSON.stringify(structuredContent);
   for (const unsafePath of [input.inputPath, input.projectRoot, ...(input.extraPaths ?? [])]) {
     expect(serialized).not.toContain(unsafePath);
+    expect(serialized).not.toContain(unsafePath.replaceAll("\\", "\\\\"));
   }
   expect(serialized).not.toContain("sourceLocator");
   expect(serialized).not.toContain('"config"');

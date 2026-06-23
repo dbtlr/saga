@@ -22,6 +22,7 @@ import {
   listRecentSessionRecords,
   listRecentRawEvents,
   makeDatabase,
+  redactAgentFacingSessionValue,
   resolveSagaLink as resolveDatabaseSagaLink,
   searchSessionRecall,
   type DatabaseService,
@@ -37,12 +38,6 @@ import { findProjectRoot, readBindingFile } from "./init.js";
 import { type RenderOptions } from "./render.js";
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
-const LOCAL_PATH_REDACTION = "[local-path-redacted]";
-const SAFE_URI_PATTERN =
-  /\b(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)/gu;
-const LOCAL_FILE_URI_PATTERN = /\bfile:\/\/[^\s"',}\])]+/gu;
-const POSIX_LOCAL_PATH_PATTERN =
-  /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:(?:[A-Za-z0-9._@%+-]+\/){1,}[A-Za-z0-9._@%+-]*|(?:home|work|Users|Volumes|private|tmp|var|opt|etc|usr|bin|sbin|lib|lib64|mnt|media|srv|run|root|nix|workspace|app|repo|repos|projects|builds)\b[^\s"',}\])]*))/gu;
 
 export interface MemorySearchEntry {
   confidence: number;
@@ -816,7 +811,7 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
 export function redactMcpStructuredOutput(value: unknown): unknown {
   if (value instanceof Date) return value;
   if (Array.isArray(value)) return value.map((entry) => redactMcpStructuredOutput(entry));
-  if (typeof value === "string") return redactLocalPathString(value);
+  if (typeof value === "string") return redactAgentFacingString(value);
   if (!isRecord(value)) return value;
 
   const redacted: Record<string, unknown> = {};
@@ -866,43 +861,17 @@ function formatRange(start: number | null, end: number | null): string {
 }
 
 function compactSafeJson(value: unknown): string {
-  const json = JSON.stringify(redactLocalTextValues(value));
+  const json = JSON.stringify(redactAgentFacingSessionValue(value));
   return json === undefined ? "undefined" : truncate(json, 220);
 }
 
 function redactMcpTextOutput(value: string): string {
-  return redactLocalPathString(value);
+  return redactAgentFacingString(value);
 }
 
-function redactLocalTextValues(value: unknown): unknown {
-  if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.map((entry) => redactLocalTextValues(entry));
-  if (typeof value === "string") return redactLocalPathString(value);
-  if (!isRecord(value)) return value;
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, redactLocalTextValues(entry)]),
-  );
-}
-
-function redactLocalPathString(value: string): string {
-  const protectedUris: string[] = [];
-  const protectedValue = value.replaceAll(SAFE_URI_PATTERN, (match) => {
-    const token = `SAGA_MCP_PROTECTED_URI_${String(protectedUris.length)}_TOKEN`;
-    protectedUris.push(match);
-    return token;
-  });
-  const redacted = protectedValue
-    .replaceAll(LOCAL_FILE_URI_PATTERN, LOCAL_PATH_REDACTION)
-    .replaceAll(
-      POSIX_LOCAL_PATH_PATTERN,
-      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
-    );
-
-  return protectedUris.reduce(
-    (output, uri, index) => output.replaceAll(`SAGA_MCP_PROTECTED_URI_${String(index)}_TOKEN`, uri),
-    redacted,
-  );
+function redactAgentFacingString(value: string): string {
+  const redacted = redactAgentFacingSessionValue(value);
+  return typeof redacted === "string" ? redacted : value;
 }
 
 function stripSearchMarkup(value: string): string {
