@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { SessionSafetyError } from "@saga/db";
 import type {
   DeleteSessionSafetyResult,
   RawSessionImportInput,
@@ -225,6 +226,49 @@ describe("runSessionsCommand", () => {
     expect(output).not.toContain("API_KEY=");
     expect(output).not.toContain(secretOrigin);
     expect(output).not.toContain(secretReason);
+  });
+
+  test("surfaces invalid regex redaction errors without echoing the supplied pattern", async () => {
+    const projectRoot = boundProject();
+    const secretNeedle = "cli-regex-secret-token";
+    const rawPattern = `${secretNeedle}(`;
+
+    await expect(
+      runSessionsCommand(["redact", "session-id", "--regex", rawPattern], renderOptions, {
+        cwd: projectRoot,
+        redactSession: async (input) => {
+          expect(input.patterns).toEqual([
+            {
+              flags: undefined,
+              kind: "regex",
+              pattern: rawPattern,
+              replacement: "[REDACTED]",
+            },
+          ]);
+          throw new SessionSafetyError({
+            message: "invalid redaction regex pattern at index 1: invalid syntax",
+          });
+        },
+      }),
+    ).rejects.toThrow("invalid redaction regex pattern at index 1: invalid syntax");
+
+    try {
+      await runSessionsCommand(["redact", "session-id", "--regex", rawPattern], renderOptions, {
+        cwd: projectRoot,
+        redactSession: async () => {
+          throw new SessionSafetyError({
+            message: "invalid redaction regex pattern at index 1: invalid syntax",
+          });
+        },
+      });
+      throw new Error("expected invalid regex redaction to fail");
+    } catch (cause) {
+      const errorText = String(cause);
+      expect(errorText).toContain("invalid redaction regex pattern");
+      expect(errorText).not.toContain(secretNeedle);
+      expect(errorText).not.toContain(rawPattern);
+      expect(errorText).not.toContain(`/${rawPattern}/`);
+    }
   });
 
   test("omits free-form redaction audit text from json output", async () => {

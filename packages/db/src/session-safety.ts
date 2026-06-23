@@ -464,7 +464,7 @@ function applyRedactions(
 ): { content: string; replacementCount: number } {
   let redactedContent = content;
   let replacementCount = 0;
-  for (const pattern of patterns) {
+  for (const [index, pattern] of patterns.entries()) {
     if (pattern.kind === "literal") {
       const pieces = redactedContent.split(pattern.pattern);
       const matches = pieces.length - 1;
@@ -473,15 +473,40 @@ function applyRedactions(
       continue;
     }
 
-    const flags = new Set((pattern.flags ?? "").split(""));
-    flags.add("g");
-    const regex = new RegExp(pattern.pattern, [...flags].join(""));
+    const regex = compileRedactionRegex(pattern, index);
     redactedContent = redactedContent.replace(regex, () => {
       replacementCount += 1;
       return pattern.replacement;
     });
   }
   return { content: redactedContent, replacementCount };
+}
+
+function compileRedactionRegex(pattern: NormalizedSessionRedactionPattern, index: number): RegExp {
+  const flags = redactionRegexFlags(pattern.flags);
+  try {
+    new RegExp("", flags);
+  } catch {
+    throw invalidRedactionRegexError(index, "flags");
+  }
+
+  try {
+    return new RegExp(pattern.pattern, flags);
+  } catch {
+    throw invalidRedactionRegexError(index, "syntax");
+  }
+}
+
+function redactionRegexFlags(value: string | undefined): string {
+  const flags = new Set((value ?? "").split(""));
+  flags.add("g");
+  return [...flags].join("");
+}
+
+function invalidRedactionRegexError(index: number, reason: "flags" | "syntax"): SessionSafetyError {
+  return new SessionSafetyError({
+    message: `invalid redaction regex pattern at index ${index + 1}: invalid ${reason}`,
+  });
 }
 
 function validateRedactedContent(input: {

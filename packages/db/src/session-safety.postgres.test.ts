@@ -176,6 +176,53 @@ describePostgres("session safety", () => {
     expect(recall.matchCount).toBe(0);
   });
 
+  test("rejects invalid regex patterns without echoing sensitive pattern text", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createWorkspace(service, "session-safety-invalid-regex");
+    const secretNeedle = "regex-secret-token";
+    const rawPattern = `${secretNeedle}(`;
+    const imported = await seedRawSession(service, {
+      harnessSessionId: "safety-invalid-regex",
+      rawContent: '{"type":"user","text":"This session remains unchanged"}\n',
+      workspaceId,
+    });
+
+    await expect(
+      Effect.runPromise(
+        redactSessionSafety(service, {
+          id: imported.session.id,
+          patterns: [{ kind: "regex", pattern: rawPattern }],
+          workspaceId,
+        }),
+      ),
+    ).rejects.toThrow("invalid redaction regex pattern at index 1: invalid syntax");
+
+    try {
+      await Effect.runPromise(
+        redactSessionSafety(service, {
+          id: imported.session.id,
+          patterns: [{ kind: "regex", pattern: rawPattern }],
+          workspaceId,
+        }),
+      );
+      throw new Error("expected invalid regex redaction to fail");
+    } catch (cause) {
+      const errorText = String(cause);
+      expect(errorText).toContain("invalid redaction regex pattern");
+      expect(errorText).not.toContain(secretNeedle);
+      expect(errorText).not.toContain(rawPattern);
+      expect(errorText).not.toContain(`/${rawPattern}/`);
+    }
+
+    const rawRecords = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, imported.session.id));
+    expect(rawRecords).toHaveLength(1);
+    expect(JSON.stringify(rawRecords)).not.toContain(secretNeedle);
+    expect(JSON.stringify(rawRecords)).not.toContain(rawPattern);
+  });
+
   test("deletes a session and all recall-derived rows", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createWorkspace(service, "session-safety-delete");
