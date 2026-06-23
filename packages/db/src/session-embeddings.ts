@@ -18,6 +18,11 @@ const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 
 type JsonRecord = Record<string, unknown>;
 
+interface OpenAiEmbeddingResponseEntry {
+  embedding: number[];
+  index: number;
+}
+
 export interface SessionEmbeddingGeneratorInput {
   inputHash: string;
   segmentId: string;
@@ -249,19 +254,34 @@ export function createOpenAiSessionEmbeddingGenerator(
         method: "POST",
       });
       if (!response.ok) {
+        const detail = await readOpenAiErrorDetail(response);
         throw new SessionEmbeddingIndexError({
-          message: `OpenAI embeddings request failed with HTTP ${String(response.status)}`,
+          message: `OpenAI embeddings request failed with HTTP ${String(response.status)}${detail === undefined ? "" : `: ${detail}`}`,
         });
       }
-      const body: unknown = await response.json();
-      const vectors = parseOpenAiEmbeddingResponse(body);
-      if (vectors.length !== inputs.length) {
+      const body = await readOpenAiEmbeddingResponseBody(response);
+      const entries = parseOpenAiEmbeddingResponse(body);
+      if (entries.length !== inputs.length) {
         throw new SessionEmbeddingIndexError({
-          message: `OpenAI returned ${String(vectors.length)} embeddings for ${String(inputs.length)} inputs`,
+          message: `OpenAI returned ${String(entries.length)} embeddings for ${String(inputs.length)} inputs`,
         });
+      }
+      const embeddingsByInputIndex = new Map<number, number[]>();
+      for (const entry of entries) {
+        if (entry.index >= inputs.length) {
+          throw new SessionEmbeddingIndexError({
+            message: `OpenAI returned embedding for out-of-range input index ${String(entry.index)}`,
+          });
+        }
+        if (embeddingsByInputIndex.has(entry.index)) {
+          throw new SessionEmbeddingIndexError({
+            message: `OpenAI returned duplicate embedding for input index ${String(entry.index)}`,
+          });
+        }
+        embeddingsByInputIndex.set(entry.index, entry.embedding);
       }
       return inputs.map((input, index) => ({
-        embedding: vectors[index] ?? [],
+        embedding: requiredEmbeddingForInputIndex(embeddingsByInputIndex, index),
         segmentId: input.segmentId,
       }));
     },
@@ -403,7 +423,31 @@ function embeddingMetadata(input: {
   };
 }
 
-function parseOpenAiEmbeddingResponse(value: unknown): number[][] {
+async function readOpenAiErrorDetail(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await response.json();
+    if (body === null || typeof body !== "object") return undefined;
+    const error = (body as { error?: unknown }).error;
+    if (error === null || typeof error !== "object") return undefined;
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "string" && message.trim() !== "" ? message : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readOpenAiEmbeddingResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (cause) {
+    throw new SessionEmbeddingIndexError({
+      cause,
+      message: "OpenAI embeddings response was not valid JSON",
+    });
+  }
+}
+
+function parseOpenAiEmbeddingResponse(value: unknown): OpenAiEmbeddingResponseEntry[] {
   if (value === null || typeof value !== "object") {
     throw new SessionEmbeddingIndexError({
       message: "OpenAI embeddings response was not an object",
@@ -413,15 +457,39 @@ function parseOpenAiEmbeddingResponse(value: unknown): number[][] {
   if (!Array.isArray(data)) {
     throw new SessionEmbeddingIndexError({ message: "OpenAI embeddings response missing data" });
   }
-  return data
-    .map((item) => {
-      if (item === null || typeof item !== "object") return undefined;
-      const embedding = (item as { embedding?: unknown }).embedding;
-      return Array.isArray(embedding) && embedding.every((part) => typeof part === "number")
-        ? embedding
-        : undefined;
-    })
-    .filter((embedding): embedding is number[] => embedding !== undefined);
+  return data.map((item, responsePosition) => {
+    if (item === null || typeof item !== "object") {
+      throw new SessionEmbeddingIndexError({
+        message: `OpenAI embeddings response data item ${String(responsePosition)} was not an object`,
+      });
+    }
+    const index = (item as { index?: unknown }).index;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+      throw new SessionEmbeddingIndexError({
+        message: `OpenAI embeddings response data item ${String(responsePosition)} missing valid index`,
+      });
+    }
+    const embedding = (item as { embedding?: unknown }).embedding;
+    if (!Array.isArray(embedding) || !embedding.every((part) => typeof part === "number")) {
+      throw new SessionEmbeddingIndexError({
+        message: `OpenAI embeddings response embedding at index ${String(index)} was malformed`,
+      });
+    }
+    return { embedding, index };
+  });
+}
+
+function requiredEmbeddingForInputIndex(
+  embeddingsByInputIndex: ReadonlyMap<number, readonly number[]>,
+  index: number,
+): readonly number[] {
+  const embedding = embeddingsByInputIndex.get(index);
+  if (embedding === undefined) {
+    throw new SessionEmbeddingIndexError({
+      message: `OpenAI did not return embedding for input index ${String(index)}`,
+    });
+  }
+  return embedding;
 }
 
 function validateEmbedding(
