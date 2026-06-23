@@ -1,0 +1,4 @@
+DROP INDEX "sessions_workspace_harness_session_unique";--> statement-breakpoint
+DROP INDEX "sessions_workspace_harness_locator_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "sessions_workspace_source_harness_session_unique" ON "sessions" USING btree ("workspace_id","source_binding_id","harness","harness_session_id") WHERE "sessions"."harness_session_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "sessions_workspace_source_harness_locator_unique" ON "sessions" USING btree ("workspace_id","source_binding_id","harness","source_locator_hash") WHERE "sessions"."harness_session_id" is null and "sessions"."source_locator_hash" is not null;

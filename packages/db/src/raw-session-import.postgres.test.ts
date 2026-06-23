@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -365,7 +365,7 @@ describePostgres("raw session import", () => {
     expect(storedUser?.updatedAt).toEqual(frozenUpdatedAt);
   });
 
-  test("handles concurrent duplicate first imports without duplicate sessions or raw records", async () => {
+  test("handles concurrent duplicate first imports within one source binding", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const db = service;
     const workspaceId = await createBoundWorkspace("raw-import-concurrent-first");
@@ -390,22 +390,7 @@ describePostgres("raw session import", () => {
       rawContent: '{"type":"user","text":"Concurrent duplicate first import"}\n',
       workspaceId,
     } as const;
-    const inputs = Array.from(
-      { length: 8 },
-      (_, index) =>
-        ({
-          ...input,
-          author: {
-            displayName: "Drew",
-            handle: `drew-${index}`,
-          },
-          host: {
-            ...input.host,
-            id: `host-concurrent-first-${index}`,
-            label: `concurrent-host-${index}`,
-          },
-        }) as const,
-    );
+    const inputs = Array.from({ length: 8 }, () => input);
 
     const results = await Promise.all(
       inputs.map((callerInput) => Effect.runPromise(importRawSessionRecord(db, callerInput))),
@@ -421,8 +406,8 @@ describePostgres("raw session import", () => {
     expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
       new Set([first.rawSessionRecord.id]),
     );
-    expect(new Set(results.map((result) => result.sourceBinding.id)).size).toBe(inputs.length);
-    expect(new Set(results.map((result) => result.authorUser.id)).size).toBe(inputs.length);
+    expect(new Set(results.map((result) => result.sourceBinding.id)).size).toBe(1);
+    expect(new Set(results.map((result) => result.authorUser.id)).size).toBe(1);
 
     const [counts] = await service.sql<
       {
@@ -447,8 +432,8 @@ describePostgres("raw session import", () => {
       activity_intervals: 1,
       raw_records: 1,
       sessions: 1,
-      source_bindings: inputs.length,
-      users: inputs.length,
+      source_bindings: 1,
+      users: 1,
     });
 
     const turns = await service.db
@@ -461,6 +446,160 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, first.rawSessionRecord.id));
     expect(segments).toHaveLength(1);
+  });
+
+  test("scopes same workspace harness session ids by source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-source-scoped-harness-id");
+    const baseInput = {
+      author: {
+        displayName: "Drew",
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "codex",
+      harnessSessionId: "shared-local-session-id",
+      model: "gpt-5-fixture",
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:10:00.000Z",
+        host: {
+          id: "host-source-scoped-harness-a",
+          label: "source-a",
+        },
+        locator: "/tmp/source-a/shared-local-session-id.jsonl",
+        rawContent: '{"type":"user","text":"Source A owns this local id."}\n',
+      }),
+    );
+    const second = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:11:00.000Z",
+        host: {
+          id: "host-source-scoped-harness-b",
+          label: "source-b",
+        },
+        locator: "/tmp/source-b/shared-local-session-id.jsonl",
+        rawContent: '{"type":"user","text":"Source B owns the same local id."}\n',
+      }),
+    );
+    const repeatedFirst = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:10:00.000Z",
+        host: {
+          id: "host-source-scoped-harness-a",
+          label: "source-a",
+        },
+        locator: "/tmp/source-a/shared-local-session-id.jsonl",
+        rawContent: '{"type":"user","text":"Source A owns this local id."}\n',
+      }),
+    );
+
+    expect(first.operation).toBe("inserted");
+    expect(second.operation).toBe("inserted");
+    expect(repeatedFirst.operation).toBe("unchanged");
+    expect(second.session.id).not.toBe(first.session.id);
+    expect(second.sourceBinding.id).not.toBe(first.sourceBinding.id);
+    expect(repeatedFirst.session.id).toBe(first.session.id);
+    expect(repeatedFirst.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+
+    const rows = await service.db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, workspaceId),
+          eq(sessions.harnessSessionId, "shared-local-session-id"),
+        ),
+      )
+      .orderBy(asc(sessions.sourceBindingId));
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((row) => row.sourceBindingId))).toEqual(
+      new Set([first.sourceBinding.id, second.sourceBinding.id]),
+    );
+  });
+
+  test("scopes same workspace locator fallback ids by source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-source-scoped-locator");
+    const baseInput = {
+      author: {
+        displayName: "Drew",
+        handle: "drew",
+      },
+      contentType: "jsonl",
+      harness: "claude",
+      locator: "/tmp/shared-local-fallback.jsonl",
+      model: "claude-fixture",
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:12:00.000Z",
+        host: {
+          id: "host-source-scoped-locator-a",
+          label: "source-a",
+        },
+        rawContent: '{"role":"user","content":"Source A fallback identity."}\n',
+      }),
+    );
+    const second = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:13:00.000Z",
+        host: {
+          id: "host-source-scoped-locator-b",
+          label: "source-b",
+        },
+        rawContent: '{"role":"user","content":"Source B fallback identity."}\n',
+      }),
+    );
+    const repeatedFirst = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        capturedAt: "2026-06-22T21:12:00.000Z",
+        host: {
+          id: "host-source-scoped-locator-a",
+          label: "source-a",
+        },
+        rawContent: '{"role":"user","content":"Source A fallback identity."}\n',
+      }),
+    );
+
+    expect(first.operation).toBe("inserted");
+    expect(second.operation).toBe("inserted");
+    expect(repeatedFirst.operation).toBe("unchanged");
+    expect(first.session.harnessSessionId).toBeNull();
+    expect(second.session.harnessSessionId).toBeNull();
+    expect(second.session.id).not.toBe(first.session.id);
+    expect(second.sourceBinding.id).not.toBe(first.sourceBinding.id);
+    expect(repeatedFirst.session.id).toBe(first.session.id);
+    expect(repeatedFirst.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
+
+    const rows = await service.db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, workspaceId),
+          eq(sessions.harness, "claude"),
+          isNull(sessions.harnessSessionId),
+        ),
+      );
+    const scopedRows = rows.filter(
+      (row) => row.sourceLocatorHash === first.session.sourceLocatorHash,
+    );
+    expect(scopedRows).toHaveLength(2);
+    expect(new Set(scopedRows.map((row) => row.sourceBindingId))).toEqual(
+      new Set([first.sourceBinding.id, second.sourceBinding.id]),
+    );
   });
 
   test("keeps same-handle host users distinct across host subjects", async () => {
@@ -1014,20 +1153,7 @@ describePostgres("raw session import", () => {
       rawContent:
         '{"role":"user","content":"Before concurrent growth"}\n{"role":"assistant","content":"Concurrent growth response"}\n',
     } as const;
-    const growingInputs = Array.from(
-      { length: 8 },
-      (_, index) =>
-        ({
-          ...growingInput,
-          author: {
-            handle: `drew-growing-${index}`,
-          },
-          host: {
-            id: `host-concurrent-growing-${index}`,
-            label: `concurrent-host-${index}`,
-          },
-        }) as const,
-    );
+    const growingInputs = Array.from({ length: 8 }, () => growingInput);
     const results = await Promise.all(
       growingInputs.map((callerInput) =>
         Effect.runPromise(importRawSessionRecord(db, callerInput)),
@@ -1922,19 +2048,7 @@ describePostgres("raw session import", () => {
         },
       ]),
     } as const;
-    const clearInputs = Array.from(
-      { length: 8 },
-      (_, index) =>
-        ({
-          ...clearInput,
-          author: {
-            handle: `drew-clear-${index}`,
-          },
-          host: {
-            id: `host-concurrent-clear-${index}`,
-          },
-        }) as const,
-    );
+    const clearInputs = Array.from({ length: 8 }, () => clearInput);
 
     const results = await runWithLockedActivityInterval(
       first.activityInterval.id,
@@ -2049,19 +2163,7 @@ describePostgres("raw session import", () => {
         },
       ]),
     } as const;
-    const idleInputs = Array.from(
-      { length: 8 },
-      (_, index) =>
-        ({
-          ...idleInput,
-          author: {
-            handle: `drew-idle-${index}`,
-          },
-          host: {
-            id: `host-concurrent-idle-${index}`,
-          },
-        }) as const,
-    );
+    const idleInputs = Array.from({ length: 8 }, () => idleInput);
 
     const results = await runWithLockedActivityInterval(
       first.activityInterval.id,
@@ -4855,6 +4957,161 @@ describePostgres("raw session import", () => {
       .from(sessionRelationships)
       .where(eq(sessionRelationships.workspaceId, workspaceId));
     expect(relationships).toHaveLength(0);
+  });
+
+  test("keeps same local relationship session ids separate across source bindings", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("relationship-source-local-id-collision");
+    const parentHarnessSessionId = "shared-local-parent-thread";
+    const childHarnessSessionId = "shared-local-child-thread";
+    const parentRawContent = (text: string) =>
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T18:20:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: parentHarnessSessionId,
+          },
+        },
+        {
+          timestamp: "2026-06-22T18:20:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        },
+      ]);
+    const childRawContent = (text: string) =>
+      codexTranscript([
+        {
+          timestamp: "2026-06-22T18:21:00.000Z",
+          type: "session_meta",
+          payload: {
+            agent_role: "subagent",
+            id: childHarnessSessionId,
+            parent_thread_id: parentHarnessSessionId,
+            thread_source: "subagent",
+          },
+        },
+        {
+          timestamp: "2026-06-22T18:21:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        },
+      ]);
+
+    const firstParent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:20:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: parentHarnessSessionId,
+        host: { id: "host-relationship-local-id-a" },
+        locator: "/tmp/source-a/shared-local-parent-thread.jsonl",
+        rawContent: parentRawContent("Parent from source A."),
+        workspaceId,
+      }),
+    );
+    const firstChild = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:21:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: childHarnessSessionId,
+        host: { id: "host-relationship-local-id-a" },
+        locator: "/tmp/source-a/shared-local-child-thread.jsonl",
+        rawContent: childRawContent("Child from source A."),
+        workspaceId,
+      }),
+    );
+    const secondChild = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:22:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: childHarnessSessionId,
+        host: { id: "host-relationship-local-id-b" },
+        locator: "/tmp/source-b/shared-local-child-thread.jsonl",
+        rawContent: childRawContent("Child from source B."),
+        workspaceId,
+      }),
+    );
+
+    expect(firstChild.session.id).not.toBe(secondChild.session.id);
+    expect(firstChild.sourceBinding.id).not.toBe(secondChild.sourceBinding.id);
+
+    let relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      sourceSessionId: firstParent.session.id,
+      targetSessionId: firstChild.session.id,
+    });
+
+    const secondParent = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-22T18:23:02.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: parentHarnessSessionId,
+        host: { id: "host-relationship-local-id-b" },
+        locator: "/tmp/source-b/shared-local-parent-thread.jsonl",
+        rawContent: parentRawContent("Parent from source B."),
+        workspaceId,
+      }),
+    );
+
+    expect(firstParent.session.id).not.toBe(secondParent.session.id);
+    expect(firstParent.sourceBinding.id).not.toBe(secondParent.sourceBinding.id);
+
+    relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(2);
+    expect(
+      relationships.map((relationship) => ({
+        sourceSessionId: relationship.sourceSessionId,
+        targetSessionId: relationship.targetSessionId,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          sourceSessionId: firstParent.session.id,
+          targetSessionId: firstChild.session.id,
+        },
+        {
+          sourceSessionId: secondParent.session.id,
+          targetSessionId: secondChild.session.id,
+        },
+      ]),
+    );
+    expect(
+      relationships.some(
+        (relationship) =>
+          relationship.sourceSessionId === firstParent.session.id &&
+          relationship.targetSessionId === secondChild.session.id,
+      ),
+    ).toBe(false);
+    expect(
+      relationships.some(
+        (relationship) =>
+          relationship.sourceSessionId === secondParent.session.id &&
+          relationship.targetSessionId === firstChild.session.id,
+      ),
+    ).toBe(false);
   });
 
   test("preserves Claude lifecycle payloads without creating turns", async () => {

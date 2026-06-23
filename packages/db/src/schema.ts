@@ -270,11 +270,11 @@ export const sessions = pgTable(
     index("sessions_author_started_idx").on(table.authorUserId, table.startedAt),
     index("sessions_source_binding_idx").on(table.sourceBindingId),
     uniqueIndex("sessions_id_workspace_unique").on(table.id, table.workspaceId),
-    uniqueIndex("sessions_workspace_harness_session_unique")
-      .on(table.workspaceId, table.harness, table.harnessSessionId)
+    uniqueIndex("sessions_workspace_source_harness_session_unique")
+      .on(table.workspaceId, table.sourceBindingId, table.harness, table.harnessSessionId)
       .where(sql`${table.harnessSessionId} is not null`),
-    uniqueIndex("sessions_workspace_harness_locator_unique")
-      .on(table.workspaceId, table.harness, table.sourceLocatorHash)
+    uniqueIndex("sessions_workspace_source_harness_locator_unique")
+      .on(table.workspaceId, table.sourceBindingId, table.harness, table.sourceLocatorHash)
       .where(sql`${table.harnessSessionId} is null and ${table.sourceLocatorHash} is not null`),
     foreignKey({
       columns: [table.sourceBindingId, table.workspaceId],

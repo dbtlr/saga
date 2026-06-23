@@ -57,6 +57,13 @@
       "when": 1782181974711,
       "tag": "0007_calm_meltdown",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782182790863,
+      "tag": "0008_premium_slayback",
+      "breakpoints": true
     }
   ]
 }

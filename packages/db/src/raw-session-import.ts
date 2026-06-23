@@ -435,7 +435,13 @@ async function findCurrentNoopRawSessionImport(
     transcriptNormalization?: TranscriptNormalization | undefined;
   },
 ): Promise<RawSessionImportResult | undefined> {
-  const session = await findSessionWithoutAdoption(tx, input.input);
+  const sourceBinding = await findCurrentRawSessionSourceBinding(tx, input.input);
+  if (sourceBinding === undefined) return undefined;
+
+  const session = await findSessionWithoutAdoption(tx, {
+    input: input.input,
+    sourceBindingId: sourceBinding.id,
+  });
   if (session === undefined) return undefined;
 
   const [activeRecord] = await tx
@@ -471,9 +477,7 @@ async function findCurrentNoopRawSessionImport(
   const authorUser = await findCurrentHostUser(tx, input.input);
   if (authorUser === undefined || session.authorUserId !== authorUser.id) return undefined;
 
-  const sourceBinding = await findCurrentRawSessionSourceBinding(tx, input.input);
   if (
-    sourceBinding === undefined ||
     session.sourceBindingId !== sourceBinding.id ||
     existingRecord.sourceBindingId !== sourceBinding.id ||
     existingRecord.authorUserId !== authorUser.id
@@ -1448,33 +1452,38 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
 
 async function findSessionWithoutAdoption(
   tx: DatabaseService["db"],
-  input: NormalizedRawSessionImportInput,
+  input: {
+    input: NormalizedRawSessionImportInput;
+    sourceBindingId: string;
+  },
 ): Promise<Session | undefined> {
-  if (input.harnessSessionId !== undefined) {
+  if (input.input.harnessSessionId !== undefined) {
     const [session] = await tx
       .select()
       .from(sessions)
       .where(
         and(
-          eq(sessions.workspaceId, input.workspaceId),
-          eq(sessions.harness, input.harness),
-          eq(sessions.harnessSessionId, input.harnessSessionId),
+          eq(sessions.workspaceId, input.input.workspaceId),
+          eq(sessions.sourceBindingId, input.sourceBindingId),
+          eq(sessions.harness, input.input.harness),
+          eq(sessions.harnessSessionId, input.input.harnessSessionId),
         ),
       )
       .limit(1);
     if (session !== undefined) return session;
   }
 
-  if (input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) return undefined;
   const [session] = await tx
     .select()
     .from(sessions)
     .where(
       and(
-        eq(sessions.workspaceId, input.workspaceId),
-        eq(sessions.harness, input.harness),
+        eq(sessions.workspaceId, input.input.workspaceId),
+        eq(sessions.sourceBindingId, input.sourceBindingId),
+        eq(sessions.harness, input.input.harness),
         isNull(sessions.harnessSessionId),
-        eq(sessions.sourceLocatorHash, input.sourceLocatorHash),
+        eq(sessions.sourceLocatorHash, input.input.sourceLocatorHash),
       ),
     )
     .limit(1);
@@ -1483,41 +1492,46 @@ async function findSessionWithoutAdoption(
 
 async function findSession(
   tx: DatabaseService["db"],
-  input: NormalizedRawSessionImportInput,
+  input: {
+    input: NormalizedRawSessionImportInput;
+    sourceBindingId: string;
+  },
 ): Promise<Session | undefined> {
-  if (input.harnessSessionId !== undefined) {
+  if (input.input.harnessSessionId !== undefined) {
     const [session] = await tx
       .select()
       .from(sessions)
       .where(
         and(
-          eq(sessions.workspaceId, input.workspaceId),
-          eq(sessions.harness, input.harness),
-          eq(sessions.harnessSessionId, input.harnessSessionId),
+          eq(sessions.workspaceId, input.input.workspaceId),
+          eq(sessions.sourceBindingId, input.sourceBindingId),
+          eq(sessions.harness, input.input.harness),
+          eq(sessions.harnessSessionId, input.input.harnessSessionId),
         ),
       )
       .limit(1);
     if (session !== undefined) return session;
   }
 
-  if (input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) return undefined;
   const [session] = await tx
     .select()
     .from(sessions)
     .where(
       and(
-        eq(sessions.workspaceId, input.workspaceId),
-        eq(sessions.harness, input.harness),
+        eq(sessions.workspaceId, input.input.workspaceId),
+        eq(sessions.sourceBindingId, input.sourceBindingId),
+        eq(sessions.harness, input.input.harness),
         isNull(sessions.harnessSessionId),
-        eq(sessions.sourceLocatorHash, input.sourceLocatorHash),
+        eq(sessions.sourceLocatorHash, input.input.sourceLocatorHash),
       ),
     )
     .limit(1);
-  if (session !== undefined && input.harnessSessionId !== undefined) {
+  if (session !== undefined && input.input.harnessSessionId !== undefined) {
     const [adoptedSession] = await tx
       .update(sessions)
       .set({
-        harnessSessionId: input.harnessSessionId,
+        harnessSessionId: input.input.harnessSessionId,
         updatedAt: new Date(),
       })
       .where(eq(sessions.id, session.id))
@@ -1540,7 +1554,10 @@ async function resolveSession(
     sourceBindingId: string;
   },
 ): Promise<Session> {
-  const existingSession = await findSession(tx, input.input);
+  const existingSession = await findSession(tx, {
+    input: input.input,
+    sourceBindingId: input.sourceBindingId,
+  });
   return (
     existingSession ??
     (await insertSession(tx, {
@@ -1580,19 +1597,32 @@ async function insertSession(
     input.input.harnessSessionId === undefined
       ? await insert
           .onConflictDoNothing({
-            target: [sessions.workspaceId, sessions.harness, sessions.sourceLocatorHash],
+            target: [
+              sessions.workspaceId,
+              sessions.sourceBindingId,
+              sessions.harness,
+              sessions.sourceLocatorHash,
+            ],
             where: sql`${sessions.harnessSessionId} is null and ${sessions.sourceLocatorHash} is not null`,
           })
           .returning()
       : await insert
           .onConflictDoNothing({
-            target: [sessions.workspaceId, sessions.harness, sessions.harnessSessionId],
+            target: [
+              sessions.workspaceId,
+              sessions.sourceBindingId,
+              sessions.harness,
+              sessions.harnessSessionId,
+            ],
             where: sql`${sessions.harnessSessionId} is not null`,
           })
           .returning();
   if (insertedSession !== undefined) return insertedSession;
 
-  const session = await findSession(tx, input.input);
+  const session = await findSession(tx, {
+    input: input.input,
+    sourceBindingId: input.sourceBindingId,
+  });
   if (session === undefined) {
     throw new RawSessionImportError({ message: "session insert returned no row" });
   }
@@ -2437,6 +2467,8 @@ function isRetryableImportConflict(cause: unknown): boolean {
     conflict.constraint === "raw_session_records_session_content_hash_unique" ||
     conflict.constraint === "raw_session_records_session_snapshot_unique" ||
     conflict.constraint === "sessions_workspace_harness_locator_unique" ||
-    conflict.constraint === "sessions_workspace_harness_session_unique"
+    conflict.constraint === "sessions_workspace_harness_session_unique" ||
+    conflict.constraint === "sessions_workspace_source_harness_locator_unique" ||
+    conflict.constraint === "sessions_workspace_source_harness_session_unique"
   );
 }
