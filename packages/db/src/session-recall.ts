@@ -1,6 +1,7 @@
 import type { EmbeddingProviderBoundary } from "@saga/runtime";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
+import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -1063,6 +1064,10 @@ function mapContextRows(
         tokenStart: row.expanded_segment_token_start,
       });
     }
+  }
+
+  for (const turn of turns.values()) {
+    turn.contentParts = safeContentPartsForSkippedSegments(turn.contentParts, turn.segments);
   }
 
   return {

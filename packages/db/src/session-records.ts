@@ -1,5 +1,6 @@
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
+import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
 
 const DEFAULT_RECENT_LIMIT = 20;
 const MAX_RECENT_LIMIT = 100;
@@ -744,6 +745,33 @@ export function getSessionDetail(
       const visibleSegmentRows = segmentRows.filter(
         (row) => Number(row.segment_rank) <= maxSegmentsPerTurn,
       );
+      const skippedSegmentRows =
+        turnIds.length === 0
+          ? []
+          : await service.sql<SegmentRow[]>`
+              select
+                ss.turn_id as segment_turn_id,
+                ss.id as segment_id,
+                ss.ordinal as segment_ordinal,
+                ss.segment_kind as segment_kind,
+                ss.search_text as segment_search_text,
+                ss.snippet as segment_snippet,
+                ss.token_start as segment_token_start,
+                ss.token_end as segment_token_end,
+                ss.char_start as segment_char_start,
+                ss.char_end as segment_char_end,
+                ss.metadata as segment_metadata,
+                0 as segment_rank
+              from session_segments ss
+              where ss.workspace_id = ${workspaceId}
+                and ss.turn_id = any(${turnIds}::uuid[])
+                and (
+                  ss.segment_kind in ('turn_skipped', 'tool_group_skipped')
+                  or ss.metadata->>'segmentStatus' = 'skipped'
+                  or ss.metadata->>'omittedSearchText' = 'true'
+                )
+              order by ss.turn_id asc, ss.ordinal asc
+            `;
 
       return {
         activeRawSessionRecord,
@@ -751,6 +779,7 @@ export function getSessionDetail(
           activityIntervalRows,
           visibleTurnRows,
           visibleSegmentRows,
+          skippedSegmentRows,
         ),
         authorUser: mapAuthor(metadata),
         limits: {
@@ -798,6 +827,7 @@ function groupActivityIntervals(
   intervalRows: readonly ActivityIntervalRow[],
   turnRows: readonly TurnRow[],
   segmentRows: readonly SegmentRow[],
+  skippedSegmentRows: readonly SegmentRow[],
 ): SessionDetailActivityInterval[] {
   const segmentsByTurn = new Map<string, SessionDetailSegment[]>();
   for (const row of segmentRows) {
@@ -806,16 +836,27 @@ function groupActivityIntervals(
     segmentsByTurn.set(row.segment_turn_id, existing);
   }
 
+  const skippedSegmentsByTurn = new Map<string, SessionDetailSegment[]>();
+  for (const row of skippedSegmentRows) {
+    const existing = skippedSegmentsByTurn.get(row.segment_turn_id) ?? [];
+    existing.push(mapSegment(row));
+    skippedSegmentsByTurn.set(row.segment_turn_id, existing);
+  }
+
   const turnsByInterval = new Map<string, SessionDetailTurn[]>();
   for (const row of turnRows) {
     const existing = turnsByInterval.get(row.activity_interval_id) ?? [];
+    const segments = segmentsByTurn.get(row.turn_id) ?? [];
     existing.push({
-      contentParts: row.turn_content_parts,
+      contentParts: safeContentPartsForSkippedSegments(
+        row.turn_content_parts,
+        skippedSegmentsByTurn.get(row.turn_id) ?? segments,
+      ),
       endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
       metadata: row.turn_metadata,
       rawEventIds: row.turn_raw_event_ids,
       rawSpan: row.turn_raw_span,
-      segments: segmentsByTurn.get(row.turn_id) ?? [],
+      segments,
       startedAt: normalizeNullableTimestamp(row.turn_started_at, "turn.startedAt"),
       turn: mapTurn(row),
     });

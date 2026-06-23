@@ -12,7 +12,7 @@ import {
   type RecentSessionRecord,
   type SessionDetail,
 } from "./session-records.js";
-import { searchSessionRecall } from "./session-recall.js";
+import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
 import {
   activityIntervals,
   rawSessionRecords,
@@ -4220,6 +4220,45 @@ describePostgres("raw session import", () => {
       }),
     );
     expect(omittedLogRecall.matchCount).toBe(0);
+
+    const detail = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: result.session.id,
+        maxSegmentsPerTurn: 1,
+        workspaceId,
+      }),
+    );
+    const detailTurns = detail.activityIntervals.flatMap((interval) => interval.turns);
+    const detailContent = JSON.stringify(detailTurns.map((turn) => turn.contentParts));
+    expect(detailContent).toContain("skipped_segment_payload");
+    expect(detailContent).toContain("huge_raw_log");
+    expect(detailContent).toContain("secret");
+    expect(detailContent).not.toContain("supersecretfixture");
+    expect(detailContent).not.toContain(base64Blob);
+    expect(detailContent).not.toContain("noisy log line 42");
+    expect(detailContent).not.toContain("added generated line");
+    expect(detailContent).not.toContain("routeTree");
+
+    const anchorSegment = segments[0];
+    if (anchorSegment === undefined) throw new Error("expected a searchable anchor segment");
+
+    const expansion = await Effect.runPromise(
+      expandRecallContext(service, {
+        afterTurns: 20,
+        beforeTurns: 0,
+        segmentId: anchorSegment.id,
+        workspaceId,
+      }),
+    );
+    const expansionContent = JSON.stringify(expansion.turns.map((turn) => turn.contentParts));
+    expect(expansionContent).toContain("skipped_segment_payload");
+    expect(expansionContent).toContain("huge_raw_log");
+    expect(expansionContent).toContain("secret");
+    expect(expansionContent).not.toContain("supersecretfixture");
+    expect(expansionContent).not.toContain(base64Blob);
+    expect(expansionContent).not.toContain("noisy log line 42");
+    expect(expansionContent).not.toContain("added generated line");
+    expect(expansionContent).not.toContain("routeTree");
   });
 
   test("imports Claude sidechain subagent transcripts as separate sessions from an explicit parent id", async () => {
