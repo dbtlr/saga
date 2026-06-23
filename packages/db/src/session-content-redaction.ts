@@ -68,7 +68,9 @@ function hasSkippedObservability(segment: SkippedContentSegment, metadata: JsonR
   return (
     (segment.segmentKind !== null && SKIPPED_SEGMENT_KINDS.has(segment.segmentKind)) ||
     metadata.segmentStatus === "skipped" ||
-    metadata.omittedSearchText === true
+    metadata.omittedSearchText === true ||
+    readSkippedPartCount(metadata) > 0 ||
+    readFilterReasons(metadata).length > 0
   );
 }
 

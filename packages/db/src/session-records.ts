@@ -769,6 +769,30 @@ export function getSessionDetail(
                   ss.segment_kind in ('turn_skipped', 'tool_group_skipped')
                   or ss.metadata->>'segmentStatus' = 'skipped'
                   or ss.metadata->>'omittedSearchText' = 'true'
+                  or (
+                    jsonb_typeof(ss.metadata->'skippedPartCount') = 'number'
+                    and (ss.metadata->>'skippedPartCount')::int > 0
+                  )
+                  or (
+                    jsonb_typeof(ss.metadata->'filters') = 'array'
+                    and jsonb_array_length(ss.metadata->'filters') > 0
+                  )
+                  or (
+                    jsonb_typeof(ss.metadata->'filterReasons') = 'array'
+                    and jsonb_array_length(ss.metadata->'filterReasons') > 0
+                  )
+                  or (
+                    jsonb_typeof(ss.metadata#>'{toolGroup,skippedPartCount}') = 'number'
+                    and (ss.metadata#>>'{toolGroup,skippedPartCount}')::int > 0
+                  )
+                  or (
+                    jsonb_typeof(ss.metadata#>'{toolGroup,filters}') = 'array'
+                    and jsonb_array_length(ss.metadata#>'{toolGroup,filters}') > 0
+                  )
+                  or (
+                    jsonb_typeof(ss.metadata#>'{toolGroup,filterReasons}') = 'array'
+                    and jsonb_array_length(ss.metadata#>'{toolGroup,filterReasons}') > 0
+                  )
                 )
               order by ss.turn_id asc, ss.ordinal asc
             `;

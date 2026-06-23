@@ -3980,6 +3980,114 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("omits mixed skipped turn content parts from detail and recall expansion", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("segment-mixed-skipped-content");
+    const safeText = "Mixed safe searchable anchor context.";
+    const omittedNeedle = "sk-mixedskippedsecretneedle1234567890";
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-22T18:07:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "codex-mixed-skipped-content-session",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:07:01.000Z",
+        type: "turn_context",
+        payload: {
+          model: "gpt-5-codex",
+          turn_id: "turn-mixed-skipped-content",
+        },
+      },
+      {
+        timestamp: "2026-06-22T18:07:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: safeText },
+            { type: "input_text", text: `api_key=${omittedNeedle}` },
+          ],
+          metadata: { turn_id: "turn-mixed-skipped-content" },
+        },
+      },
+    ]);
+
+    const result = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-22T18:07:03.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        host: {
+          id: "host-mixed-skipped-content",
+        },
+        locator: "/tmp/codex-mixed-skipped-content.jsonl",
+        rawContent,
+        workspaceId,
+      }),
+    );
+
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
+      .orderBy(asc(sessionSegments.ordinal));
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.segmentKind).toBe("turn");
+    expect(segments[0]?.searchText).toContain(safeText);
+    expect(segments[0]?.searchText).not.toContain(omittedNeedle);
+    expect(segments[0]?.metadata).toMatchObject({
+      filters: [
+        {
+          reason: "secret",
+          type: "text",
+        },
+      ],
+      skippedPartCount: 1,
+    });
+
+    const detail = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: result.session.id,
+        maxSegmentsPerTurn: 1,
+        workspaceId,
+      }),
+    );
+    const detailTurns = detail.activityIntervals.flatMap((interval) => interval.turns);
+    const detailContent = JSON.stringify(detailTurns.map((turn) => turn.contentParts));
+    expect(detailContent).toContain("skipped_segment_payload");
+    expect(detailContent).toContain("secret");
+    expect(detailContent).toContain("skippedPartCount");
+    expect(detailContent).not.toContain(omittedNeedle);
+
+    const anchorSegment = segments[0];
+    if (anchorSegment === undefined) throw new Error("expected a searchable anchor segment");
+
+    const expansion = await Effect.runPromise(
+      expandRecallContext(service, {
+        afterTurns: 0,
+        beforeTurns: 0,
+        segmentId: anchorSegment.id,
+        workspaceId,
+      }),
+    );
+    const expansionContent = JSON.stringify(expansion.turns.map((turn) => turn.contentParts));
+    expect(expansionContent).toContain("skipped_segment_payload");
+    expect(expansionContent).toContain("secret");
+    expect(expansionContent).toContain("skippedPartCount");
+    expect(expansionContent).not.toContain(omittedNeedle);
+    expect(
+      expansion.turns.flatMap((turn) => turn.segments).map((segment) => segment.searchText),
+    ).toContain(safeText);
+  });
+
   test("filters low-signal and high-risk content from lexical segments", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("segment-filter");
