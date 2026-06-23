@@ -71,11 +71,14 @@ describe("runRecallCommand", () => {
     expect(records).toContain("Match 1");
     expect(records).toContain("segment-id");
     expect(records).toContain("scores");
+    expect(records).toContain("[local-path-redacted]");
     expect(records).toContain("raw provenance");
     expect(records).toContain("source type");
     expect(records).not.toContain("raw transcript body");
     expect(records).not.toContain("source locator");
     expect(records).not.toContain("file:///tmp/session.jsonl");
+    expect(records).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
+    expect(records).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
     expect(records).not.toContain("projectRoot");
     expect(records).not.toContain("/work/saga");
 
@@ -160,8 +163,11 @@ describe("runRecallCommand", () => {
     expect(output).toContain("1 before / 3 after");
     expect(output).toContain("provenance");
     expect(output).toContain("expanded segment text");
+    expect(output).toContain("[local-path-redacted]");
     expect(output).not.toContain("raw transcript body");
     expect(output).not.toContain("file:///tmp/session.jsonl");
+    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
+    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
     expect(output).not.toContain("projectRoot");
     expect(output).not.toContain("/work/saga");
   });
@@ -222,6 +228,7 @@ describe("runRecallCommand", () => {
       anchor: {
         segment: {
           id: "segment-id",
+          snippet: "lexical recall matched snippet from [local-path-redacted]",
         },
       },
       rawSessionRecord: {
@@ -235,6 +242,32 @@ describe("runRecallCommand", () => {
         },
       },
     });
+    expect(output).toContain("[local-path-redacted]");
+    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
+    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
+  });
+
+  test("redacts local paths from structured recall search segment snippets", async () => {
+    const projectRoot = boundProject();
+    const output = await runRecallCommand(["search", "lexical", "--no-embeddings"], renderOptions, {
+      cwd: projectRoot,
+      searchRecall: async () => recallSearchResult(),
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      sessions: [
+        {
+          matches: [
+            {
+              snippet: "lexical recall matched snippet from [local-path-redacted]",
+            },
+          ],
+        },
+      ],
+    });
+    expect(output).toContain("[local-path-redacted]");
+    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
+    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
   });
 
   test("does not backfill host into a no-host binding", async () => {
@@ -325,7 +358,8 @@ function recallSearchResult(
     },
     segment: segmentPointer(),
     session: session(now),
-    snippet: "lexical recall matched snippet",
+    snippet:
+      "lexical recall matched snippet from file:///Users/example/.codex/transcripts/session.jsonl",
     sourceBinding: sourceBinding(),
     turn: turnPointer(),
   };
@@ -386,7 +420,8 @@ function recallContextExpansion(): RecallContextExpansion {
             metadata: {
               source: "fixture",
             },
-            searchText: "expanded segment text",
+            searchText:
+              "expanded segment text from /Users/example/.codex/transcripts/session.jsonl and file:///Users/example/.codex/transcripts/session.jsonl",
           },
         ],
         startedAt: now,
@@ -503,7 +538,7 @@ function segmentPointer(): RecallSearchResult["sessions"][number]["matches"][num
     id: "segment-id",
     ordinal: 0,
     segmentKind: "turn",
-    snippet: "lexical recall matched snippet",
+    snippet: "lexical recall matched snippet from /Users/example/.codex/transcripts/session.jsonl",
     tokenEnd: 4,
     tokenStart: 0,
   };

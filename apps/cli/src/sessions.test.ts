@@ -357,8 +357,38 @@ describe("runSessionsCommand", () => {
     expect(output).toContain("Bounds");
     expect(output).toContain("[local-path-redacted]");
     expect(output).not.toContain("/tmp/session.jsonl");
+    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
+    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
     expect(output).not.toContain("/work/saga");
     expect(output).not.toContain("file://");
+  });
+
+  test("redacts local paths from sessions show structured segment text", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(["show", "session-id"], renderOptions, {
+      cwd: projectRoot,
+      getDetail: async () => sessionDetail(),
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      activityIntervals: [
+        {
+          turns: [
+            {
+              segments: [
+                {
+                  searchText: "Hello from [local-path-redacted] and [local-path-redacted]",
+                  snippet: "Hello from [local-path-redacted]",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(output).toContain("[local-path-redacted]");
+    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
+    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
   });
 
   test("omits raw body fields by default when showing session detail", async () => {
@@ -785,7 +815,12 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
         },
         turns: [
           {
-            contentParts: [{ type: "text", text: "Hello" }],
+            contentParts: [
+              {
+                type: "text",
+                text: "Hello from /Users/example/.codex/transcripts/session.jsonl",
+              },
+            ],
             endedAt: null,
             metadata: {
               cwd: "/work/saga",
@@ -794,14 +829,15 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
             rawSpan: {},
             segments: [
               {
-                charEnd: 5,
+                charEnd: 108,
                 charStart: 0,
                 id: "segment-id",
                 metadata: {},
                 ordinal: 0,
-                searchText: "Hello",
+                searchText:
+                  "Hello from /Users/example/.codex/transcripts/session.jsonl and file:///Users/example/.codex/transcripts/session.jsonl",
                 segmentKind: "turn",
-                snippet: "Hello",
+                snippet: "Hello from /Users/example/.codex/transcripts/session.jsonl",
                 tokenEnd: 1,
                 tokenStart: 0,
               },

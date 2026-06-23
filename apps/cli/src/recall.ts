@@ -313,7 +313,7 @@ function renderMatch(
       { label: "scores", value: formatScores(match.scores) },
       { label: "tokens", value: formatRange(match.segment.tokenStart, match.segment.tokenEnd) },
       { label: "chars", value: formatRange(match.segment.charStart, match.segment.charEnd) },
-      { label: "snippet", value: stripTsHeadline(match.snippet) },
+      { label: "snippet", value: safeText(stripTsHeadline(match.snippet)) },
       { label: "raw provenance", value: compactJson(match.rawSessionRecord.provenance) },
       { label: "source", value: match.sourceBinding.sourceUri },
       { label: "source type", value: match.sourceBinding.sourceType },
@@ -446,8 +446,8 @@ function renderExpandedSegment(
       { label: "kind", value: segment.segmentKind },
       { label: "tokens", value: formatRange(segment.tokenStart, segment.tokenEnd) },
       { label: "chars", value: formatRange(segment.charStart, segment.charEnd) },
-      { label: "snippet", value: segment.snippet ?? "none" },
-      { label: "text", value: truncate(segment.searchText, 360) },
+      { label: "snippet", value: segment.snippet === null ? "none" : safeText(segment.snippet) },
+      { label: "text", value: truncate(safeText(segment.searchText), 360) },
     ],
     options,
   );
@@ -579,6 +579,11 @@ function formatContextWindow(result: RecallContextExpansion): string {
 function compactJson(value: unknown): string {
   const json = JSON.stringify(redactAgentFacingSessionValue(value));
   return json === undefined ? "undefined" : truncate(json, 220);
+}
+
+function safeText(value: string): string {
+  const redacted = redactAgentFacingSessionValue(value);
+  return typeof redacted === "string" ? redacted : "";
 }
 
 function formatDate(value: Date | string | null): string {

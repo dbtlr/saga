@@ -700,8 +700,8 @@ function renderSegment(segment: SessionDetailSegment, options: RenderOptions): s
       { label: "kind", value: segment.segmentKind },
       { label: "tokens", value: formatRange(segment.tokenStart, segment.tokenEnd) },
       { label: "chars", value: formatRange(segment.charStart, segment.charEnd) },
-      { label: "snippet", value: segment.snippet ?? "none" },
-      { label: "text", value: truncate(segment.searchText, 280) },
+      { label: "snippet", value: segment.snippet === null ? "none" : safeText(segment.snippet) },
+      { label: "text", value: truncate(safeText(segment.searchText), 280) },
       { label: "metadata", value: safeCompactJson(segment.metadata) },
     ],
     options,
@@ -875,6 +875,11 @@ function safeString(value: string | null | undefined): string {
   if (value === null || value === undefined) return "none";
   const redacted = redactAgentFacingSessionValue(value);
   return typeof redacted === "string" ? redacted : "none";
+}
+
+function safeText(value: string): string {
+  const redacted = redactAgentFacingSessionValue(value);
+  return typeof redacted === "string" ? redacted : "";
 }
 
 function formatDate(value: Date | null): string {
