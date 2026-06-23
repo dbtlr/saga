@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
 import { Effect } from "effect";
@@ -11,7 +13,12 @@ import {
   listActiveContextClaims,
   listCurrentClaims,
 } from "./claim.js";
-import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
+import {
+  DEFAULT_MIGRATIONS_FOLDER,
+  makeDatabase,
+  runMigrations,
+  type DatabaseService,
+} from "./database.js";
 import {
   insertRawEvent,
   listCodexActivationRawEvents,
@@ -45,6 +52,8 @@ import {
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
+
+class RollbackMigrationFixture extends Error {}
 
 describePostgres("postgres integration", () => {
   const databaseName = `saga_test_${Date.now().toString(36)}`;
@@ -201,6 +210,201 @@ describePostgres("postgres integration", () => {
     expect(profile?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.workspaceId).toBe(workspace.id);
     expect(sourceBinding?.enabled).toBe(true);
+  });
+
+  test("enforces user identity uniqueness with nullable external subjects", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `user-identity-${Date.now().toString(36)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    await service.db.insert(users).values({
+      handle: "drew",
+      identitySource: "host",
+      workspaceId: workspace.id,
+    });
+
+    await expect(
+      service.db.insert(users).values({
+        handle: "drew",
+        identitySource: "host",
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    await service.db.insert(users).values({
+      externalSubject: "host-1",
+      handle: "drew",
+      identitySource: "host",
+      workspaceId: workspace.id,
+    });
+
+    await expect(
+      service.db.insert(users).values({
+        externalSubject: "host-1",
+        handle: "drew",
+        identitySource: "host",
+        workspaceId: workspace.id,
+      }),
+    ).rejects.toThrow();
+
+    const [otherHost] = await service.db
+      .insert(users)
+      .values({
+        externalSubject: "host-2",
+        handle: "drew",
+        identitySource: "host",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    expect(otherHost?.externalSubject).toBe("host-2");
+  });
+
+  test("deduplicates existing nullable external-subject users before adding the unique constraint", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+
+    try {
+      await service.sql.begin(async (tx) => {
+        await tx`ALTER TABLE "users" DROP CONSTRAINT "users_workspace_identity_handle_external_unique"`;
+        await tx`CREATE UNIQUE INDEX "users_workspace_identity_handle_external_unique" ON "users" USING btree ("workspace_id","identity_source","handle","external_subject")`;
+
+        const [workspace] = await tx<{ id: string }[]>`
+          INSERT INTO "workspaces" ("handle")
+          VALUES (${`user-identity-migration-${Date.now().toString(36)}`})
+          RETURNING "id"
+        `;
+        if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+        const [sourceBinding] = await tx<{ id: string }[]>`
+          INSERT INTO "source_bindings" ("workspace_id", "source_type", "source_uri")
+          VALUES (${workspace.id}, 'codex', 'codex://migration-fixture')
+          RETURNING "id"
+        `;
+        if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+
+        const [canonicalUser] = await tx<{ id: string }[]>`
+          INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
+          VALUES (${workspace.id}, 'drew', 'host', '2026-06-21T00:00:00.000Z')
+          RETURNING "id"
+        `;
+        if (canonicalUser === undefined) throw new Error("canonical user insert returned no row");
+
+        const [duplicateUser] = await tx<{ id: string }[]>`
+          INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
+          VALUES (${workspace.id}, 'drew', 'host', '2026-06-22T00:00:00.000Z')
+          RETURNING "id"
+        `;
+        if (duplicateUser === undefined) throw new Error("duplicate user insert returned no row");
+
+        const [canonicalSession] = await tx<{ id: string }[]>`
+          INSERT INTO "sessions" (
+            "workspace_id",
+            "source_binding_id",
+            "author_user_id",
+            "harness",
+            "harness_session_id"
+          )
+          VALUES (${workspace.id}, ${sourceBinding.id}, ${canonicalUser.id}, 'codex', 'canonical-session')
+          RETURNING "id"
+        `;
+        if (canonicalSession === undefined)
+          throw new Error("canonical session insert returned no row");
+
+        const [duplicateSession] = await tx<{ id: string }[]>`
+          INSERT INTO "sessions" (
+            "workspace_id",
+            "source_binding_id",
+            "author_user_id",
+            "harness",
+            "harness_session_id"
+          )
+          VALUES (${workspace.id}, ${sourceBinding.id}, ${duplicateUser.id}, 'codex', 'duplicate-session')
+          RETURNING "id"
+        `;
+        if (duplicateSession === undefined)
+          throw new Error("duplicate session insert returned no row");
+
+        await tx`
+          INSERT INTO "raw_session_records" (
+            "workspace_id",
+            "session_id",
+            "source_binding_id",
+            "author_user_id",
+            "snapshot_ordinal",
+            "harness",
+            "content_type",
+            "content_hash"
+          )
+          VALUES
+            (
+              ${workspace.id},
+              ${canonicalSession.id},
+              ${sourceBinding.id},
+              ${canonicalUser.id},
+              0,
+              'codex',
+              'jsonl',
+              'sha256:canonical'
+            ),
+            (
+              ${workspace.id},
+              ${duplicateSession.id},
+              ${sourceBinding.id},
+              ${duplicateUser.id},
+              0,
+              'codex',
+              'jsonl',
+              'sha256:duplicate'
+            )
+        `;
+
+        const migrationSql = readFileSync(
+          join(DEFAULT_MIGRATIONS_FOLDER, "0007_calm_meltdown.sql"),
+          "utf8",
+        );
+        for (const statement of migrationSql
+          .split("--> statement-breakpoint")
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0)) {
+          await tx.unsafe(statement);
+        }
+
+        const nullableUsers = await tx<{ id: string }[]>`
+          SELECT "id"
+          FROM "users"
+          WHERE "workspace_id" = ${workspace.id}
+            AND "identity_source" = 'host'
+            AND "handle" = 'drew'
+            AND "external_subject" IS NULL
+        `;
+        expect(nullableUsers).toEqual([{ id: canonicalUser.id }]);
+
+        const sessionAuthors = await tx<{ author_user_id: string }[]>`
+          SELECT DISTINCT "author_user_id"
+          FROM "sessions"
+          WHERE "workspace_id" = ${workspace.id}
+        `;
+        expect(sessionAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
+
+        const rawRecordAuthors = await tx<{ author_user_id: string }[]>`
+          SELECT DISTINCT "author_user_id"
+          FROM "raw_session_records"
+          WHERE "workspace_id" = ${workspace.id}
+        `;
+        expect(rawRecordAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
+
+        throw new RollbackMigrationFixture();
+      });
+    } catch (error) {
+      if (!(error instanceof RollbackMigrationFixture)) {
+        throw error;
+      }
+    }
   });
 
   test("persists phase-one session capture records and enforces one active raw snapshot", async () => {
