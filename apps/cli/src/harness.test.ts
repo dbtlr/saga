@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  classifyClaudeActivationEvidence,
   classifyCodexActivationEvidence,
   installHarness,
   inspectHarness,
@@ -822,6 +823,69 @@ describe("classifyCodexActivationEvidence", () => {
   });
 });
 
+describe("classifyClaudeActivationEvidence", () => {
+  const checkedAt = new Date("2026-06-22T12:00:00.000Z");
+
+  test("proves activation from recent real Claude Code hook events", () => {
+    const status = classifyClaudeActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "claude.SessionStart",
+          occurredAt: "2026-06-22T11:00:00.000Z",
+          payload: { hook_event_name: "SessionStart", source: "startup" },
+          provenance: { hookEventName: "SessionStart" },
+          sourceType: "claude",
+        }),
+        rawActivationEvent({
+          eventType: "claude.UserPromptSubmit",
+          occurredAt: "2026-06-22T11:15:00.000Z",
+          payload: { hook_event_name: "UserPromptSubmit" },
+          provenance: { hookEventName: "UserPromptSubmit" },
+          sourceType: "claude",
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("active");
+    expect(status.detail).toContain("recent Claude Code hook raw_event found");
+    expect(status.sessionStartSources.observed).toEqual(["startup"]);
+    expect(status.sessionStartSources.unproven).toEqual(["resume", "clear", "compact"]);
+  });
+
+  test("distinguishes stale Claude Code hook evidence", () => {
+    const status = classifyClaudeActivationEvidence({
+      checkedAt,
+      events: [
+        rawActivationEvent({
+          eventType: "claude.UserPromptSubmit",
+          occurredAt: "2026-06-20T11:15:00.000Z",
+          payload: { hook_event_name: "UserPromptSubmit" },
+          provenance: { hookEventName: "UserPromptSubmit" },
+          sourceType: "claude",
+        }),
+      ],
+    });
+
+    expect(status.state).toBe("stale");
+    expect(status.detail).toContain("latest real Claude Code hook raw_event is stale");
+    expect(status.nextStep).toContain("run saga harness status claude again");
+  });
+
+  test("reports no evidence for installed Claude Code hooks without raw events", () => {
+    const status = classifyClaudeActivationEvidence({
+      checkedAt,
+      events: [],
+    });
+
+    expect(status.state).toBe("no-evidence");
+    expect(status.detail).toContain("no Claude Code SessionStart/UserPromptSubmit raw_events");
+    expect(status.nextStep).toBe(
+      "start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again",
+    );
+  });
+});
+
 describe("inspectHarnessWithActivation", () => {
   test("promotes Codex pending trust to configured when recent hook evidence proves activation", async () => {
     const projectRoot = boundProject();
@@ -910,6 +974,103 @@ describe("inspectHarnessWithActivation", () => {
     expect(status.hookTrust).toBe("requires review");
     expect(status.stateDetail).toContain("local binding host id is missing");
     expect(status.activation.state).toBe("active");
+  });
+
+  test("reports missing Claude Code binding before checking raw-event evidence", async () => {
+    const projectRoot = boundProject();
+
+    const status = await inspectHarnessWithActivation({
+      cwd: projectRoot,
+      target: "claude",
+    });
+
+    expect(status.state).toBe("missing");
+    expect(status.activation.state).toBe("missing-binding");
+    expect(status.activation.detail).toBe(
+      "Claude Code harness source binding is missing; run saga harness install claude",
+    );
+    expect(status.nextStep).toBe(
+      "run saga init and saga harness install claude before checking activation",
+    );
+  });
+
+  test("reports missing Claude Code hooks separately from no evidence", async () => {
+    const projectRoot = boundProject();
+    const binding = readBindingFile(projectRoot)!;
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        claude: {
+          hookCommand: `'${join(projectRoot, ".claude", "saga-claude-hook.sh")}'`,
+          hookTrust: "requires-review",
+          hooksPath: join(projectRoot, ".claude", "settings.local.json"),
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "claude-source-id",
+          sourceUri: `claude://host/${binding.host?.id}`,
+          target: "claude",
+        },
+      },
+    });
+
+    const status = await inspectHarnessWithActivation({
+      cwd: projectRoot,
+      target: "claude",
+    });
+
+    expect(status.state).toBe("divergent");
+    expect(status.activation.state).toBe("missing-hooks");
+    expect(status.activation.detail).toBe(
+      "Claude Code harness hooks are missing; run saga harness install claude",
+    );
+    expect(status.nextStep).toContain("run saga harness install claude");
+  });
+
+  test("reports installed Claude Code hooks with no recent activation evidence", async () => {
+    const projectRoot = boundProject();
+    const hooksPath = join(projectRoot, ".claude", "settings.local.json");
+    const shimPath = join(projectRoot, ".claude", "saga-claude-hook.sh");
+    const binding = readBindingFile(projectRoot)!;
+    mkdirSync(join(projectRoot, ".claude"));
+    writeBindingFile(projectRoot, {
+      ...binding,
+      harnesses: {
+        claude: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: "requires-review",
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: "claude-source-id",
+          sourceUri: `claude://host/${binding.host?.id}`,
+          target: "claude",
+        },
+      },
+    });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          Stop: [{ hooks: [{ command: shimPath, type: "command" }] }],
+          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: "command" }] }],
+        },
+      }),
+    );
+
+    const status = await inspectHarnessWithActivation({
+      cwd: projectRoot,
+      target: "claude",
+      verifyActivation: async () =>
+        classifyClaudeActivationEvidence({
+          checkedAt: new Date("2026-06-22T12:00:00.000Z"),
+          events: [],
+        }),
+    });
+
+    expect(status.state).toBe("configured");
+    expect(status.activation.state).toBe("no-evidence");
+    expect(status.nextStep).toBe(
+      "start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again",
+    );
   });
 });
 
@@ -1089,13 +1250,19 @@ function activeActivation(): HarnessActivationStatus {
 }
 
 function rawActivationEvent(input: {
-  eventType: "codex.SessionStart" | "codex.UserPromptSubmit";
+  eventType:
+    | "claude.SessionStart"
+    | "claude.UserPromptSubmit"
+    | "codex.SessionStart"
+    | "codex.UserPromptSubmit";
   occurredAt: string;
   payload: Record<string, unknown>;
   provenance: Record<string, unknown>;
+  sourceType?: "claude" | "codex";
 }): any {
+  const sourceType = input.sourceType ?? "codex";
   return {
-    actorId: "codex",
+    actorId: sourceType,
     createdAt: new Date(input.occurredAt),
     eventType: input.eventType,
     externalEventId: `${input.eventType}:${input.occurredAt}`,
@@ -1105,9 +1272,9 @@ function rawActivationEvent(input: {
     payload: input.payload,
     provenance: input.provenance,
     sessionId: "session-id",
-    sourceBindingId: "codex-source-id",
-    sourceId: "codex:local",
-    sourceType: "codex",
+    sourceBindingId: `${sourceType}-source-id`,
+    sourceId: `${sourceType}:local`,
+    sourceType,
     traceId: "turn-id",
     trustLevel: "raw",
     updatedAt: new Date(input.occurredAt),

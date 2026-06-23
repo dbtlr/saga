@@ -12,7 +12,12 @@ import {
   listCurrentClaims,
 } from "./claim.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { insertRawEvent, listCodexActivationRawEvents, listRecentRawEvents } from "./raw-event.js";
+import {
+  insertRawEvent,
+  listCodexActivationRawEvents,
+  listHarnessActivationRawEvents,
+  listRecentRawEvents,
+} from "./raw-event.js";
 import {
   listActiveContextIndexEntries,
   listContextIndexEntries,
@@ -98,6 +103,31 @@ describePostgres("postgres integration", () => {
       .values({
         sourceType: "codex",
         sourceUri: "codex://local",
+        workspaceId: workspace.id,
+      })
+      .returning();
+    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    return { sourceBinding, workspace };
+  }
+
+  async function createWorkspaceWithHarnessSource(
+    handlePrefix: string,
+    sourceType: "claude" | "codex",
+  ) {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const [workspace] = await service.db
+      .insert(workspaces)
+      .values({
+        handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+      })
+      .returning();
+    if (workspace === undefined) throw new Error("workspace insert returned no row");
+
+    const [sourceBinding] = await service.db
+      .insert(sourceBindings)
+      .values({
+        sourceType,
+        sourceUri: `${sourceType}://local`,
         workspaceId: workspace.id,
       })
       .returning();
@@ -735,6 +765,87 @@ describePostgres("postgres integration", () => {
     const activationEvents = await Effect.runPromise(
       listCodexActivationRawEvents(service, {
         sourceBindingId: first.sourceBinding.id,
+        workspaceId: first.workspace.id,
+      }),
+    );
+
+    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
+  });
+
+  test("lists Claude activation raw events for a workspace source binding", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const first = await createWorkspaceWithHarnessSource("claude-activation-first", "claude");
+    const second = await createWorkspaceWithHarnessSource("claude-activation-second", "claude");
+
+    const sessionStart = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "claude",
+        eventType: "claude.SessionStart",
+        externalEventId: `claude:activation:${first.workspace.id}:start`,
+        occurredAt: "2026-06-19T20:00:00.000Z",
+        payload: { hook_event_name: "SessionStart", source: "startup" },
+        provenance: { hookEventName: "SessionStart" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "claude:local",
+        sourceType: "claude",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    const prompt = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "claude",
+        eventType: "claude.UserPromptSubmit",
+        externalEventId: `claude:activation:${first.workspace.id}:prompt`,
+        occurredAt: "2026-06-19T20:01:00.000Z",
+        payload: { hook_event_name: "UserPromptSubmit" },
+        provenance: { hookEventName: "UserPromptSubmit" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "claude:local",
+        sourceType: "claude",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "claude",
+        eventType: "claude.Stop",
+        externalEventId: `claude:activation:${first.workspace.id}:stop`,
+        occurredAt: "2026-06-19T20:02:00.000Z",
+        payload: { hook_event_name: "Stop" },
+        provenance: { hookEventName: "Stop" },
+        sessionId: "session-id",
+        sourceBindingId: first.sourceBinding.id,
+        sourceId: "claude:local",
+        sourceType: "claude",
+        trustLevel: "raw",
+        workspaceId: first.workspace.id,
+      }),
+    );
+    await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: "claude",
+        eventType: "claude.UserPromptSubmit",
+        externalEventId: `claude:activation:${second.workspace.id}:prompt`,
+        occurredAt: "2026-06-19T20:03:00.000Z",
+        payload: { hook_event_name: "UserPromptSubmit" },
+        provenance: { hookEventName: "UserPromptSubmit" },
+        sessionId: "session-id",
+        sourceBindingId: second.sourceBinding.id,
+        sourceId: "claude:local",
+        sourceType: "claude",
+        trustLevel: "raw",
+        workspaceId: second.workspace.id,
+      }),
+    );
+
+    const activationEvents = await Effect.runPromise(
+      listHarnessActivationRawEvents(service, {
+        sourceBindingId: first.sourceBinding.id,
+        sourceType: "claude",
         workspaceId: first.workspace.id,
       }),
     );

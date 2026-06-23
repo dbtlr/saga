@@ -213,7 +213,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "missing; binding and hooks are not installed; activation: not-applicable; runtime activation verification is currently implemented for Codex only",
+          "missing; binding and hooks are not installed; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install claude before checking activation",
         label: "harness:claude",
         status: "warn",
       }),

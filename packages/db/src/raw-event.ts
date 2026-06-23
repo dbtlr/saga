@@ -103,6 +103,22 @@ export function listCodexActivationRawEvents(
     workspaceId: string;
   },
 ): Effect.Effect<RawEvent[], RawEventInsertError> {
+  return listHarnessActivationRawEvents(service, { ...input, sourceType: "codex" });
+}
+
+export function listHarnessActivationRawEvents(
+  service: DatabaseService,
+  input: {
+    limit?: number | undefined;
+    sourceBindingId: string;
+    sourceType: "claude" | "codex";
+    workspaceId: string;
+  },
+): Effect.Effect<RawEvent[], RawEventInsertError> {
+  const activationEventTypes = [
+    `${input.sourceType}.SessionStart`,
+    `${input.sourceType}.UserPromptSubmit`,
+  ];
   return Effect.tryPromise({
     try: () =>
       service.db
@@ -112,8 +128,8 @@ export function listCodexActivationRawEvents(
           and(
             eq(rawEvents.workspaceId, input.workspaceId),
             eq(rawEvents.sourceBindingId, input.sourceBindingId),
-            eq(rawEvents.sourceType, "codex"),
-            inArray(rawEvents.eventType, ["codex.SessionStart", "codex.UserPromptSubmit"]),
+            eq(rawEvents.sourceType, input.sourceType),
+            inArray(rawEvents.eventType, activationEventTypes),
           ),
         )
         .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
