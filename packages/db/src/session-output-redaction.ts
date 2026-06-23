@@ -5,16 +5,32 @@ const SAFE_URI_PATTERN =
   /\b(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)/gu;
 const LOCAL_FILE_URI_WITH_SPACES_PATTERN =
   /\bfile:\/\/[^=\r\n"',}\])]*\.[A-Za-z0-9][A-Za-z0-9._-]*(?=$|[\s"',}\])])/gu;
+const LOCAL_FILE_URI_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN =
+  /(^|["'([{=,:])(file:\/\/\/?(?:[^/=\r\n"',}\])]+\/){1,}[^/=\r\n"',}\])]*[A-Za-z0-9._@%+-])(?=$|[\r\n"',}\])])/gu;
+const LOCAL_FILE_URI_WITH_SPACES_NO_EXTENSION_PATTERN =
+  /\bfile:\/\/\/?(?:[^/=\r\n"',}\])]+\/){1,}[A-Za-z0-9._@%+-]+(?=$|[\s"',}\])])/gu;
 const LOCAL_FILE_URI_PATTERN = /\bfile:\/\/[^\s"',}\])]+/gu;
 const POSIX_LOCAL_PATH_WITH_SPACES_PATTERN =
   /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:[^/:=\r\n"',}\])]+\/){1,}[^/:=\r\n"',}\])]*\.[A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[\s"',}\])])/gu;
+const POSIX_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN =
+  /(^|["'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:[^/:=\r\n"',}\])]+\/){1,}[^/:=\r\n"',}\])]*[A-Za-z0-9._@%+-])(?=$|[\r\n"',}\])])/gu;
+const POSIX_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN =
+  /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:[^/:=\r\n"',}\])]+\/){1,}[A-Za-z0-9._@%+-]+)(?=$|[\s"',}\])])/gu;
 const POSIX_LOCAL_PATH_PATTERN =
   /(^|[\s"'([{=,:])(\/(?!\/)(?=[A-Za-z0-9._@%+-])(?:(?:[A-Za-z0-9._@%+-]+\/){1,}[A-Za-z0-9._@%+-]*|(?:home|work|Users|Volumes|private|tmp|var|opt|etc|usr|bin|sbin|lib|lib64|mnt|media|srv|run|root|nix|workspace|app|repo|repos|projects|builds)\b[^\s"',}\])]*))/gu;
 const WINDOWS_LOCAL_PATH_WITH_SPACES_PATTERN =
   /(^|[\s"'([{=,:])([A-Za-z]:\\[^=\r\n"',}\])]*\.[A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[\s"',}\])])/gu;
+const WINDOWS_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN =
+  /(^|["'([{=,:])([A-Za-z]:\\(?:[^\\=\r\n"',}\])]+\\){1,}[^\\=\r\n"',}\])]*[A-Za-z0-9._@%+-])(?=$|[\r\n"',}\])])/gu;
+const WINDOWS_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN =
+  /(^|[\s"'([{=,:])([A-Za-z]:\\(?:[^\\=\r\n"',}\])]+\\){1,}[A-Za-z0-9._@%+-]+)(?=$|[\s"',}\])])/gu;
 const WINDOWS_LOCAL_PATH_PATTERN = /(^|[\s"'([{=,:])([A-Za-z]:\\[^\s"',}\])]+)/gu;
 const WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_PATTERN =
   /(^|[\s"'([{=,:])(\\\\[^\\=\r\n"',}\])]+\\[^\\=\r\n"',}\])]+\\[^=\r\n"',}\])]*\.[A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[\s"',}\])])/gu;
+const WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN =
+  /(^|["'([{=,:])(\\\\[^\\=\r\n"',}\])]+\\[^\\=\r\n"',}\])]+\\(?:[^\\=\r\n"',}\])]+\\){0,}[^\\=\r\n"',}\])]*[A-Za-z0-9._@%+-])(?=$|[\r\n"',}\])])/gu;
+const WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN =
+  /(^|[\s"'([{=,:])(\\\\[^\\=\r\n"',}\])]+\\[^\\=\r\n"',}\])]+\\(?:[^\\=\r\n"',}\])]+\\){0,}[A-Za-z0-9._@%+-]+)(?=$|[\s"',}\])])/gu;
 const WINDOWS_UNC_LOCAL_PATH_PATTERN =
   /(^|[\s"'([{=,:])(\\\\[^\\\s"',}\])]+\\[^\\\s"',}\])]+\\[^\s"',}\])]+)/gu;
 
@@ -52,9 +68,22 @@ function redactLocalPathString(value: string): string {
   });
   const redacted = protectedValue
     .replaceAll(LOCAL_FILE_URI_WITH_SPACES_PATTERN, LOCAL_PATH_REDACTION)
+    .replaceAll(
+      LOCAL_FILE_URI_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(LOCAL_FILE_URI_WITH_SPACES_NO_EXTENSION_PATTERN, LOCAL_PATH_REDACTION)
     .replaceAll(LOCAL_FILE_URI_PATTERN, LOCAL_PATH_REDACTION)
     .replaceAll(
       WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
+      WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
+      WINDOWS_UNC_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN,
       (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
     )
     .replaceAll(
@@ -66,11 +95,27 @@ function redactLocalPathString(value: string): string {
       (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
     )
     .replaceAll(
+      WINDOWS_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
+      WINDOWS_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
       WINDOWS_LOCAL_PATH_PATTERN,
       (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
     )
     .replaceAll(
       POSIX_LOCAL_PATH_WITH_SPACES_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
+      POSIX_LOCAL_PATH_WITH_SPACES_BOUNDED_NO_EXTENSION_PATTERN,
+      (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
+    )
+    .replaceAll(
+      POSIX_LOCAL_PATH_WITH_SPACES_NO_EXTENSION_PATTERN,
       (_match, prefix: string) => `${prefix}${LOCAL_PATH_REDACTION}`,
     )
     .replaceAll(

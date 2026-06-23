@@ -8,15 +8,44 @@ describe("session output redaction", () => {
         "posix=/Users/Drew Smith/.codex/transcripts/session.jsonl",
         "windows=C:\\Users\\Drew Smith\\.codex\\transcripts\\session.jsonl",
         "unc=\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session.jsonl",
+        "file=file:///Users/Drew Smith/.codex/transcripts/session.jsonl",
       ].join("\n"),
     );
 
     expect(redacted).toContain("posix=[local-path-redacted]");
     expect(redacted).toContain("windows=[local-path-redacted]");
     expect(redacted).toContain("unc=[local-path-redacted]");
+    expect(redacted).toContain("file=[local-path-redacted]");
     expect(redacted).not.toContain("/Users/Drew Smith");
     expect(redacted).not.toContain("C:\\Users\\Drew Smith");
     expect(redacted).not.toContain("\\\\server\\share");
+    expect(redacted).not.toContain("file://");
+  });
+
+  test("redacts directory roots and extensionless paths with spaces", () => {
+    const redacted = redactAgentFacingSessionText(
+      [
+        "root=/Users/Drew Smith/Workspaces/saga",
+        "spaced project=/Users/Drew Smith/Workspaces/My Project",
+        "win noext=C:\\Users\\Drew Smith\\.codex\\transcripts\\session",
+        "win spaced=C:\\Users\\Drew Smith\\Workspaces\\My Project",
+        "unc noext=\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session",
+        "file root=file:///Users/Drew Smith/Workspaces/saga",
+        "file spaced=file:///Users/Drew Smith/Workspaces/My Project",
+      ].join("\n"),
+    );
+
+    expect(redacted).toContain("root=[local-path-redacted]");
+    expect(redacted).toContain("spaced project=[local-path-redacted]");
+    expect(redacted).toContain("win noext=[local-path-redacted]");
+    expect(redacted).toContain("win spaced=[local-path-redacted]");
+    expect(redacted).toContain("unc noext=[local-path-redacted]");
+    expect(redacted).toContain("file root=[local-path-redacted]");
+    expect(redacted).toContain("file spaced=[local-path-redacted]");
+    expect(redacted).not.toContain("/Users/Drew Smith");
+    expect(redacted).not.toContain("C:\\Users\\Drew Smith");
+    expect(redacted).not.toContain("\\\\server\\share");
+    expect(redacted).not.toContain("file://");
   });
 
   test("preserves safe agent-facing URI schemes", () => {
