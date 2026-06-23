@@ -624,6 +624,96 @@ describePostgres("raw session import", () => {
     });
   });
 
+  test("redacts local session provenance from public read models while preserving persisted rows", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-provenance-redaction");
+    const projectRoot = "/work/saga";
+    const transcriptPath = "/work/saga/private-session.jsonl";
+    const fileLocator = "file:///work/saga/private-session.jsonl";
+    const imported = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: {
+          handle: "drew",
+        },
+        capturedAt: "2026-06-21T16:30:00.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId: "codex-session-private-provenance",
+        host: {
+          id: "host-private-provenance",
+          label: "test-host",
+          projectRoot,
+        },
+        locator: fileLocator,
+        metadata: {
+          cwd: projectRoot,
+        },
+        provenance: {
+          transcript_path: transcriptPath,
+          transcriptPath,
+          transcriptUri: fileLocator,
+        },
+        rawContent: '{"type":"user","text":"Private provenance should not leak"}\n',
+        workspaceId,
+      }),
+    );
+
+    const [persistedRawRecord] = await service.db
+      .select({
+        provenance: rawSessionRecords.provenance,
+        sourceLocator: rawSessionRecords.sourceLocator,
+      })
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, imported.rawSessionRecord.id));
+    const [persistedSession] = await service.db
+      .select({
+        sourceLocator: sessions.sourceLocator,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, imported.session.id));
+    const [persistedSourceBinding] = await service.db
+      .select({
+        config: sourceBindings.config,
+      })
+      .from(sourceBindings)
+      .where(eq(sourceBindings.id, imported.sourceBinding.id));
+
+    expect(persistedRawRecord).toMatchObject({
+      provenance: {
+        transcriptPath,
+        transcriptUri: fileLocator,
+        transcript_path: transcriptPath,
+      },
+      sourceLocator: fileLocator,
+    });
+    expect(persistedSession?.sourceLocator).toBe(fileLocator);
+    expect(persistedSourceBinding?.config).toMatchObject({
+      projectRoot,
+    });
+
+    const recentRows = await Effect.runPromise(
+      listRecentSessionRecords(service, {
+        limit: 5,
+        workspaceId,
+      }),
+    );
+    const detail = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: imported.session.id,
+        workspaceId,
+      }),
+    );
+    const publicText = JSON.stringify({ detail, recentRows });
+
+    expect(publicText).toContain("[local-path-redacted]");
+    expect(publicText).not.toContain(transcriptPath);
+    expect(publicText).not.toContain(fileLocator);
+    expect(publicText).not.toContain(projectRoot);
+    expect(recentRows[0]?.rawSessionRecord.sourceLocator).toBeNull();
+    expect(detail.session.sourceLocator).toBeNull();
+    expect(detail.rawSessionRecords[0]?.sourceLocator).toBeNull();
+  });
+
   test("shows a session detail through either session id or raw record id with bounded turns", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-show");

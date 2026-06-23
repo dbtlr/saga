@@ -114,10 +114,11 @@ describePostgres("session recall", () => {
     expect(first?.sourceBinding).toMatchObject({
       config: {
         hostId: "host-grouping",
-        projectRoot: "/work/saga",
+        projectRoot: "[local-path-redacted]",
       },
       sourceType: "codex",
     });
+    expect(JSON.stringify(first?.sourceBinding)).not.toContain("/work/saga");
     expect(first?.rawSessionRecord).toMatchObject({
       contentType: "jsonl",
       harness: "codex",

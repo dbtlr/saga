@@ -2,6 +2,10 @@ import type { EmbeddingProviderBoundary } from "@saga/runtime";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
+import {
+  redactAgentFacingJsonRecord,
+  redactAgentFacingSourceLocator,
+} from "./session-output-redaction.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -1038,11 +1042,11 @@ function mapContextRows(
         endedAt: row.expanded_turn_ended_at,
         harnessTurnId: row.expanded_turn_harness_turn_id,
         id: row.expanded_turn_id,
-        metadata: row.expanded_turn_metadata,
+        metadata: redactAgentFacingJsonRecord(row.expanded_turn_metadata),
         model: row.expanded_turn_model,
         ordinal: row.expanded_turn_ordinal,
         rawEventIds: row.expanded_turn_raw_event_ids,
-        rawSpan: row.expanded_turn_raw_span,
+        rawSpan: redactAgentFacingJsonRecord(row.expanded_turn_raw_span),
         role: row.expanded_turn_role,
         segments: [],
         startedAt: row.expanded_turn_started_at,
@@ -1055,7 +1059,7 @@ function mapContextRows(
         charEnd: row.expanded_segment_char_end,
         charStart: row.expanded_segment_char_start,
         id: row.expanded_segment_id,
-        metadata: row.expanded_segment_metadata ?? {},
+        metadata: redactAgentFacingJsonRecord(row.expanded_segment_metadata ?? {}),
         ordinal: row.expanded_segment_ordinal,
         searchText: row.expanded_segment_search_text ?? "",
         segmentKind: row.expanded_segment_kind ?? "turn",
@@ -1125,18 +1129,18 @@ function mapSession(row: RecallSearchRow): RecallSessionMetadata {
       handle: row.author_handle,
       id: row.author_id,
       identitySource: row.author_identity_source,
-      metadata: row.author_metadata,
+      metadata: redactAgentFacingJsonRecord(row.author_metadata),
     },
     endedAt: row.session_ended_at,
     harness: row.session_harness,
     harnessSessionId: row.session_harness_session_id,
     id: row.session_id,
     lastActivityAt: row.session_last_activity_at,
-    metadata: row.session_metadata,
+    metadata: redactAgentFacingJsonRecord(row.session_metadata),
     model: row.session_model,
-    provenance: row.session_provenance,
+    provenance: redactAgentFacingJsonRecord(row.session_provenance),
     sourceBindingId: row.session_source_binding_id,
-    sourceLocator: row.session_source_locator,
+    sourceLocator: redactAgentFacingSourceLocator(row.session_source_locator),
     startedAt: row.session_started_at,
     status: row.session_status,
     title: row.session_title,
@@ -1146,7 +1150,7 @@ function mapSession(row: RecallSearchRow): RecallSessionMetadata {
 
 function mapSourceBinding(row: RecallSearchRow): RecallSourceBindingMetadata {
   return {
-    config: row.source_binding_config,
+    config: redactAgentFacingJsonRecord(row.source_binding_config),
     displayName: row.source_binding_display_name,
     enabled: row.source_binding_enabled,
     id: row.source_binding_id,
@@ -1159,7 +1163,7 @@ function mapActivityInterval(row: RecallSearchRow): RecallActivityIntervalMetada
   return {
     endedAt: row.activity_interval_ended_at,
     id: row.activity_interval_id,
-    metadata: row.activity_interval_metadata,
+    metadata: redactAgentFacingJsonRecord(row.activity_interval_metadata),
     ordinal: row.activity_interval_ordinal,
     sessionId: row.activity_interval_session_id,
     settledAt: row.activity_interval_settled_at,
@@ -1178,10 +1182,10 @@ function mapRawSessionRecord(row: RecallSearchRow): RecallRawSessionRecordMetada
     harnessSessionId: row.raw_record_harness_session_id,
     id: row.raw_record_id,
     isActive: row.raw_record_is_active,
-    metadata: row.raw_record_metadata,
-    provenance: row.raw_record_provenance,
+    metadata: redactAgentFacingJsonRecord(row.raw_record_metadata),
+    provenance: redactAgentFacingJsonRecord(row.raw_record_provenance),
     snapshotOrdinal: row.raw_record_snapshot_ordinal,
-    sourceLocator: row.raw_record_source_locator,
+    sourceLocator: redactAgentFacingSourceLocator(row.raw_record_source_locator),
     status: row.raw_record_status,
   };
 }

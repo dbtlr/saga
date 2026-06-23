@@ -5,6 +5,7 @@ export * from "./context-index.js";
 export * from "./database.js";
 export * from "./raw-event.js";
 export * from "./raw-session-import.js";
+export * from "./session-output-redaction.js";
 export * from "./session-records.js";
 export * from "./session-embeddings.js";
 export * from "./session-recall.js";

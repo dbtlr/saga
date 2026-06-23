@@ -2,6 +2,7 @@ import {
   createOpenAiSessionEmbeddingGenerator,
   expandRecallContext,
   makeDatabase,
+  redactAgentFacingSessionValue,
   searchSessionRecall,
   type RecallContextExpansion,
   type RecallContextExpansionInput,
@@ -124,7 +125,7 @@ async function searchRecallCommand(
         .flatMap((group) => group.matches.map((match) => match.segment.id))
         .join("\n"),
       records: renderRecallSearch(result, options),
-      value: result,
+      value: redactAgentFacingSessionValue(result),
     },
     options.format,
   );
@@ -164,7 +165,7 @@ async function showRecallCommand(
     {
       id: result.anchor.segment.id,
       records: renderRecallContext(result, options),
-      value: result,
+      value: redactAgentFacingSessionValue(result),
     },
     options.format,
   );
@@ -576,7 +577,7 @@ function formatContextWindow(result: RecallContextExpansion): string {
 }
 
 function compactJson(value: unknown): string {
-  const json = JSON.stringify(value);
+  const json = JSON.stringify(redactAgentFacingSessionValue(value));
   return json === undefined ? "undefined" : truncate(json, 220);
 }
 

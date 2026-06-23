@@ -93,6 +93,9 @@ describe("runSessionsCommand", () => {
         id: "session-id",
       },
     });
+    expect(output).not.toContain(inputPath);
+    expect(output).not.toContain(projectRoot);
+    expect(output).not.toContain("file://");
   });
 
   test("lists recent raw session records with records and ids formats", async () => {
@@ -133,7 +136,24 @@ describe("runSessionsCommand", () => {
     expect(records).toContain("Activity Interval");
     expect(records).toContain("host-user");
     expect(records).toContain("provenance");
+    expect(records).toContain("[local-path-redacted]");
+    expect(records).not.toContain("/tmp/session.jsonl");
+    expect(records).not.toContain("/work/saga");
+    expect(records).not.toContain("file://");
     expect(ids).toBe("raw-record-id");
+  });
+
+  test("redacts local locators from recent structured output", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(["recent"], renderOptions, {
+      cwd: projectRoot,
+      listRecent: async () => [recentRecord()],
+    });
+
+    expect(output).toContain("[local-path-redacted]");
+    expect(output).not.toContain("/tmp/session.jsonl");
+    expect(output).not.toContain("/work/saga");
+    expect(output).not.toContain("file://");
   });
 
   test("deletes a session by explicit id with structured safety metadata", async () => {
@@ -335,6 +355,10 @@ describe("runSessionsCommand", () => {
     expect(output).toContain("host-user");
     expect(output).toContain("provenance");
     expect(output).toContain("Bounds");
+    expect(output).toContain("[local-path-redacted]");
+    expect(output).not.toContain("/tmp/session.jsonl");
+    expect(output).not.toContain("/work/saga");
+    expect(output).not.toContain("file://");
   });
 
   test("omits raw body fields by default when showing session detail", async () => {
@@ -638,6 +662,8 @@ function recentRecord(): RecentSessionRecord {
       metadata: {},
       provenance: {
         importedBy: "test",
+        transcriptPath: "/tmp/session.jsonl",
+        transcriptUri: "file:///tmp/session.jsonl",
       },
       sessionId: "session-id",
       snapshotOrdinal: 0,
@@ -661,7 +687,9 @@ function recentRecord(): RecentSessionRecord {
       workspaceId: "workspace-id",
     },
     sourceBinding: {
-      config: {},
+      config: {
+        projectRoot: "/work/saga",
+      },
       displayName: "Codex on test-host",
       enabled: true,
       id: "source-binding-id",

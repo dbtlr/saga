@@ -1,6 +1,10 @@
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
+import {
+  redactAgentFacingJsonRecord,
+  redactAgentFacingSourceLocator,
+} from "./session-output-redaction.js";
 
 const DEFAULT_RECENT_LIMIT = 20;
 const MAX_RECENT_LIMIT = 100;
@@ -877,9 +881,9 @@ function groupActivityIntervals(
         skippedSegmentsByTurn.get(row.turn_id) ?? segments,
       ),
       endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
-      metadata: row.turn_metadata,
+      metadata: redactAgentFacingJsonRecord(row.turn_metadata),
       rawEventIds: row.turn_raw_event_ids,
-      rawSpan: row.turn_raw_span,
+      rawSpan: redactAgentFacingJsonRecord(row.turn_raw_span),
       segments,
       startedAt: normalizeNullableTimestamp(row.turn_started_at, "turn.startedAt"),
       turn: mapTurn(row),
@@ -903,11 +907,11 @@ function mapSession(row: CommonSessionRow): SessionMetadata {
       row.session_last_activity_at,
       "session.lastActivityAt",
     ),
-    metadata: row.session_metadata,
+    metadata: redactAgentFacingJsonRecord(row.session_metadata),
     model: row.session_model,
-    provenance: row.session_provenance,
+    provenance: redactAgentFacingJsonRecord(row.session_provenance),
     sourceBindingId: row.session_source_binding_id,
-    sourceLocator: row.session_source_locator,
+    sourceLocator: redactAgentFacingSourceLocator(row.session_source_locator),
     startedAt: normalizeNullableTimestamp(row.session_started_at, "session.startedAt"),
     status: row.session_status,
     title: row.session_title,
@@ -922,13 +926,13 @@ function mapAuthor(row: CommonSessionRow): SessionHostUserMetadata {
     handle: row.author_handle,
     id: row.author_id,
     identitySource: row.author_identity_source,
-    metadata: row.author_metadata,
+    metadata: redactAgentFacingJsonRecord(row.author_metadata),
   };
 }
 
 function mapSourceBinding(row: CommonSessionRow): SessionSourceBindingMetadata {
   return {
-    config: row.source_binding_config,
+    config: redactAgentFacingJsonRecord(row.source_binding_config),
     displayName: row.source_binding_display_name,
     enabled: row.source_binding_enabled,
     id: row.source_binding_id,
@@ -941,7 +945,7 @@ function mapActivityInterval(row: ActivityIntervalRow): SessionActivityIntervalM
   return {
     endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, "activityInterval.endedAt"),
     id: row.activity_interval_id,
-    metadata: row.activity_interval_metadata,
+    metadata: redactAgentFacingJsonRecord(row.activity_interval_metadata),
     ordinal: row.activity_interval_ordinal,
     sessionId: row.activity_interval_session_id,
     settledAt: normalizeNullableTimestamp(
@@ -979,11 +983,11 @@ function mapRawSessionRecord(
     harnessSessionId: row.raw_record_harness_session_id,
     id: row.raw_record_id,
     isActive: row.raw_record_is_active,
-    metadata: row.raw_record_metadata,
-    provenance: row.raw_record_provenance,
+    metadata: redactAgentFacingJsonRecord(row.raw_record_metadata),
+    provenance: redactAgentFacingJsonRecord(row.raw_record_provenance),
     sessionId: row.raw_record_session_id,
     snapshotOrdinal: row.raw_record_snapshot_ordinal,
-    sourceLocator: row.raw_record_source_locator,
+    sourceLocator: redactAgentFacingSourceLocator(row.raw_record_source_locator),
     status: row.raw_record_status,
   };
 }
@@ -1024,7 +1028,7 @@ function mapSegment(row: SegmentRow): SessionDetailSegment {
     charEnd: row.segment_char_end,
     charStart: row.segment_char_start,
     id: row.segment_id,
-    metadata: row.segment_metadata,
+    metadata: redactAgentFacingJsonRecord(row.segment_metadata),
     ordinal: row.segment_ordinal,
     searchText: row.segment_search_text,
     segmentKind: row.segment_kind,

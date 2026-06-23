@@ -8,6 +8,7 @@ import {
   importRawSessionRecord,
   listRecentSessionRecords,
   makeDatabase,
+  redactAgentFacingSessionValue,
   redactSessionSafety,
   type DeleteSessionSafetyInput,
   type DeleteSessionSafetyResult,
@@ -153,7 +154,7 @@ async function importSession(
     {
       id: result.rawSessionRecord.id,
       records: renderImportResult(result, options),
-      value: importResultValue(result),
+      value: redactAgentFacingSessionValue(importResultValue(result)),
     },
     options.format,
   );
@@ -231,7 +232,7 @@ async function recentSessions(
     {
       id: rows.map((row) => row.rawSessionRecord.id).join("\n"),
       records: renderRecentSessions(rows, options),
-      value: rows,
+      value: redactAgentFacingSessionValue(rows),
     },
     options.format,
   );
@@ -274,7 +275,7 @@ async function redactSession(
     {
       id: result.rawSessionImport.rawSessionRecord.id,
       records: renderRedactResult(result, options),
-      value: result,
+      value: redactAgentFacingSessionValue(result),
     },
     options.format,
   );
@@ -317,7 +318,7 @@ async function showSession(
     {
       id: detail.session.id,
       records: renderSessionDetail(detail, options),
-      value: detail,
+      value: redactAgentFacingSessionValue(detail),
     },
     options.format,
   );
@@ -443,7 +444,10 @@ function renderImportResult(result: RawSessionImportResult, options: RenderOptio
       { label: "captured", value: result.rawSessionRecord.capturedAt.toISOString() },
       { label: "content", value: result.rawSessionRecord.contentType },
       { label: "bytes", value: String(result.rawSessionRecord.contentBytes ?? 0) },
-      { label: "provenance", value: compactJson(result.rawSessionRecord.provenance) },
+      {
+        label: "provenance",
+        value: safeCompactJson(result.rawSessionRecord.provenance),
+      },
     ],
     options,
   );
@@ -510,7 +514,7 @@ function renderRecentSessions(
       label: "counts",
       value: `${String(row.counts.activityIntervals)} intervals, ${String(row.counts.turns)} turns, ${String(row.counts.segments)} segments`,
     },
-    { label: "provenance", value: compactJson(row.rawSessionRecord.provenance) },
+    { label: "provenance", value: safeCompactJson(row.rawSessionRecord.provenance) },
   ]);
   return recordBlock("Raw Session Records", fields, options);
 }
@@ -526,12 +530,12 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
         { label: "harness", value: detail.session.harness },
         { label: "harness session", value: detail.session.harnessSessionId ?? "none" },
         { label: "model", value: detail.session.model ?? "none" },
-        { label: "source locator", value: detail.session.sourceLocator ?? "none" },
+        { label: "source locator", value: safeString(detail.session.sourceLocator) },
         { label: "started", value: formatDate(detail.session.startedAt) },
         { label: "last activity", value: formatDate(detail.session.lastActivityAt) },
         { label: "ended", value: formatDate(detail.session.endedAt) },
-        { label: "metadata", value: compactJson(detail.session.metadata) },
-        { label: "provenance", value: compactJson(detail.session.provenance) },
+        { label: "metadata", value: safeCompactJson(detail.session.metadata) },
+        { label: "provenance", value: safeCompactJson(detail.session.provenance) },
       ],
       options,
     ),
@@ -542,7 +546,7 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
         { label: "display", value: detail.authorUser.displayName ?? "none" },
         { label: "identity", value: detail.authorUser.identitySource },
         { label: "external", value: detail.authorUser.externalSubject ?? "none" },
-        { label: "metadata", value: compactJson(detail.authorUser.metadata) },
+        { label: "metadata", value: safeCompactJson(detail.authorUser.metadata) },
       ],
       options,
     ),
@@ -552,7 +556,7 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
         { label: "source", value: detail.sourceBinding.sourceUri },
         { label: "type", value: detail.sourceBinding.sourceType },
         { label: "enabled", value: String(detail.sourceBinding.enabled) },
-        { label: "metadata", value: compactJson(detail.sourceBinding.config) },
+        { label: "metadata", value: safeCompactJson(detail.sourceBinding.config) },
       ],
       options,
     ),
@@ -596,7 +600,7 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
           { label: "ended", value: formatDate(interval.activityInterval.endedAt) },
           { label: "settled", value: formatDate(interval.activityInterval.settledAt) },
           { label: "settlement", value: interval.activityInterval.settlementReason ?? "none" },
-          { label: "metadata", value: compactJson(interval.activityInterval.metadata) },
+          { label: "metadata", value: safeCompactJson(interval.activityInterval.metadata) },
         ],
         options,
       ),
@@ -645,15 +649,15 @@ function renderRawSessionRecord(
       { label: "status", value: record.status },
       { label: "harness", value: record.harness },
       { label: "harness session", value: record.harnessSessionId ?? "none" },
-      { label: "locator", value: record.sourceLocator ?? "none" },
+      { label: "locator", value: safeString(record.sourceLocator) },
       { label: "captured", value: record.capturedAt.toISOString() },
       {
         label: "content",
         value: `${record.contentType}, ${String(record.contentBytes ?? 0)} bytes`,
       },
       { label: "hash", value: record.contentHash },
-      { label: "metadata", value: compactJson(record.metadata) },
-      { label: "provenance", value: compactJson(record.provenance) },
+      { label: "metadata", value: safeCompactJson(record.metadata) },
+      { label: "provenance", value: safeCompactJson(record.provenance) },
       ...(record.bodyText === undefined
         ? []
         : [{ label: "body text", value: record.bodyText ?? "none" }]),
@@ -676,13 +680,13 @@ function renderTurn(turn: SessionDetailTurn, options: RenderOptions): string {
       { label: "model", value: turn.turn.model ?? "none" },
       { label: "started", value: formatDate(turn.startedAt) },
       { label: "ended", value: formatDate(turn.endedAt) },
-      { label: "parts", value: compactJson(turn.contentParts) },
+      { label: "parts", value: safeCompactJson(turn.contentParts) },
       {
         label: "raw events",
         value: turn.rawEventIds.length === 0 ? "none" : turn.rawEventIds.join(", "),
       },
-      { label: "raw span", value: compactJson(turn.rawSpan) },
-      { label: "metadata", value: compactJson(turn.metadata) },
+      { label: "raw span", value: safeCompactJson(turn.rawSpan) },
+      { label: "metadata", value: safeCompactJson(turn.metadata) },
     ],
     options,
   );
@@ -698,7 +702,7 @@ function renderSegment(segment: SessionDetailSegment, options: RenderOptions): s
       { label: "chars", value: formatRange(segment.charStart, segment.charEnd) },
       { label: "snippet", value: segment.snippet ?? "none" },
       { label: "text", value: truncate(segment.searchText, 280) },
-      { label: "metadata", value: compactJson(segment.metadata) },
+      { label: "metadata", value: safeCompactJson(segment.metadata) },
     ],
     options,
   );
@@ -861,6 +865,16 @@ function defaultAuthorHandle(): string {
 function compactJson(value: unknown): string {
   const json = JSON.stringify(value);
   return json === undefined ? "undefined" : truncate(json, 220);
+}
+
+function safeCompactJson(value: unknown): string {
+  return compactJson(redactAgentFacingSessionValue(value));
+}
+
+function safeString(value: string | null | undefined): string {
+  if (value === null || value === undefined) return "none";
+  const redacted = redactAgentFacingSessionValue(value);
+  return typeof redacted === "string" ? redacted : "none";
 }
 
 function formatDate(value: Date | null): string {
