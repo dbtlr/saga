@@ -237,11 +237,19 @@ export async function searchProjectMemory(
 
     return {
       markdown: renderSearchMemoryMarkdown(input.query, matches),
-      matches: matches.map(({ score: _score, ...match }) => match),
+      matches: redactSearchMemoryStructuredMatches(matches),
     };
   } finally {
     await Effect.runPromise(service.close());
   }
+}
+
+export function redactSearchMemoryStructuredMatches(
+  matches: readonly RankedMemorySearchMatch[],
+): Array<Omit<RankedMemorySearchMatch, "score">> {
+  return matches.map(({ score: _score, ...match }) => {
+    return redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, "score">;
+  });
 }
 
 export async function resolveProjectSagaLink(

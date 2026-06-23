@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
-import { searchSessionRecall } from "./session-recall.js";
+import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
 import { getSessionDetail, listRecentSessionRecords } from "./session-records.js";
 import { deleteSessionSafety, redactSessionSafety } from "./session-safety.js";
 import {
@@ -367,6 +367,66 @@ describePostgres("session safety", () => {
       isActive: true,
       status: "captured",
     });
+  });
+
+  test("redacts local paths from session segment read models", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createWorkspace(service, "session-read-model-redaction");
+    const rawPath = "/Users/Drew Smith/.codex/transcripts/session.jsonl";
+    const windowsPath = "C:\\Users\\Drew Smith\\.codex\\transcripts\\session.jsonl";
+    const uncPath = "\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session.jsonl";
+    const imported = await seedRawSession(service, {
+      harnessSessionId: "read-model-redaction",
+      rawContent: `${JSON.stringify({
+        text: `localpathneedle ${rawPath} ${windowsPath} ${uncPath}`,
+        type: "user",
+      })}\n`,
+      workspaceId,
+    });
+
+    const detail = await Effect.runPromise(
+      getSessionDetail(service, {
+        id: imported.session.id,
+        workspaceId,
+      }),
+    );
+    const detailSegments = detail.activityIntervals.flatMap((interval) =>
+      interval.turns.flatMap((turn) => turn.segments),
+    );
+    expect(detailSegments).toHaveLength(1);
+    expect(detailSegments[0]?.searchText).toContain("[local-path-redacted]");
+    expect(detailSegments[0]?.snippet).toContain("[local-path-redacted]");
+    expect(JSON.stringify(detailSegments)).not.toContain(rawPath);
+    expect(JSON.stringify(detailSegments)).not.toContain("C:\\Users\\Drew Smith");
+    expect(JSON.stringify(detailSegments)).not.toContain("\\\\server\\share");
+
+    const recall = await Effect.runPromise(
+      searchSessionRecall(service, {
+        query: "localpathneedle",
+        workspaceId,
+      }),
+    );
+    const match = recall.sessions[0]?.matches[0];
+    expect(match?.snippet).toContain("[local-path-redacted]");
+    expect(match?.segment.snippet).toContain("[local-path-redacted]");
+    expect(JSON.stringify(recall)).not.toContain(rawPath);
+    expect(JSON.stringify(recall)).not.toContain("C:\\Users\\Drew Smith");
+    expect(JSON.stringify(recall)).not.toContain("\\\\server\\share");
+
+    if (match === undefined) throw new Error("recall match was not returned");
+    const context = await Effect.runPromise(
+      expandRecallContext(service, {
+        segmentId: match.segment.id,
+        workspaceId,
+      }),
+    );
+    const expandedSegments = context.turns.flatMap((turn) => turn.segments);
+    expect(context.anchor.segment.snippet).toContain("[local-path-redacted]");
+    expect(expandedSegments[0]?.searchText).toContain("[local-path-redacted]");
+    expect(expandedSegments[0]?.snippet).toContain("[local-path-redacted]");
+    expect(JSON.stringify(context)).not.toContain(rawPath);
+    expect(JSON.stringify(context)).not.toContain("C:\\Users\\Drew Smith");
+    expect(JSON.stringify(context)).not.toContain("\\\\server\\share");
   });
 });
 

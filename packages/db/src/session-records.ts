@@ -4,6 +4,8 @@ import { safeContentPartsForSkippedSegments } from "./session-content-redaction.
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
+  redactAgentFacingSessionValue,
+  redactAgentFacingSessionText,
 } from "./session-output-redaction.js";
 
 const DEFAULT_RECENT_LIMIT = 20;
@@ -876,10 +878,12 @@ function groupActivityIntervals(
     const existing = turnsByInterval.get(row.activity_interval_id) ?? [];
     const segments = segmentsByTurn.get(row.turn_id) ?? [];
     existing.push({
-      contentParts: safeContentPartsForSkippedSegments(
-        row.turn_content_parts,
-        skippedSegmentsByTurn.get(row.turn_id) ?? segments,
-      ),
+      contentParts: redactAgentFacingSessionValue(
+        safeContentPartsForSkippedSegments(
+          row.turn_content_parts,
+          skippedSegmentsByTurn.get(row.turn_id) ?? segments,
+        ),
+      ) as unknown[],
       endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
       metadata: redactAgentFacingJsonRecord(row.turn_metadata),
       rawEventIds: row.turn_raw_event_ids,
@@ -1030,9 +1034,10 @@ function mapSegment(row: SegmentRow): SessionDetailSegment {
     id: row.segment_id,
     metadata: redactAgentFacingJsonRecord(row.segment_metadata),
     ordinal: row.segment_ordinal,
-    searchText: row.segment_search_text,
+    searchText: redactAgentFacingSessionText(row.segment_search_text),
     segmentKind: row.segment_kind,
-    snippet: row.segment_snippet,
+    snippet:
+      row.segment_snippet === null ? null : redactAgentFacingSessionText(row.segment_snippet),
     tokenEnd: row.segment_token_end,
     tokenStart: row.segment_token_start,
   };

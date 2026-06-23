@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   redactMcpStructuredOutput,
   redactResolvedSagaLink,
+  redactSearchMemoryStructuredMatches,
   rewriteResolvedSagaLinkReferences,
   runMcpCommand,
   searchMemoryEntries,
@@ -433,5 +434,31 @@ describe("searchMemoryEntries", () => {
       source: "context_index",
     });
     expect(contextIndexMatch?.matchedFields).toContain("title");
+  });
+
+  test("redacts local paths from structured search memory matches", () => {
+    const matches = searchMemoryEntries({ query: "transcript" }, [
+      {
+        confidence: 0.45,
+        fields: {
+          payload: '{"prompt":"inspect transcript"}',
+          provenance:
+            '{"transcriptPath":"C:\\\\Users\\\\Drew Smith\\\\.codex\\\\transcripts\\\\session.jsonl","unc":"\\\\\\\\server\\\\share\\\\Users\\\\drew\\\\.codex\\\\transcripts\\\\session.jsonl","safe":"https://example.test/session"}',
+        },
+        key: "raw-structured",
+        kind: "raw_event",
+        source: "recent_activity",
+        state: "raw",
+        text: "codex.UserPromptSubmit /Users/Drew Smith/.codex/transcripts/session.jsonl https://example.test/session",
+      },
+    ]);
+
+    const structured = redactSearchMemoryStructuredMatches(matches);
+    expect(JSON.stringify(structured)).toContain("[local-path-redacted]");
+    expect(JSON.stringify(structured)).toContain("https://example.test/session");
+    expect(JSON.stringify(structured)).not.toContain("/Users/Drew Smith");
+    expect(JSON.stringify(structured)).not.toContain("C:\\\\Users\\\\Drew Smith");
+    expect(JSON.stringify(structured)).not.toContain("\\\\\\\\server\\\\share");
+    expect(structured[0]).not.toHaveProperty("score");
   });
 });
