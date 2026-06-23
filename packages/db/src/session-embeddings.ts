@@ -254,9 +254,8 @@ export function createOpenAiSessionEmbeddingGenerator(
         method: "POST",
       });
       if (!response.ok) {
-        const detail = await readOpenAiErrorDetail(response);
         throw new SessionEmbeddingIndexError({
-          message: `OpenAI embeddings request failed with HTTP ${String(response.status)}${detail === undefined ? "" : `: ${detail}`}`,
+          message: openAiHttpFailureMessage(response.status),
         });
       }
       const body = await readOpenAiEmbeddingResponseBody(response);
@@ -423,16 +422,29 @@ function embeddingMetadata(input: {
   };
 }
 
-async function readOpenAiErrorDetail(response: Response): Promise<string | undefined> {
-  try {
-    const body: unknown = await response.json();
-    if (body === null || typeof body !== "object") return undefined;
-    const error = (body as { error?: unknown }).error;
-    if (error === null || typeof error !== "object") return undefined;
-    const message = (error as { message?: unknown }).message;
-    return typeof message === "string" && message.trim() !== "" ? message : undefined;
-  } catch {
-    return undefined;
+function openAiHttpFailureMessage(status: number): string {
+  return `OpenAI embeddings request failed with HTTP ${String(status)} (${openAiHttpFailureCategory(status)})`;
+}
+
+function openAiHttpFailureCategory(status: number): string {
+  switch (status) {
+    case 400:
+    case 422:
+      return "invalid request";
+    case 401:
+      return "authentication failed";
+    case 403:
+      return "authorization failed";
+    case 408:
+      return "request timeout";
+    case 409:
+      return "request conflict";
+    case 429:
+      return "rate limited";
+    default:
+      if (status >= 400 && status < 500) return "client error";
+      if (status >= 500 && status < 600) return "server error";
+      return "unexpected status";
   }
 }
 

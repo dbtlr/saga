@@ -22,6 +22,78 @@ const testInputs = [
   },
 ];
 
+interface OpenAiHttpFailureCase {
+  body: unknown;
+  expectedMessage: string;
+  leakedDetails: readonly string[];
+  name: string;
+  status: number;
+}
+
+const openAiHttpFailureCases = [
+  {
+    body: {
+      error: {
+        message: "rate limit exceeded for key sk-live-secret-detail",
+        type: "rate_limit_error_with_secret_detail",
+      },
+    },
+    expectedMessage: "OpenAI embeddings request failed with HTTP 429 (rate limited)",
+    leakedDetails: [
+      "rate limit exceeded",
+      "sk-live-secret-detail",
+      "rate_limit_error_with_secret_detail",
+    ],
+    name: "rate limit body",
+    status: 429,
+  },
+  {
+    body: {
+      error: {
+        message: "upstream shard leaked tenant tenant-secret-123",
+      },
+    },
+    expectedMessage: "OpenAI embeddings request failed with HTTP 503 (server error)",
+    leakedDetails: ["upstream shard", "tenant-secret-123"],
+    name: "server error body",
+    status: 503,
+  },
+] satisfies readonly OpenAiHttpFailureCase[];
+
+interface MalformedOpenAiPayloadCase {
+  body: unknown;
+  message: string;
+  name: string;
+}
+
+const malformedOpenAiPayloadCases = [
+  {
+    body: null,
+    message: "OpenAI embeddings response was not an object",
+    name: "null body",
+  },
+  {
+    body: {},
+    message: "OpenAI embeddings response missing data",
+    name: "missing data",
+  },
+  {
+    body: { data: [null] },
+    message: "OpenAI embeddings response data item 0 was not an object",
+    name: "non-object data item",
+  },
+  {
+    body: { data: [{ embedding: [1, 0, 0] }] },
+    message: "OpenAI embeddings response data item 0 missing valid index",
+    name: "missing index",
+  },
+  {
+    body: { data: [{ embedding: ["bad", 0, 0], index: 0 }] },
+    message: "OpenAI embeddings response embedding at index 0 was malformed",
+    name: "non-numeric embedding",
+  },
+] satisfies readonly MalformedOpenAiPayloadCase[];
+
 describe("createOpenAiSessionEmbeddingGenerator", () => {
   test("maps out-of-order OpenAI embedding data by response index", async () => {
     const requests: RequestInit[] = [];
@@ -73,16 +145,35 @@ describe("createOpenAiSessionEmbeddingGenerator", () => {
     });
   });
 
-  test("rejects OpenAI HTTP/API failures with the response error message", async () => {
+  test.each(openAiHttpFailureCases)(
+    "rejects OpenAI HTTP/API failures without leaking provider detail: $name",
+    async ({ body, expectedMessage, leakedDetails, status }) => {
+      const fetchImpl: typeof fetch = async () => jsonResponse(body, { status });
+      const generator = createOpenAiSessionEmbeddingGenerator({
+        apiKey: "sk-test",
+        fetch: fetchImpl,
+        provider: testProvider,
+      });
+
+      const message = await rejectedMessage(() => generator.embedSegments([firstInput]));
+
+      expect(message).toBe(expectedMessage);
+      for (const leakedDetail of leakedDetails) {
+        expect(message).not.toContain(leakedDetail);
+      }
+    },
+  );
+
+  test("categorizes generic OpenAI client failures without reading provider detail", async () => {
     const fetchImpl: typeof fetch = async () =>
       jsonResponse(
         {
           error: {
-            message: "rate limit exceeded",
-            type: "rate_limit_error",
+            message: "untrusted detail with sk-test-secret",
+            type: "untrusted_error_type",
           },
         },
-        { status: 429 },
+        { status: 418 },
       );
     const generator = createOpenAiSessionEmbeddingGenerator({
       apiKey: "sk-test",
@@ -90,46 +181,26 @@ describe("createOpenAiSessionEmbeddingGenerator", () => {
       provider: testProvider,
     });
 
-    await expect(generator.embedSegments([firstInput])).rejects.toThrow(
-      "OpenAI embeddings request failed with HTTP 429: rate limit exceeded",
-    );
+    const message = await rejectedMessage(() => generator.embedSegments([firstInput]));
+
+    expect(message).toBe("OpenAI embeddings request failed with HTTP 418 (client error)");
+    expect(message).not.toContain("untrusted detail");
+    expect(message).not.toContain("sk-test-secret");
+    expect(message).not.toContain("untrusted_error_type");
   });
 
-  test.each([
-    {
-      body: null,
-      message: "OpenAI embeddings response was not an object",
-      name: "null body",
-    },
-    {
-      body: {},
-      message: "OpenAI embeddings response missing data",
-      name: "missing data",
-    },
-    {
-      body: { data: [null] },
-      message: "OpenAI embeddings response data item 0 was not an object",
-      name: "non-object data item",
-    },
-    {
-      body: { data: [{ embedding: [1, 0, 0] }] },
-      message: "OpenAI embeddings response data item 0 missing valid index",
-      name: "missing index",
-    },
-    {
-      body: { data: [{ embedding: ["bad", 0, 0], index: 0 }] },
-      message: "OpenAI embeddings response embedding at index 0 was malformed",
-      name: "non-numeric embedding",
-    },
-  ])("rejects malformed OpenAI embedding payloads: $name", async ({ body, message }) => {
-    const generator = createOpenAiSessionEmbeddingGenerator({
-      apiKey: "sk-test",
-      fetch: async () => jsonResponse(body),
-      provider: testProvider,
-    });
+  test.each(malformedOpenAiPayloadCases)(
+    "rejects malformed OpenAI embedding payloads: $name",
+    async ({ body, message }) => {
+      const generator = createOpenAiSessionEmbeddingGenerator({
+        apiKey: "sk-test",
+        fetch: async () => jsonResponse(body),
+        provider: testProvider,
+      });
 
-    await expect(generator.embedSegments([firstInput])).rejects.toThrow(message);
-  });
+      await expect(generator.embedSegments([firstInput])).rejects.toThrow(message);
+    },
+  );
 
   test("rejects invalid JSON OpenAI embedding payloads", async () => {
     const generator = createOpenAiSessionEmbeddingGenerator({
@@ -197,4 +268,13 @@ function requestBodyText(request: RequestInit | undefined): string {
     throw new Error("expected JSON string request body");
   }
   return request.body;
+}
+
+async function rejectedMessage(action: () => Promise<unknown>): Promise<string> {
+  try {
+    await action();
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+  throw new Error("expected action to reject");
 }
