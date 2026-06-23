@@ -16,6 +16,8 @@ const DEFAULT_MAX_SEGMENTS_PER_TURN = 5;
 const MAX_RAW_RECORDS = 50;
 const MAX_TURNS = 500;
 const MAX_SEGMENTS_PER_TURN = 25;
+const RAW_BODY_EXPOSURE_WARNING =
+  "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.";
 
 type JsonRecord = Record<string, unknown>;
 type TimestampValue = Date | string | null;
@@ -156,6 +158,13 @@ export interface SessionRawSessionRecordMetadata {
   snapshotOrdinal: number;
   sourceLocator: string | null;
   status: string;
+  rawBodyExposure?: SessionRawBodyExposureMetadata;
+}
+
+export interface SessionRawBodyExposureMetadata {
+  mode: "raw_forensic";
+  requestedBy: "includeRawBody";
+  warning: string;
 }
 
 export interface SessionTurnMetadata {
@@ -969,11 +978,15 @@ function mapRawSessionRecord(
   row: CommonSessionRow,
   options: { includeRawBody?: boolean } = {},
 ): SessionRawSessionRecordMetadata {
+  const includeRawBody =
+    options.includeRawBody === true &&
+    row.raw_record_is_active &&
+    (Object.hasOwn(row, "raw_record_body_json") || Object.hasOwn(row, "raw_record_body_text"));
   return {
-    ...(options.includeRawBody === true && Object.hasOwn(row, "raw_record_body_json")
+    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_json")
       ? { bodyJson: row.raw_record_body_json }
       : {}),
-    ...(options.includeRawBody === true && Object.hasOwn(row, "raw_record_body_text")
+    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_text")
       ? { bodyText: row.raw_record_body_text }
       : {}),
     capturedAt: normalizeRequiredTimestamp(
@@ -993,6 +1006,15 @@ function mapRawSessionRecord(
     snapshotOrdinal: row.raw_record_snapshot_ordinal,
     sourceLocator: redactAgentFacingSourceLocator(row.raw_record_source_locator),
     status: row.raw_record_status,
+    ...(includeRawBody
+      ? {
+          rawBodyExposure: {
+            mode: "raw_forensic",
+            requestedBy: "includeRawBody",
+            warning: RAW_BODY_EXPOSURE_WARNING,
+          },
+        }
+      : {}),
   };
 }
 

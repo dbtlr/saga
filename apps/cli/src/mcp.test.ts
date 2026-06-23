@@ -352,6 +352,47 @@ describe("redactMcpStructuredOutput", () => {
     expect(JSON.stringify(redacted)).not.toContain("C:\\\\Users\\\\drew");
     expect(JSON.stringify(redacted)).not.toContain("file:///tmp/saga/session.jsonl");
   });
+
+  test("preserves explicit raw forensic body fields when warning metadata is present", () => {
+    const redacted = redactMcpStructuredOutput({
+      rawSessionRecord: {
+        bodyJson: {
+          path: "/work/saga/raw-session.jsonl",
+          text: "skipped-secret-needle",
+        },
+        bodyText: "raw body from /work/saga/raw-session.jsonl skipped-secret-needle",
+        id: "raw-1",
+        metadata: {
+          capturedText: "safe metadata path /work/saga/session.jsonl",
+        },
+        rawBodyExposure: {
+          mode: "raw_forensic",
+          requestedBy: "includeRawBody",
+          warning:
+            "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+        },
+        sourceLocator: "file:///work/saga/raw-session.jsonl",
+      },
+    });
+
+    expect(redacted).toMatchObject({
+      rawSessionRecord: {
+        bodyJson: {
+          path: "/work/saga/raw-session.jsonl",
+          text: "skipped-secret-needle",
+        },
+        bodyText: "raw body from /work/saga/raw-session.jsonl skipped-secret-needle",
+        metadata: {
+          capturedText: "safe metadata path [local-path-redacted]",
+        },
+        rawBodyExposure: {
+          mode: "raw_forensic",
+          requestedBy: "includeRawBody",
+        },
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toContain("sourceLocator");
+  });
 });
 
 describe("searchMemoryEntries", () => {

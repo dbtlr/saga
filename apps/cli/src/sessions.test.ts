@@ -10,6 +10,7 @@ import type {
   RecentSessionRecord,
   RedactSessionSafetyResult,
   SessionDetail,
+  SessionRawSessionRecordMetadata,
 } from "@saga/db";
 import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
 import { runSessionsCommand } from "./sessions.js";
@@ -437,10 +438,41 @@ describe("runSessionsCommand", () => {
       },
     );
 
+    expect(output).toContain("Raw Body Exposure");
+    expect(output).toContain("WARNING");
     expect(output).toContain("body text");
     expect(output).toContain("raw transcript body");
     expect(output).toContain("body json");
     expect(output).toContain("raw-json-body");
+    expect(output).toContain("raw body warning");
+    expect(output).toContain("raw forensic body text");
+    expect(output).toContain("raw forensic body json");
+    expect(output).toContain("normal Saga surfaces hide");
+  });
+
+  test("keeps explicit raw forensic body fields raw in structured output", async () => {
+    const projectRoot = boundProject();
+    const output = await runSessionsCommand(["show", "session-id", "--raw-body"], renderOptions, {
+      cwd: projectRoot,
+      getDetail: async () => sessionDetail({ includeRawBody: true }),
+    });
+
+    const parsed = JSON.parse(output);
+    expect(parsed.rawSessionRecords[0]).toMatchObject({
+      rawBodyExposure: {
+        mode: "raw_forensic",
+        requestedBy: "includeRawBody",
+      },
+    });
+    expect(parsed.rawSessionRecords[0].rawBodyExposure.warning).toContain(
+      "normal Saga surfaces hide",
+    );
+    expect(parsed.rawSessionRecords[0].bodyText).toContain("/Users/example/raw/session.jsonl");
+    expect(parsed.rawSessionRecords[0].bodyJson.path).toBe("/Users/example/raw/session.jsonl");
+    expect(parsed.session.sourceLocator).toBe("[local-path-redacted]");
+    expect(JSON.stringify(parsed.activityIntervals)).not.toContain(
+      "/Users/example/.codex/transcripts/session.jsonl",
+    );
   });
 
   test("renders the bounded raw session snapshot list without duplicate active or selected blocks", async () => {
@@ -788,14 +820,21 @@ function redactResult(): RedactSessionSafetyResult {
 
 function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail {
   const row = recentRecord();
-  const rawSessionRecord =
+  const rawSessionRecord: SessionRawSessionRecordMetadata =
     input.includeRawBody === true
       ? {
           ...row.rawSessionRecord,
           bodyJson: {
+            path: "/Users/example/raw/session.jsonl",
             value: "raw-json-body",
           },
-          bodyText: "raw transcript body",
+          bodyText: "raw transcript body /Users/example/raw/session.jsonl skipped-secret-needle",
+          rawBodyExposure: {
+            mode: "raw_forensic",
+            requestedBy: "includeRawBody",
+            warning:
+              "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+          },
         }
       : row.rawSessionRecord;
   return {

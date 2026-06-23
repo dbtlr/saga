@@ -318,7 +318,7 @@ async function showSession(
     {
       id: detail.session.id,
       records: renderSessionDetail(detail, options),
-      value: redactAgentFacingSessionValue(detail),
+      value: sessionDetailValue(detail),
     },
     options.format,
   );
@@ -562,6 +562,21 @@ function renderSessionDetail(detail: SessionDetail, options: RenderOptions): str
     ),
   ];
 
+  const rawBodyWarning = rawBodyExposureWarning(detail);
+  if (rawBodyWarning !== undefined) {
+    blocks.push(
+      recordBlock(
+        "Raw Body Exposure",
+        [
+          { label: "WARNING", value: rawBodyWarning },
+          { label: "mode", value: "raw forensic" },
+          { label: "requested by", value: "--raw-body" },
+        ],
+        options,
+      ),
+    );
+  }
+
   const renderedRawRecordIds = new Set<string>();
   for (const record of detail.rawSessionRecords) {
     renderedRawRecordIds.add(record.id);
@@ -658,15 +673,70 @@ function renderRawSessionRecord(
       { label: "hash", value: record.contentHash },
       { label: "metadata", value: safeCompactJson(record.metadata) },
       { label: "provenance", value: safeCompactJson(record.provenance) },
+      ...(record.rawBodyExposure === undefined
+        ? []
+        : [
+            {
+              label: "raw body warning",
+              value: record.rawBodyExposure.warning,
+            },
+          ]),
       ...(record.bodyText === undefined
         ? []
-        : [{ label: "body text", value: record.bodyText ?? "none" }]),
+        : [{ label: "raw forensic body text", value: record.bodyText ?? "none" }]),
       ...(record.bodyJson === undefined
         ? []
-        : [{ label: "body json", value: compactJson(record.bodyJson) }]),
+        : [{ label: "raw forensic body json", value: compactJson(record.bodyJson) }]),
     ],
     options,
   );
+}
+
+function sessionDetailValue(detail: SessionDetail): unknown {
+  const redacted = redactAgentFacingSessionValue(detail);
+  if (!isRecord(redacted)) return redacted;
+  restoreRawForensicBodies(redacted, detail);
+  return redacted;
+}
+
+function restoreRawForensicBodies(redacted: Record<string, unknown>, detail: SessionDetail): void {
+  restoreRawRecord(redacted.activeRawSessionRecord, detail.activeRawSessionRecord);
+  restoreRawRecord(redacted.selectedRawSessionRecord, detail.selectedRawSessionRecord);
+  if (Array.isArray(redacted.rawSessionRecords)) {
+    for (let index = 0; index < redacted.rawSessionRecords.length; index += 1) {
+      restoreRawRecord(redacted.rawSessionRecords[index], detail.rawSessionRecords[index]);
+    }
+  }
+}
+
+function restoreRawRecord(
+  redactedRecord: unknown,
+  originalRecord: SessionRawSessionRecordMetadata | null | undefined,
+): void {
+  if (!isRecord(redactedRecord) || originalRecord === null || originalRecord === undefined) return;
+  if (!hasRawBodyExposure(originalRecord)) return;
+  if (Object.hasOwn(originalRecord, "bodyText")) redactedRecord.bodyText = originalRecord.bodyText;
+  if (Object.hasOwn(originalRecord, "bodyJson")) redactedRecord.bodyJson = originalRecord.bodyJson;
+}
+
+function rawBodyExposureWarning(detail: SessionDetail): string | undefined {
+  return (
+    detail.rawSessionRecords.find(hasRawBodyExposure)?.rawBodyExposure?.warning ??
+    (hasRawBodyExposure(detail.activeRawSessionRecord)
+      ? detail.activeRawSessionRecord.rawBodyExposure.warning
+      : undefined) ??
+    (hasRawBodyExposure(detail.selectedRawSessionRecord)
+      ? detail.selectedRawSessionRecord.rawBodyExposure.warning
+      : undefined)
+  );
+}
+
+function hasRawBodyExposure(
+  record: SessionRawSessionRecordMetadata | null | undefined,
+): record is SessionRawSessionRecordMetadata & {
+  rawBodyExposure: NonNullable<SessionRawSessionRecordMetadata["rawBodyExposure"]>;
+} {
+  return record?.rawBodyExposure?.mode === "raw_forensic";
 }
 
 function renderTurn(turn: SessionDetailTurn, options: RenderOptions): string {
