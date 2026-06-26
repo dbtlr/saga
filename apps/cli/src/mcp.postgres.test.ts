@@ -6,7 +6,7 @@ import postgres from "postgres";
 import { insertRawEvent, makeDatabase } from "@saga/db";
 import { loadRuntimeConfig } from "@saga/runtime";
 import { Effect } from "effect";
-import { inspectRecentRawEvents } from "./ingest.js";
+import { ingestClaims, inspectRecentRawEvents } from "./ingest.js";
 import { initProject } from "./init.js";
 import { createProjectMcpServer } from "./mcp.js";
 import { runSessionsCommand } from "./sessions.js";
@@ -226,7 +226,7 @@ describePostgres("MCP session recall postgres integration", () => {
           occurredAt: "2026-06-22T12:00:01.000Z",
           payload: {
             hook_event_name: "UserPromptSubmit",
-            prompt: `raw hook prompt ${secret}`,
+            prompt: `Please remember raw hook prompt ${secret}.`,
           },
           provenance: {
             hookEventName: "UserPromptSubmit",
@@ -244,6 +244,8 @@ describePostgres("MCP session recall postgres integration", () => {
     } finally {
       await Effect.runPromise(service.close());
     }
+    const claimProjection = await ingestClaims({ cwd: projectRoot, limit: 10 }, jsonRenderOptions);
+    expect(claimProjection).toContain('"projected": 1');
 
     const server = createProjectMcpServer({ cwd: projectRoot });
     const before = await server.handle({

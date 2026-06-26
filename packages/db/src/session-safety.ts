@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { sql as drizzleSql } from "drizzle-orm";
 import { Data, Effect } from "effect";
 import type { DatabaseError, DatabaseService } from "./database.js";
 import {
-  importRawSessionRecord,
+  importRawSessionRecordInTransaction,
   type RawSessionContentType,
   type RawSessionHarness,
   type RawSessionImportResult,
@@ -254,10 +255,6 @@ export function redactSessionSafety(
         sessionId: activeRecord.session_id,
         workspaceId,
       });
-      const rawEventIds = await findAssociatedRawEventIds(service.sql as unknown as SqlTag, {
-        sessionId: activeRecord.session_id,
-        workspaceId,
-      });
 
       const redactedAt = new Date();
       const auditMetadata = {
@@ -268,78 +265,85 @@ export function redactSessionSafety(
         redactedAt: redactedAt.toISOString(),
         replacementCount: redaction.replacementCount,
       };
-      const importResult = await Effect.runPromise(
-        importRawSessionRecord(service, {
-          author: {
-            displayName: activeRecord.author_display_name ?? undefined,
-            externalSubject: activeRecord.author_external_subject ?? undefined,
-            handle: activeRecord.author_handle,
-          },
-          capturedAt: redactedAt,
-          contentType: parseContentType(activeRecord.raw_record_content_type),
-          harness: parseHarness(activeRecord.raw_record_harness),
-          harnessSessionId: activeRecord.raw_record_harness_session_id ?? undefined,
-          host: hostFromSourceBinding(activeRecord),
-          locator: activeRecord.raw_record_source_locator ?? undefined,
-          metadata: {
-            redaction: {
-              ...auditMetadata,
-              previousSnapshotOrdinal: activeRecord.raw_record_snapshot_ordinal,
+
+      return service.db.transaction(async (tx) => {
+        const rawEventIds = await findAssociatedRawEventIdsDb(tx as DatabaseService["db"], {
+          sessionId: activeRecord.session_id,
+          workspaceId,
+        });
+        const importResult = await Effect.runPromise(
+          importRawSessionRecordInTransaction(tx as DatabaseService["db"], {
+            author: {
+              displayName: activeRecord.author_display_name ?? undefined,
+              externalSubject: activeRecord.author_external_subject ?? undefined,
+              handle: activeRecord.author_handle,
+            },
+            capturedAt: redactedAt,
+            contentType: parseContentType(activeRecord.raw_record_content_type),
+            harness: parseHarness(activeRecord.raw_record_harness),
+            harnessSessionId: activeRecord.raw_record_harness_session_id ?? undefined,
+            host: hostFromSourceBinding(activeRecord),
+            locator: activeRecord.raw_record_source_locator ?? undefined,
+            metadata: {
+              redaction: {
+                ...auditMetadata,
+                previousSnapshotOrdinal: activeRecord.raw_record_snapshot_ordinal,
+                redactedFromRawSessionRecordId: activeRecord.raw_record_id,
+              },
+            },
+            model: activeRecord.session_model ?? undefined,
+            provenance: {
+              operation: "redacted",
+              originClassification,
+              redactedAt: redactedAt.toISOString(),
+              redactedBy: "saga session safety",
               redactedFromRawSessionRecordId: activeRecord.raw_record_id,
             },
-          },
-          model: activeRecord.session_model ?? undefined,
-          provenance: {
-            operation: "redacted",
-            originClassification,
-            redactedAt: redactedAt.toISOString(),
-            redactedBy: "saga session safety",
-            redactedFromRawSessionRecordId: activeRecord.raw_record_id,
-          },
-          rawContent: redaction.content,
-          rawRecord: {
-            inactivePrevious: {
-              metadata: {
-                redactionTombstone: auditMetadata,
+            rawContent: redaction.content,
+            rawRecord: {
+              inactivePrevious: {
+                metadata: {
+                  redactionTombstone: auditMetadata,
+                },
+                provenance: {
+                  operation: "redacted",
+                  originClassification,
+                  redactedAt: redactedAt.toISOString(),
+                  redactedBy: "saga session safety",
+                },
+                status: "redacted",
               },
-              provenance: {
-                operation: "redacted",
-                originClassification,
-                redactedAt: redactedAt.toISOString(),
-                redactedBy: "saga session safety",
-              },
+              expectedActiveRawSessionRecordId: activeRecord.raw_record_id,
+              redactedFromRawSessionRecordId: activeRecord.raw_record_id,
               status: "redacted",
             },
-            expectedActiveRawSessionRecordId: activeRecord.raw_record_id,
-            redactedFromRawSessionRecordId: activeRecord.raw_record_id,
-            status: "redacted",
-          },
-          status: parseSessionStatus(activeRecord.session_status),
-          title: activeRecord.session_title ?? undefined,
+            status: parseSessionStatus(activeRecord.session_status),
+            title: activeRecord.session_title ?? undefined,
+            workspaceId,
+          }),
+        );
+        const redactedRawEvents = await redactAssociatedRawEventsDb(tx as DatabaseService["db"], {
+          auditMetadata,
+          patterns,
+          rawEventIds,
+          redactedAt,
           workspaceId,
-        }),
-      );
-      const redactedRawEvents = await redactAssociatedRawEvents(service.sql as unknown as SqlTag, {
-        auditMetadata,
-        patterns,
-        rawEventIds,
-        redactedAt,
-        workspaceId,
-      });
+        });
 
-      return {
-        operation: "redacted",
-        originClassification,
-        patternCount: patterns.length,
-        previousRawSessionRecordId: activeRecord.raw_record_id,
-        rawSessionImport: importResult,
-        reasonProvided: reason !== null,
-        redactedAt,
-        redactedRawEvents,
-        replacementCount: redaction.replacementCount,
-        sessionId: activeRecord.session_id,
-        workspaceId,
-      };
+        return {
+          operation: "redacted",
+          originClassification,
+          patternCount: patterns.length,
+          previousRawSessionRecordId: activeRecord.raw_record_id,
+          rawSessionImport: importResult,
+          reasonProvided: reason !== null,
+          redactedAt,
+          redactedRawEvents,
+          replacementCount: redaction.replacementCount,
+          sessionId: activeRecord.session_id,
+          workspaceId,
+        };
+      });
     },
     catch: (cause) =>
       cause instanceof SessionSafetyError
@@ -443,6 +447,11 @@ async function findAssociatedRawEventIds(
       where r.workspace_id = ${input.workspaceId}
         and r.session_id = ${input.sessionId}
         and r.metadata ? 'triggerRawEventId'
+      union
+      select jsonb_array_elements_text(st.raw_event_ids) as id
+      from session_turns st
+      where st.workspace_id = ${input.workspaceId}
+        and st.session_id = ${input.sessionId}
     )
     select distinct re.id::text as id
     from raw_events re
@@ -466,8 +475,68 @@ async function findAssociatedRawEventIds(
   return rows.map((row) => row.id);
 }
 
-async function redactAssociatedRawEvents(
-  sql: SqlTag,
+async function findAssociatedRawEventIdsDb(
+  db: DatabaseService["db"],
+  input: { sessionId: string; workspaceId: string },
+): Promise<string[]> {
+  const rows = rowsFromExecute<{ id: string }>(
+    await db.execute(drizzleSql`
+      with target_session as (
+        select id, source_binding_id, harness, harness_session_id
+        from sessions
+        where workspace_id = ${input.workspaceId}
+          and id = ${input.sessionId}
+        limit 1
+      ),
+      explicit_raw_event_ids as (
+        select ai.settlement_trigger_raw_event_id::text as id
+        from activity_intervals ai
+        where ai.workspace_id = ${input.workspaceId}
+          and ai.session_id = ${input.sessionId}
+          and ai.settlement_trigger_raw_event_id is not null
+        union
+        select r.provenance->>'rawEventId' as id
+        from raw_session_records r
+        where r.workspace_id = ${input.workspaceId}
+          and r.session_id = ${input.sessionId}
+          and r.provenance ? 'rawEventId'
+        union
+        select r.metadata->>'triggerRawEventId' as id
+        from raw_session_records r
+        where r.workspace_id = ${input.workspaceId}
+          and r.session_id = ${input.sessionId}
+          and r.metadata ? 'triggerRawEventId'
+        union
+        select jsonb_array_elements_text(st.raw_event_ids) as id
+        from session_turns st
+        where st.workspace_id = ${input.workspaceId}
+          and st.session_id = ${input.sessionId}
+      )
+      select distinct re.id::text as id
+      from raw_events re
+      inner join target_session s on true
+      where re.workspace_id = ${input.workspaceId}
+        and (
+          re.session_id = s.id::text
+          or (
+            s.harness_session_id is not null
+            and re.source_binding_id = s.source_binding_id
+            and re.source_type = s.harness
+            and re.session_id = s.harness_session_id
+          )
+          or re.id::text in (
+            select id
+            from explicit_raw_event_ids
+            where id is not null and id <> ''
+          )
+        )
+    `),
+  );
+  return rows.map((row) => row.id);
+}
+
+async function redactAssociatedRawEventsDb(
+  db: DatabaseService["db"],
   input: {
     auditMetadata: JsonRecord;
     patterns: readonly NormalizedSessionRedactionPattern[];
@@ -478,30 +547,30 @@ async function redactAssociatedRawEvents(
 ): Promise<number> {
   if (input.rawEventIds.length === 0) return 0;
 
-  const rows = await sql<
-    Array<{
-      actor_id: string;
-      external_event_id: string;
-      id: string;
-      payload: JsonRecord;
-      provenance: JsonRecord;
-      session_id: string | null;
-      source_id: string;
-      trace_id: string | null;
-    }>
-  >`
-    select id::text,
-      actor_id,
-      external_event_id,
-      payload,
-      provenance,
-      session_id,
-      source_id,
-      trace_id
-    from raw_events
-    where workspace_id = ${input.workspaceId}
-      and id = any(${input.rawEventIds}::uuid[])
-  `;
+  const rows = rowsFromExecute<{
+    actor_id: string;
+    external_event_id: string;
+    id: string;
+    payload: JsonRecord;
+    provenance: JsonRecord;
+    session_id: string | null;
+    source_id: string;
+    trace_id: string | null;
+  }>(
+    await db.execute(drizzleSql`
+      select id::text,
+        actor_id,
+        external_event_id,
+        payload,
+        provenance,
+        session_id,
+        source_id,
+        trace_id
+      from raw_events
+      where workspace_id = ${input.workspaceId}
+        and id = any(${uuidArraySql(input.rawEventIds)})
+    `),
+  );
 
   let redacted = 0;
   for (const row of rows) {
@@ -529,7 +598,12 @@ async function redactAssociatedRawEvents(
     if (replacementCount === 0) continue;
 
     redacted += 1;
-    await sql`
+    await invalidateClaimProjectionsForRawEventDb(db, {
+      rawEventId: row.id,
+      redactedAt: input.redactedAt,
+      workspaceId: input.workspaceId,
+    });
+    await db.execute(drizzleSql`
       update raw_events
       set actor_id = ${actorRedaction.content},
         external_event_id = ${
@@ -554,9 +628,51 @@ async function redactAssociatedRawEvents(
         updated_at = ${input.redactedAt.toISOString()}
       where workspace_id = ${input.workspaceId}
         and id = ${row.id}
-    `;
+    `);
   }
   return redacted;
+}
+
+async function invalidateClaimProjectionsForRawEventDb(
+  db: DatabaseService["db"],
+  input: { rawEventId: string; redactedAt: Date; workspaceId: string },
+): Promise<void> {
+  const claimRows = rowsFromExecute<{ claim_key: string; event_id: string }>(
+    await db.execute(drizzleSql`
+      select claim_key, id::text as event_id
+      from claim_events
+      where workspace_id = ${input.workspaceId}
+        and raw_event_id = ${input.rawEventId}
+    `),
+  );
+  if (claimRows.length === 0) return;
+
+  const claimKeys = [...new Set(claimRows.map((row) => row.claim_key))];
+  await db.execute(drizzleSql`
+    delete from current_claims
+    where workspace_id = ${input.workspaceId}
+      and claim_key in (${drizzleSql.join(
+        claimKeys.map((claimKey) => drizzleSql`${claimKey}`),
+        drizzleSql`, `,
+      )})
+  `);
+  await db.execute(drizzleSql`
+    update claim_events
+    set claim_text = '[REDACTED]',
+      evidence = ${JSON.stringify(redactedClaimTombstone(input))}::jsonb,
+      attributes = ${JSON.stringify(redactedClaimTombstone(input))}::jsonb,
+      updated_at = ${input.redactedAt.toISOString()}
+    where workspace_id = ${input.workspaceId}
+      and raw_event_id = ${input.rawEventId}
+  `);
+}
+
+function redactedClaimTombstone(input: { rawEventId: string; redactedAt: Date }): JsonRecord {
+  return {
+    operation: "redacted",
+    rawEventId: input.rawEventId,
+    redactedAt: input.redactedAt.toISOString(),
+  };
 }
 
 async function assertRedactedSnapshotIsNew(
@@ -793,6 +909,19 @@ function asRecord(value: unknown): JsonRecord {
 
 function isPlainRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rowsFromExecute<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (isPlainRecord(value) && Array.isArray(value.rows)) return value.rows as T[];
+  return [];
+}
+
+function uuidArraySql(values: readonly string[]) {
+  return drizzleSql`array[${drizzleSql.join(
+    values.map((value) => drizzleSql`${value}`),
+    drizzleSql`, `,
+  )}]::uuid[]`;
 }
 
 function sha256(value: string): string {
