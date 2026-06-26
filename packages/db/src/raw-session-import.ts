@@ -118,6 +118,19 @@ export function importRawSessionRecord(
   });
 }
 
+export function importRawSessionRecordInTransaction(
+  tx: DatabaseService["db"],
+  input: RawSessionImportInput,
+): Effect.Effect<RawSessionImportResult, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: () => importRawSessionRecordInTransactionUnsafe(tx, normalizeInput(input)),
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
 async function importRawSessionRecordWithConflictRetry(
   service: DatabaseService,
   input: NormalizedRawSessionImportInput,
@@ -137,294 +150,301 @@ async function importRawSessionRecordUnsafe(
   service: DatabaseService,
   input: NormalizedRawSessionImportInput,
 ): Promise<RawSessionImportResult> {
-  return service.db.transaction(async (tx) => {
-    const [workspace] = await tx
-      .select({ id: workspaces.id })
-      .from(workspaces)
-      .where(eq(workspaces.id, input.workspaceId))
-      .limit(1);
+  return service.db.transaction((tx) =>
+    importRawSessionRecordInTransactionUnsafe(tx as DatabaseService["db"], input),
+  );
+}
 
-    if (workspace === undefined) {
-      throw new RawSessionImportError({
-        message: "workspace binding is required before importing raw sessions",
-      });
-    }
+async function importRawSessionRecordInTransactionUnsafe(
+  tx: DatabaseService["db"],
+  input: NormalizedRawSessionImportInput,
+): Promise<RawSessionImportResult> {
+  const [workspace] = await tx
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
 
-    const now = new Date();
-    const transcriptNormalization = normalizeTranscript(input);
-    const noopImport = await findCurrentNoopRawSessionImport(tx, {
-      input,
-      now,
-      transcriptNormalization,
+  if (workspace === undefined) {
+    throw new RawSessionImportError({
+      message: "workspace binding is required before importing raw sessions",
     });
-    if (noopImport !== undefined) {
-      const relationshipSession = await deriveSessionRelationships(tx, {
-        input,
-        session: noopImport.session,
-      });
-      return {
-        ...noopImport,
-        session: relationshipSession,
-      };
-    }
+  }
 
-    const [authorUser] = await tx
-      .insert(users)
-      .values({
+  const now = new Date();
+  const transcriptNormalization = normalizeTranscript(input);
+  const noopImport = await findCurrentNoopRawSessionImport(tx, {
+    input,
+    now,
+    transcriptNormalization,
+  });
+  if (noopImport !== undefined) {
+    const relationshipSession = await deriveSessionRelationships(tx, {
+      input,
+      session: noopImport.session,
+    });
+    return {
+      ...noopImport,
+      session: relationshipSession,
+    };
+  }
+
+  const [authorUser] = await tx
+    .insert(users)
+    .values({
+      displayName: input.author.displayName,
+      externalSubject: input.author.externalSubject ?? input.host.id,
+      handle: input.author.handle,
+      identitySource: "host",
+      metadata: {
+        hostId: input.host.id,
+        hostLabel: input.host.label,
+      },
+      workspaceId: input.workspaceId,
+    })
+    .onConflictDoUpdate({
+      set: {
         displayName: input.author.displayName,
         externalSubject: input.author.externalSubject ?? input.host.id,
-        handle: input.author.handle,
-        identitySource: "host",
         metadata: {
           hostId: input.host.id,
           hostLabel: input.host.label,
         },
-        workspaceId: input.workspaceId,
-      })
-      .onConflictDoUpdate({
-        set: {
-          displayName: input.author.displayName,
-          externalSubject: input.author.externalSubject ?? input.host.id,
-          metadata: {
-            hostId: input.host.id,
-            hostLabel: input.host.label,
-          },
-          updatedAt: now,
-        },
-        target: [users.workspaceId, users.identitySource, users.handle, users.externalSubject],
-      })
-      .returning();
-    if (authorUser === undefined) {
-      throw new RawSessionImportError({ message: "host user attribution returned no row" });
-    }
+        updatedAt: now,
+      },
+      target: [users.workspaceId, users.identitySource, users.handle, users.externalSubject],
+    })
+    .returning();
+  if (authorUser === undefined) {
+    throw new RawSessionImportError({ message: "host user attribution returned no row" });
+  }
 
-    const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
+  const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
 
-    const session = await resolveSession(tx, {
-      authorUserId: authorUser.id,
+  const session = await resolveSession(tx, {
+    authorUserId: authorUser.id,
+    input,
+    sourceBindingId: sourceBinding.id,
+  });
+
+  const [activeRecord] = await tx
+    .select()
+    .from(rawSessionRecords)
+    .where(
+      and(
+        eq(rawSessionRecords.workspaceId, input.workspaceId),
+        eq(rawSessionRecords.sessionId, session.id),
+        eq(rawSessionRecords.isActive, true),
+      ),
+    )
+    .limit(1);
+  assertExpectedActiveRawSessionRecord(input, activeRecord);
+
+  const existingRecord = await findRawSessionRecordByContentHash(tx, {
+    contentHash: input.contentHash,
+    sessionId: session.id,
+  });
+  if (existingRecord !== undefined) {
+    const existing = await reuseExistingRawSessionRecord(tx, {
+      existingRecord,
       input,
-      sourceBindingId: sourceBinding.id,
+      now,
+      session,
+      transcriptNormalization,
     });
+    const relationshipSession = await deriveSessionRelationships(tx, {
+      input,
+      session: existing.session,
+    });
+    return {
+      activityInterval: existing.activityInterval,
+      authorUser,
+      contentHash: input.contentHash,
+      operation: "unchanged",
+      rawSessionRecord: existing.rawSessionRecord,
+      session: relationshipSession,
+      sourceBinding,
+    };
+  }
 
-    const [activeRecord] = await tx
-      .select()
-      .from(rawSessionRecords)
+  const [maxSnapshot] = await tx
+    .select({ snapshotOrdinal: rawSessionRecords.snapshotOrdinal })
+    .from(rawSessionRecords)
+    .where(eq(rawSessionRecords.sessionId, session.id))
+    .orderBy(desc(rawSessionRecords.snapshotOrdinal))
+    .limit(1);
+
+  const activityResolution = await resolveActivityInterval(tx, {
+    input,
+    now,
+    session,
+    transcriptNormalization,
+  });
+  const activityInterval = activityResolution.activityInterval;
+  const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
+  if (activeRecord !== undefined) {
+    const inactivePrevious = input.rawRecord?.inactivePrevious;
+    const [inactiveRawSessionRecord] = await tx
+      .update(rawSessionRecords)
+      .set({
+        isActive: false,
+        metadata:
+          inactivePrevious?.metadata === undefined
+            ? activeRecord.metadata
+            : {
+                ...asRecord(activeRecord.metadata),
+                ...inactivePrevious.metadata,
+              },
+        provenance:
+          inactivePrevious?.provenance === undefined
+            ? activeRecord.provenance
+            : {
+                ...asRecord(activeRecord.provenance),
+                ...inactivePrevious.provenance,
+              },
+        status: inactivePrevious?.status ?? activeRecord.status,
+        updatedAt: now,
+      })
       .where(
         and(
           eq(rawSessionRecords.workspaceId, input.workspaceId),
-          eq(rawSessionRecords.sessionId, session.id),
+          eq(rawSessionRecords.id, activeRecord.id),
           eq(rawSessionRecords.isActive, true),
         ),
       )
-      .limit(1);
-    assertExpectedActiveRawSessionRecord(input, activeRecord);
+      .returning({ id: rawSessionRecords.id });
+    if (inactiveRawSessionRecord === undefined) {
+      if (input.rawRecord?.expectedActiveRawSessionRecordId === undefined) {
+        const racedRecord = await findRawSessionRecordByContentHash(tx, {
+          contentHash: input.contentHash,
+          sessionId: session.id,
+        });
+        if (racedRecord !== undefined) {
+          const existing = await reuseExistingRawSessionRecord(tx, {
+            existingRecord: racedRecord,
+            input,
+            now,
+            session,
+            transcriptNormalization,
+          });
+          const relationshipSession = await deriveSessionRelationships(tx, {
+            input,
+            session: existing.session,
+          });
+          return {
+            activityInterval: existing.activityInterval,
+            authorUser,
+            contentHash: input.contentHash,
+            operation: "unchanged",
+            rawSessionRecord: existing.rawSessionRecord,
+            session: relationshipSession,
+            sourceBinding,
+          };
+        }
+      }
+      throw new RawSessionImportError({
+        message: "active raw session record changed during import",
+      });
+    }
+  }
 
-    const existingRecord = await findRawSessionRecordByContentHash(tx, {
+  const rawBody = buildRawBody(input);
+  const [insertedRawSessionRecord] = await tx
+    .insert(rawSessionRecords)
+    .values({
+      activityIntervalId: activityInterval.id,
+      authorUserId: authorUser.id,
+      bodyJson: rawBody.bodyJson,
+      bodyText: rawBody.bodyText,
+      capturedAt: input.capturedAt,
+      contentBytes: input.contentBytes,
+      contentHash: input.contentHash,
+      contentType: input.contentType,
+      harness: input.harness,
+      harnessSessionId: input.harnessSessionId,
+      isActive: true,
+      metadata: {
+        ...input.metadata,
+        contentBytes: input.contentBytes,
+        harness: input.harnessMetadata,
+        normalization: transcriptNormalization?.metadata,
+        sourceLocatorHash: input.sourceLocatorHash,
+      },
+      provenance: input.provenance,
+      redactedFromRawSessionRecordId: input.rawRecord?.redactedFromRawSessionRecordId,
+      sessionId: session.id,
+      snapshotOrdinal: nextSnapshotOrdinal,
+      sourceBindingId: sourceBinding.id,
+      sourceLocator: input.locator,
+      status: input.rawRecord?.status ?? "captured",
+      workspaceId: input.workspaceId,
+    })
+    .onConflictDoNothing({
+      target: [rawSessionRecords.sessionId, rawSessionRecords.contentHash],
+    })
+    .returning();
+  if (insertedRawSessionRecord === undefined) {
+    const racedRecord = await findRawSessionRecordByContentHash(tx, {
       contentHash: input.contentHash,
       sessionId: session.id,
     });
-    if (existingRecord !== undefined) {
-      const existing = await reuseExistingRawSessionRecord(tx, {
-        existingRecord,
-        input,
-        now,
-        session,
-        transcriptNormalization,
-      });
-      const relationshipSession = await deriveSessionRelationships(tx, {
-        input,
-        session: existing.session,
-      });
-      return {
-        activityInterval: existing.activityInterval,
-        authorUser,
-        contentHash: input.contentHash,
-        operation: "unchanged",
-        rawSessionRecord: existing.rawSessionRecord,
-        session: relationshipSession,
-        sourceBinding,
-      };
+    if (racedRecord === undefined) {
+      throw new RawSessionImportError({ message: "raw session record insert returned no row" });
     }
-
-    const [maxSnapshot] = await tx
-      .select({ snapshotOrdinal: rawSessionRecords.snapshotOrdinal })
-      .from(rawSessionRecords)
-      .where(eq(rawSessionRecords.sessionId, session.id))
-      .orderBy(desc(rawSessionRecords.snapshotOrdinal))
-      .limit(1);
-
-    const activityResolution = await resolveActivityInterval(tx, {
+    const existing = await reuseExistingRawSessionRecord(tx, {
+      existingRecord: racedRecord,
       input,
       now,
       session,
       transcriptNormalization,
     });
-    const activityInterval = activityResolution.activityInterval;
-    const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
-    if (activeRecord !== undefined) {
-      const inactivePrevious = input.rawRecord?.inactivePrevious;
-      const [inactiveRawSessionRecord] = await tx
-        .update(rawSessionRecords)
-        .set({
-          isActive: false,
-          metadata:
-            inactivePrevious?.metadata === undefined
-              ? activeRecord.metadata
-              : {
-                  ...asRecord(activeRecord.metadata),
-                  ...inactivePrevious.metadata,
-                },
-          provenance:
-            inactivePrevious?.provenance === undefined
-              ? activeRecord.provenance
-              : {
-                  ...asRecord(activeRecord.provenance),
-                  ...inactivePrevious.provenance,
-                },
-          status: inactivePrevious?.status ?? activeRecord.status,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(rawSessionRecords.workspaceId, input.workspaceId),
-            eq(rawSessionRecords.id, activeRecord.id),
-            eq(rawSessionRecords.isActive, true),
-          ),
-        )
-        .returning({ id: rawSessionRecords.id });
-      if (inactiveRawSessionRecord === undefined) {
-        if (input.rawRecord?.expectedActiveRawSessionRecordId === undefined) {
-          const racedRecord = await findRawSessionRecordByContentHash(tx, {
-            contentHash: input.contentHash,
-            sessionId: session.id,
-          });
-          if (racedRecord !== undefined) {
-            const existing = await reuseExistingRawSessionRecord(tx, {
-              existingRecord: racedRecord,
-              input,
-              now,
-              session,
-              transcriptNormalization,
-            });
-            const relationshipSession = await deriveSessionRelationships(tx, {
-              input,
-              session: existing.session,
-            });
-            return {
-              activityInterval: existing.activityInterval,
-              authorUser,
-              contentHash: input.contentHash,
-              operation: "unchanged",
-              rawSessionRecord: existing.rawSessionRecord,
-              session: relationshipSession,
-              sourceBinding,
-            };
-          }
-        }
-        throw new RawSessionImportError({
-          message: "active raw session record changed during import",
-        });
-      }
-    }
-
-    const rawBody = buildRawBody(input);
-    const [insertedRawSessionRecord] = await tx
-      .insert(rawSessionRecords)
-      .values({
-        activityIntervalId: activityInterval.id,
-        authorUserId: authorUser.id,
-        bodyJson: rawBody.bodyJson,
-        bodyText: rawBody.bodyText,
-        capturedAt: input.capturedAt,
-        contentBytes: input.contentBytes,
-        contentHash: input.contentHash,
-        contentType: input.contentType,
-        harness: input.harness,
-        harnessSessionId: input.harnessSessionId,
-        isActive: true,
-        metadata: {
-          ...input.metadata,
-          contentBytes: input.contentBytes,
-          harness: input.harnessMetadata,
-          normalization: transcriptNormalization?.metadata,
-          sourceLocatorHash: input.sourceLocatorHash,
-        },
-        provenance: input.provenance,
-        redactedFromRawSessionRecordId: input.rawRecord?.redactedFromRawSessionRecordId,
-        sessionId: session.id,
-        snapshotOrdinal: nextSnapshotOrdinal,
-        sourceBindingId: sourceBinding.id,
-        sourceLocator: input.locator,
-        status: input.rawRecord?.status ?? "captured",
-        workspaceId: input.workspaceId,
-      })
-      .onConflictDoNothing({
-        target: [rawSessionRecords.sessionId, rawSessionRecords.contentHash],
-      })
-      .returning();
-    if (insertedRawSessionRecord === undefined) {
-      const racedRecord = await findRawSessionRecordByContentHash(tx, {
-        contentHash: input.contentHash,
-        sessionId: session.id,
-      });
-      if (racedRecord === undefined) {
-        throw new RawSessionImportError({ message: "raw session record insert returned no row" });
-      }
-      const existing = await reuseExistingRawSessionRecord(tx, {
-        existingRecord: racedRecord,
-        input,
-        now,
-        session,
-        transcriptNormalization,
-      });
-      const relationshipSession = await deriveSessionRelationships(tx, {
-        input,
-        session: existing.session,
-      });
-      return {
-        activityInterval: existing.activityInterval,
-        authorUser,
-        contentHash: input.contentHash,
-        operation: "unchanged",
-        rawSessionRecord: existing.rawSessionRecord,
-        session: relationshipSession,
-        sourceBinding,
-      };
-    }
-
-    const updated = await refreshSessionAndActivityInterval(tx, {
-      activityInterval,
+    const relationshipSession = await deriveSessionRelationships(tx, {
       input,
-      now,
-      rawSessionRecordId: insertedRawSessionRecord.id,
-      settlement: activityResolution.settlement,
-      session,
-      transcriptNormalization,
+      session: existing.session,
     });
-
-    await regenerateDerivedSessionRecords(tx, {
-      activityIntervalId: activityInterval.id,
-      input,
-      transcriptNormalization,
-      rawSessionRecordId: insertedRawSessionRecord.id,
-      sessionId: session.id,
-    });
-
-    await deriveSessionRelationships(tx, {
-      input,
-      session: updated.session,
-    });
-
     return {
-      activityInterval: updated.activityInterval,
+      activityInterval: existing.activityInterval,
       authorUser,
       contentHash: input.contentHash,
-      operation: "inserted",
-      rawSessionRecord: insertedRawSessionRecord,
-      session: updated.session,
+      operation: "unchanged",
+      rawSessionRecord: existing.rawSessionRecord,
+      session: relationshipSession,
       sourceBinding,
     };
+  }
+
+  const updated = await refreshSessionAndActivityInterval(tx, {
+    activityInterval,
+    input,
+    now,
+    rawSessionRecordId: insertedRawSessionRecord.id,
+    settlement: activityResolution.settlement,
+    session,
+    transcriptNormalization,
   });
+
+  await regenerateDerivedSessionRecords(tx, {
+    activityIntervalId: activityInterval.id,
+    input,
+    transcriptNormalization,
+    rawSessionRecordId: insertedRawSessionRecord.id,
+    sessionId: session.id,
+  });
+
+  await deriveSessionRelationships(tx, {
+    input,
+    session: updated.session,
+  });
+
+  return {
+    activityInterval: updated.activityInterval,
+    authorUser,
+    contentHash: input.contentHash,
+    operation: "inserted",
+    rawSessionRecord: insertedRawSessionRecord,
+    session: updated.session,
+    sourceBinding,
+  };
 }
 
 async function findCurrentNoopRawSessionImport(

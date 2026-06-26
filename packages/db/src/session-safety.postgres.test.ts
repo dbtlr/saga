@@ -87,6 +87,23 @@ describePostgres("session safety", () => {
       traceId: "safety-redact-turn",
       workspaceId,
     });
+    const turnLinkedRawEvent = await seedAssociatedRawEvent(service, {
+      externalEventId: "safety-redact-turn-linked-event",
+      imported,
+      payload: {
+        prompt: "Turn linked super-secret-token evidence",
+      },
+      provenance: {
+        prompt: "Turn-only super-secret-token provenance",
+      },
+      sessionId: "turn-linked-redact-session",
+      traceId: "safety-redact-turn-linked",
+      workspaceId,
+    });
+    await linkTurnsToRawEvent(service, {
+      rawEventId: turnLinkedRawEvent.id,
+      sessionId: imported.session.id,
+    });
 
     const redacted = await Effect.runPromise(
       redactSessionSafety(service, {
@@ -104,7 +121,7 @@ describePostgres("session safety", () => {
       patternCount: 1,
       previousRawSessionRecordId: imported.rawSessionRecord.id,
       reasonProvided: true,
-      redactedRawEvents: 1,
+      redactedRawEvents: 2,
       replacementCount: 2,
       sessionId: imported.session.id,
       workspaceId,
@@ -205,6 +222,12 @@ describePostgres("session safety", () => {
         rawEventId: rawEvent.id,
       },
     });
+    const [redactedTurnLinkedRawEvent] = await service.db
+      .select()
+      .from(rawEvents)
+      .where(eq(rawEvents.id, turnLinkedRawEvent.id));
+    expect(JSON.stringify(redactedTurnLinkedRawEvent)).not.toContain("super-secret-token");
+    expect(JSON.stringify(redactedTurnLinkedRawEvent?.payload)).toContain("[REDACTED]");
   });
 
   test("rejects invalid regex patterns without echoing sensitive pattern text", async () => {
@@ -275,6 +298,23 @@ describePostgres("session safety", () => {
       traceId: "safety-delete-turn",
       workspaceId,
     });
+    const turnLinkedRawEvent = await seedAssociatedRawEvent(service, {
+      externalEventId: "safety-delete-turn-linked-event",
+      imported,
+      payload: {
+        prompt: "Delete-only sentinel phrase",
+      },
+      provenance: {
+        transcriptPath: "/tmp/safety-delete-turn-linked.jsonl",
+      },
+      sessionId: "turn-linked-delete-session",
+      traceId: "safety-delete-turn-linked",
+      workspaceId,
+    });
+    await linkTurnsToRawEvent(service, {
+      rawEventId: turnLinkedRawEvent.id,
+      sessionId: imported.session.id,
+    });
 
     const [segment] = await service.db
       .select()
@@ -316,7 +356,7 @@ describePostgres("session safety", () => {
     expect(deleted).toMatchObject({
       deleted: {
         embeddings: 1,
-        rawEvents: 1,
+        rawEvents: 2,
         rawSessionRecords: 1,
         segments: 1,
         turns: 1,
@@ -344,6 +384,7 @@ describePostgres("session safety", () => {
     expect(await countRows(service, "session_segments", imported.session.id)).toBe(0);
     expect(await countRows(service, "session_segment_embeddings", imported.session.id)).toBe(0);
     expect(await countRawEvents(service, rawEvent.id)).toBe(0);
+    expect(await countRawEvents(service, turnLinkedRawEvent.id)).toBe(0);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {
@@ -524,6 +565,7 @@ async function seedAssociatedRawEvent(
     imported: Awaited<ReturnType<typeof seedRawSession>>;
     payload: Record<string, unknown>;
     provenance: Record<string, unknown>;
+    sessionId?: string | undefined;
     traceId: string;
     workspaceId: string;
   },
@@ -536,7 +578,7 @@ async function seedAssociatedRawEvent(
       occurredAt: "2026-06-22T12:00:01.000Z",
       payload: input.payload,
       provenance: input.provenance,
-      sessionId: input.imported.session.harnessSessionId ?? undefined,
+      sessionId: input.sessionId ?? input.imported.session.harnessSessionId ?? undefined,
       sourceBindingId: input.imported.sourceBinding.id,
       sourceId: "codex:local",
       sourceType: "codex",
@@ -545,6 +587,18 @@ async function seedAssociatedRawEvent(
       workspaceId: input.workspaceId,
     }),
   );
+}
+
+async function linkTurnsToRawEvent(
+  service: DatabaseService,
+  input: { rawEventId: string; sessionId: string },
+): Promise<void> {
+  await service.db
+    .update(sessionTurns)
+    .set({
+      rawEventIds: [input.rawEventId],
+    })
+    .where(eq(sessionTurns.sessionId, input.sessionId));
 }
 
 async function countRawEvents(service: DatabaseService, id: string): Promise<number> {
