@@ -463,6 +463,7 @@ function renderDeleteResult(result: DeleteSessionSafetyResult, options: RenderOp
       { label: "origin", value: result.originClassification },
       { label: "reason provided", value: String(result.reasonProvided) },
       { label: "raw records", value: String(result.deleted.rawSessionRecords) },
+      { label: "raw events", value: String(result.deleted.rawEvents) },
       { label: "turns", value: String(result.deleted.turns) },
       { label: "segments", value: String(result.deleted.segments) },
       { label: "embeddings", value: String(result.deleted.embeddings) },
@@ -488,6 +489,7 @@ function renderRedactResult(result: RedactSessionSafetyResult, options: RenderOp
       { label: "reason provided", value: String(result.reasonProvided) },
       { label: "patterns", value: String(result.patternCount) },
       { label: "replacements", value: String(result.replacementCount) },
+      { label: "raw events", value: String(result.redactedRawEvents) },
     ],
     options,
   );

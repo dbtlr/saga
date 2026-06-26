@@ -3,11 +3,13 @@ import { Effect } from "effect";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
+import { insertRawEvent } from "./raw-event.js";
 import { importRawSessionRecord } from "./raw-session-import.js";
 import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
 import { getSessionDetail, listRecentSessionRecords } from "./session-records.js";
 import { deleteSessionSafety, redactSessionSafety } from "./session-safety.js";
 import {
+  rawEvents,
   rawSessionRecords,
   sessionSegments,
   sessionTurns,
@@ -71,6 +73,20 @@ describePostgres("session safety", () => {
         '{"type":"user","text":"Store API_KEY=super-secret-token in the notes"}\n{"type":"assistant","text":"I recorded super-secret-token for follow-up"}\n',
       workspaceId,
     });
+    const rawEvent = await seedAssociatedRawEvent(service, {
+      externalEventId: "safety-redact-event",
+      imported,
+      payload: {
+        hook_event_name: "UserPromptSubmit",
+        prompt: "Store API_KEY=super-secret-token in the notes",
+      },
+      provenance: {
+        prompt: "super-secret-token entered through hook payload",
+        transcriptPath: "/tmp/safety-redact.jsonl",
+      },
+      traceId: "safety-redact-turn",
+      workspaceId,
+    });
 
     const redacted = await Effect.runPromise(
       redactSessionSafety(service, {
@@ -88,6 +104,7 @@ describePostgres("session safety", () => {
       patternCount: 1,
       previousRawSessionRecordId: imported.rawSessionRecord.id,
       reasonProvided: true,
+      redactedRawEvents: 1,
       replacementCount: 2,
       sessionId: imported.session.id,
       workspaceId,
@@ -174,6 +191,20 @@ describePostgres("session safety", () => {
       }),
     );
     expect(recall.matchCount).toBe(0);
+
+    const [redactedRawEvent] = await service.db
+      .select()
+      .from(rawEvents)
+      .where(eq(rawEvents.id, rawEvent.id));
+    expect(redactedRawEvent).toBeDefined();
+    expect(JSON.stringify(redactedRawEvent)).not.toContain("super-secret-token");
+    expect(JSON.stringify(redactedRawEvent?.payload)).toContain("[REDACTED]");
+    expect(redactedRawEvent?.provenance).toMatchObject({
+      sagaSessionSafety: {
+        operation: "redacted",
+        rawEventId: rawEvent.id,
+      },
+    });
   });
 
   test("rejects invalid regex patterns without echoing sensitive pattern text", async () => {
@@ -232,6 +263,18 @@ describePostgres("session safety", () => {
       rawContent: '{"type":"user","text":"Delete-only sentinel phrase"}\n',
       workspaceId,
     });
+    const rawEvent = await seedAssociatedRawEvent(service, {
+      externalEventId: "safety-delete-event",
+      imported,
+      payload: {
+        prompt: "Delete-only sentinel phrase",
+      },
+      provenance: {
+        transcriptPath: "/tmp/safety-delete.jsonl",
+      },
+      traceId: "safety-delete-turn",
+      workspaceId,
+    });
 
     const [segment] = await service.db
       .select()
@@ -273,6 +316,7 @@ describePostgres("session safety", () => {
     expect(deleted).toMatchObject({
       deleted: {
         embeddings: 1,
+        rawEvents: 1,
         rawSessionRecords: 1,
         segments: 1,
         turns: 1,
@@ -299,6 +343,7 @@ describePostgres("session safety", () => {
     expect(await countRows(service, "session_turns", imported.session.id)).toBe(0);
     expect(await countRows(service, "session_segments", imported.session.id)).toBe(0);
     expect(await countRows(service, "session_segment_embeddings", imported.session.id)).toBe(0);
+    expect(await countRawEvents(service, rawEvent.id)).toBe(0);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {
@@ -470,6 +515,41 @@ async function seedRawSession(
       workspaceId: input.workspaceId,
     }),
   );
+}
+
+async function seedAssociatedRawEvent(
+  service: DatabaseService,
+  input: {
+    externalEventId: string;
+    imported: Awaited<ReturnType<typeof seedRawSession>>;
+    payload: Record<string, unknown>;
+    provenance: Record<string, unknown>;
+    traceId: string;
+    workspaceId: string;
+  },
+) {
+  return Effect.runPromise(
+    insertRawEvent(service, {
+      actorId: "codex",
+      eventType: "codex.UserPromptSubmit",
+      externalEventId: input.externalEventId,
+      occurredAt: "2026-06-22T12:00:01.000Z",
+      payload: input.payload,
+      provenance: input.provenance,
+      sessionId: input.imported.session.harnessSessionId ?? undefined,
+      sourceBindingId: input.imported.sourceBinding.id,
+      sourceId: "codex:local",
+      sourceType: "codex",
+      traceId: input.traceId,
+      trustLevel: "raw",
+      workspaceId: input.workspaceId,
+    }),
+  );
+}
+
+async function countRawEvents(service: DatabaseService, id: string): Promise<number> {
+  const rows = await service.db.select().from(rawEvents).where(eq(rawEvents.id, id));
+  return rows.length;
 }
 
 async function countRows(
