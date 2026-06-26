@@ -37,6 +37,7 @@ export interface DeleteSessionSafetyResult {
   workspaceId: string;
   deleted: {
     embeddings: number;
+    rawEvents: number;
     rawSessionRecords: number;
     segments: number;
     turns: number;
@@ -65,6 +66,7 @@ export interface RedactSessionSafetyResult {
   previousRawSessionRecordId: string;
   reasonProvided: boolean;
   redactedAt: Date;
+  redactedRawEvents: number;
   replacementCount: number;
   rawSessionImport: RawSessionImportResult;
   sessionId: string;
@@ -136,6 +138,10 @@ export function deleteSessionSafety(
           where workspace_id = ${workspaceId}
             and session_id = ${identity.session_id}
         `;
+        const rawEventIds = await findAssociatedRawEventIds(txSql, {
+          sessionId: identity.session_id,
+          workspaceId,
+        });
         const counts = {
           embeddings:
             rawSessionRecordIds.length === 0
@@ -143,6 +149,7 @@ export function deleteSessionSafety(
               : await countRows(txSql, "session_segment_embeddings", {
                   rawSessionRecordIds: rawSessionRecordIds.map((record) => record.id),
                 }),
+          rawEvents: rawEventIds.length,
           rawSessionRecords: rawSessionRecordIds.length,
           segments: await countRows(txSql, "session_segments", {
             sessionId: identity.session_id,
@@ -180,6 +187,13 @@ export function deleteSessionSafety(
           where workspace_id = ${workspaceId}
             and id = ${identity.session_id}
         `;
+        if (rawEventIds.length > 0) {
+          await tx`
+            delete from raw_events
+            where workspace_id = ${workspaceId}
+              and id = any(${rawEventIds}::uuid[])
+          `;
+        }
 
         return {
           deleted: counts,
@@ -237,6 +251,10 @@ export function redactSessionSafety(
       });
       await assertRedactedSnapshotIsNew(service, {
         contentHash: sha256(redaction.content),
+        sessionId: activeRecord.session_id,
+        workspaceId,
+      });
+      const rawEventIds = await findAssociatedRawEventIds(service.sql as unknown as SqlTag, {
         sessionId: activeRecord.session_id,
         workspaceId,
       });
@@ -301,6 +319,13 @@ export function redactSessionSafety(
           workspaceId,
         }),
       );
+      const redactedRawEvents = await redactAssociatedRawEvents(service.sql as unknown as SqlTag, {
+        auditMetadata,
+        patterns,
+        rawEventIds,
+        redactedAt,
+        workspaceId,
+      });
 
       return {
         operation: "redacted",
@@ -310,6 +335,7 @@ export function redactSessionSafety(
         rawSessionImport: importResult,
         reasonProvided: reason !== null,
         redactedAt,
+        redactedRawEvents,
         replacementCount: redaction.replacementCount,
         sessionId: activeRecord.session_id,
         workspaceId,
@@ -385,6 +411,152 @@ async function findActiveRawSessionRecord(
     limit 1
   `;
   return rows[0];
+}
+
+async function findAssociatedRawEventIds(
+  sql: SqlTag,
+  input: { sessionId: string; workspaceId: string },
+): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    with target_session as (
+      select id, source_binding_id, harness, harness_session_id
+      from sessions
+      where workspace_id = ${input.workspaceId}
+        and id = ${input.sessionId}
+      limit 1
+    ),
+    explicit_raw_event_ids as (
+      select ai.settlement_trigger_raw_event_id::text as id
+      from activity_intervals ai
+      where ai.workspace_id = ${input.workspaceId}
+        and ai.session_id = ${input.sessionId}
+        and ai.settlement_trigger_raw_event_id is not null
+      union
+      select r.provenance->>'rawEventId' as id
+      from raw_session_records r
+      where r.workspace_id = ${input.workspaceId}
+        and r.session_id = ${input.sessionId}
+        and r.provenance ? 'rawEventId'
+      union
+      select r.metadata->>'triggerRawEventId' as id
+      from raw_session_records r
+      where r.workspace_id = ${input.workspaceId}
+        and r.session_id = ${input.sessionId}
+        and r.metadata ? 'triggerRawEventId'
+    )
+    select distinct re.id::text as id
+    from raw_events re
+    inner join target_session s on true
+    where re.workspace_id = ${input.workspaceId}
+      and (
+        re.session_id = s.id::text
+        or (
+          s.harness_session_id is not null
+          and re.source_binding_id = s.source_binding_id
+          and re.source_type = s.harness
+          and re.session_id = s.harness_session_id
+        )
+        or re.id::text in (
+          select id
+          from explicit_raw_event_ids
+          where id is not null and id <> ''
+        )
+      )
+  `;
+  return rows.map((row) => row.id);
+}
+
+async function redactAssociatedRawEvents(
+  sql: SqlTag,
+  input: {
+    auditMetadata: JsonRecord;
+    patterns: readonly NormalizedSessionRedactionPattern[];
+    rawEventIds: readonly string[];
+    redactedAt: Date;
+    workspaceId: string;
+  },
+): Promise<number> {
+  if (input.rawEventIds.length === 0) return 0;
+
+  const rows = await sql<
+    Array<{
+      actor_id: string;
+      external_event_id: string;
+      id: string;
+      payload: JsonRecord;
+      provenance: JsonRecord;
+      session_id: string | null;
+      source_id: string;
+      trace_id: string | null;
+    }>
+  >`
+    select id::text,
+      actor_id,
+      external_event_id,
+      payload,
+      provenance,
+      session_id,
+      source_id,
+      trace_id
+    from raw_events
+    where workspace_id = ${input.workspaceId}
+      and id = any(${input.rawEventIds}::uuid[])
+  `;
+
+  let redacted = 0;
+  for (const row of rows) {
+    const actorRedaction = applyRedactions(row.actor_id, input.patterns);
+    const externalRedaction = applyRedactions(row.external_event_id, input.patterns);
+    const payloadRedaction = redactJsonValue(row.payload, input.patterns);
+    const provenanceRedaction = redactJsonValue(row.provenance, input.patterns);
+    const sessionRedaction =
+      row.session_id === null
+        ? { content: null, replacementCount: 0 }
+        : applyRedactions(row.session_id, input.patterns);
+    const sourceRedaction = applyRedactions(row.source_id, input.patterns);
+    const traceRedaction =
+      row.trace_id === null
+        ? { content: null, replacementCount: 0 }
+        : applyRedactions(row.trace_id, input.patterns);
+    const replacementCount =
+      actorRedaction.replacementCount +
+      externalRedaction.replacementCount +
+      payloadRedaction.replacementCount +
+      provenanceRedaction.replacementCount +
+      sessionRedaction.replacementCount +
+      sourceRedaction.replacementCount +
+      traceRedaction.replacementCount;
+    if (replacementCount === 0) continue;
+
+    redacted += 1;
+    await sql`
+      update raw_events
+      set actor_id = ${actorRedaction.content},
+        external_event_id = ${
+          externalRedaction.replacementCount === 0
+            ? row.external_event_id
+            : `redacted:${row.id}:external-event`
+        },
+        payload = ${JSON.stringify(payloadRedaction.value)}::jsonb,
+        provenance = ${JSON.stringify({
+          ...asRecord(provenanceRedaction.value),
+          sagaSessionSafety: {
+            ...input.auditMetadata,
+            rawEventId: row.id,
+            rawEventReplacementCount: replacementCount,
+          },
+        })}::jsonb,
+        session_id = ${sessionRedaction.content},
+        source_id = ${
+          sourceRedaction.replacementCount === 0 ? row.source_id : `redacted:${row.id}:source`
+        },
+        trace_id = ${traceRedaction.content},
+        updated_at = ${input.redactedAt.toISOString()}
+      where workspace_id = ${input.workspaceId}
+        and id = ${row.id}
+    `;
+  }
+  return redacted;
 }
 
 async function assertRedactedSnapshotIsNew(
@@ -480,6 +652,37 @@ function applyRedactions(
     });
   }
   return { content: redactedContent, replacementCount };
+}
+
+function redactJsonValue(
+  value: unknown,
+  patterns: readonly NormalizedSessionRedactionPattern[],
+): { replacementCount: number; value: unknown } {
+  if (typeof value === "string") {
+    const redaction = applyRedactions(value, patterns);
+    return { replacementCount: redaction.replacementCount, value: redaction.content };
+  }
+  if (Array.isArray(value)) {
+    let replacementCount = 0;
+    const redacted = value.map((entry) => {
+      const result = redactJsonValue(entry, patterns);
+      replacementCount += result.replacementCount;
+      return result.value;
+    });
+    return { replacementCount, value: redacted };
+  }
+  if (isPlainRecord(value)) {
+    let replacementCount = 0;
+    const redacted: JsonRecord = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const keyRedaction = applyRedactions(key, patterns);
+      const valueRedaction = redactJsonValue(entry, patterns);
+      replacementCount += keyRedaction.replacementCount + valueRedaction.replacementCount;
+      redacted[keyRedaction.content] = valueRedaction.value;
+    }
+    return { replacementCount, value: redacted };
+  }
+  return { replacementCount: 0, value };
 }
 
 function compileRedactionRegex(pattern: NormalizedSessionRedactionPattern, index: number): RegExp {
@@ -585,9 +788,11 @@ function classifyOrigin(value: string): SessionSafetyOriginClassification {
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return isPlainRecord(value) ? value : {};
+}
+
+function isPlainRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function sha256(value: string): string {

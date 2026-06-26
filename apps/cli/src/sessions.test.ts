@@ -804,6 +804,7 @@ function deleteResult(): DeleteSessionSafetyResult {
   return {
     deleted: {
       embeddings: 0,
+      rawEvents: 1,
       rawSessionRecords: 1,
       segments: 2,
       turns: 2,
@@ -851,6 +852,7 @@ function redactResult(): RedactSessionSafetyResult {
     },
     reasonProvided: true,
     redactedAt: new Date("2026-06-22T10:06:00.000Z"),
+    redactedRawEvents: 1,
     replacementCount: 4,
     sessionId: "session-id",
     workspaceId: "workspace-id",
