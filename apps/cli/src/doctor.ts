@@ -6,6 +6,7 @@ import {
   inspectEmbeddingWorkflow,
   loadRuntimeConfig,
   type CodexAuthResolutionOptions,
+  type EmbeddingPolicyResolutionOptions,
   type EmbeddingWorkflowBoundary,
 } from "@saga/runtime";
 import { Effect } from "effect";
@@ -44,6 +45,7 @@ export async function doctorProject(
   input: {
     cwd?: string;
     embeddingAuth?: CodexAuthResolutionOptions;
+    embeddingPolicy?: EmbeddingPolicyResolutionOptions;
     verifyHarnessActivation?: HarnessActivationVerifier;
   } = {},
 ): Promise<DoctorCheck[]> {
@@ -61,7 +63,7 @@ export async function doctorProject(
     label: "service",
     status: serviceDoctorStatus(service),
   });
-  checks.push(checkEmbeddings(input.embeddingAuth));
+  checks.push(checkEmbeddings(input.embeddingAuth, input.embeddingPolicy));
   checks.push(...(await checkHarnesses(projectRoot, input.verifyHarnessActivation)));
 
   return checks;
@@ -292,22 +294,28 @@ async function inspectService(): Promise<{
   }
 }
 
-function checkEmbeddings(authOptions?: CodexAuthResolutionOptions): DoctorCheck {
-  const workflow = inspectEmbeddingWorkflow(authOptions);
+function checkEmbeddings(
+  authOptions?: CodexAuthResolutionOptions,
+  policyOptions?: EmbeddingPolicyResolutionOptions,
+): DoctorCheck {
+  const workflow = inspectEmbeddingWorkflow(authOptions, policyOptions);
   return {
     detail: renderEmbeddingWorkflow(workflow),
     label: "embeddings",
-    status: workflow.availability.state === "available" ? "ok" : "warn",
+    status: workflow.mode === "vector-aware" ? "ok" : "warn",
   };
 }
 
 function renderEmbeddingWorkflow(workflow: EmbeddingWorkflowBoundary): string {
   const provider = `${workflow.provider.id}/${workflow.provider.model} (${String(workflow.provider.dimensions)} dimensions)`;
-  if (workflow.availability.state === "available") {
-    return `${provider} available; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
+  switch (workflow.mode) {
+    case "vector-aware":
+      return `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
+    case "lexical-only-by-policy":
+      return `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`;
+    case "lexical-fallback":
+      return `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
   }
-
-  return `${provider} skipped; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
 }
 
 async function checkHarnesses(
