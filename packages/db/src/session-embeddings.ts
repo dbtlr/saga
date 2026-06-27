@@ -4,6 +4,7 @@ import {
   inspectEmbeddingWorkflow,
   resolveCodexAuth,
   type CodexAuthResolutionOptions,
+  type EmbeddingPolicyResolutionOptions,
   type EmbeddingProviderBoundary,
 } from "@saga/runtime";
 import { sql } from "drizzle-orm";
@@ -53,6 +54,7 @@ export interface IndexSessionSegmentEmbeddingsInput {
   generator?: SessionEmbeddingGenerator | undefined;
   limit?: number | undefined;
   now?: Date | undefined;
+  policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
   rawSessionRecordId?: string | undefined;
   sessionId?: string | undefined;
   workspaceId: string;
@@ -355,6 +357,9 @@ function resolveEmbeddingGenerator(
   input: IndexSessionSegmentEmbeddingsInput,
 ): ResolvedEmbeddingGenerator {
   if (input.generator !== undefined) {
+    // An explicitly supplied generator is the caller's chosen mechanism (e.g. a fake in
+    // tests or a future local, non-remote generator). ADR 0032 governs remote embedding
+    // data flow specifically, so it does not gate an explicit generator.
     return {
       generator: input.generator,
       lexicalFallback: {
@@ -366,7 +371,9 @@ function resolveEmbeddingGenerator(
     };
   }
 
-  const workflow = inspectEmbeddingWorkflow(input.authOptions);
+  // inspectEmbeddingWorkflow composes installation policy with credentials; a disabled
+  // policy yields availability.state "skipped" with reason "disabled-by-policy" below.
+  const workflow = inspectEmbeddingWorkflow(input.authOptions, input.policyOptions);
   if (workflow.availability.state === "skipped") {
     return {
       lexicalFallback: workflow.lexicalFallback,

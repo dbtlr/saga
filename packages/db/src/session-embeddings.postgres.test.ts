@@ -171,6 +171,13 @@ describePostgres("session segment embeddings", () => {
             throw Object.assign(new Error("missing"), { code: "ENOENT" });
           },
         },
+        // Enable the remote policy so this exercises the missing-credentials path rather
+        // than the default-deny policy gate.
+        policyOptions: {
+          env: {},
+          homeDir: "/tmp/saga-test-missing-policy-home",
+          readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+        },
         workspaceId: fixture.workspaceId,
       }),
     );
@@ -189,6 +196,43 @@ describePostgres("session segment embeddings", () => {
       },
       status: "skipped",
     });
+    await expectEmbeddingRows(service, {
+      count: 0,
+      provider: "openai",
+      workspaceId: fixture.workspaceId,
+    });
+  });
+
+  test("skips remote embedding generation when installation policy disables it, even with valid auth", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const fixture = await seedEmbeddingFixture(service, "disabled-by-policy");
+
+    const result = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        authOptions: {
+          env: {},
+          homeDir: "/tmp/saga-test-policy-codex-home",
+          readFile: () => JSON.stringify({ OPENAI_API_KEY: "sk-policy-secret" }),
+        },
+        policyOptions: {
+          env: {},
+          homeDir: "/tmp/saga-test-policy-home",
+          readFile: () => JSON.stringify({ embeddings: { remote: "disabled" } }),
+        },
+        workspaceId: fixture.workspaceId,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      eligibleCount: 2,
+      indexedCount: 0,
+      skipped: {
+        count: 2,
+        reason: "disabled-by-policy",
+      },
+      status: "skipped",
+    });
+    expect(JSON.stringify(result)).not.toContain("sk-policy-secret");
     await expectEmbeddingRows(service, {
       count: 0,
       provider: "openai",
