@@ -9,7 +9,7 @@ import type {
   RecallSearchResult,
 } from "@saga/db";
 import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
-import { runRecallCommand } from "./recall.js";
+import { resolveQueryEmbedding, runRecallCommand } from "./recall.js";
 
 const renderOptions = {
   ascii: true,
@@ -283,6 +283,52 @@ describe("runRecallCommand", () => {
     });
 
     expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8")).toBe(before);
+  });
+});
+
+describe("resolveQueryEmbedding", () => {
+  test("does not embed the recall query when remote embeddings are disabled by policy", async () => {
+    const embedding = await resolveQueryEmbedding(
+      "lexical recall",
+      {},
+      {
+        authOptions: {
+          env: {},
+          homeDir: "/tmp/saga-recall-policy-codex",
+          readFile: () => JSON.stringify({ OPENAI_API_KEY: "sk-recall-secret" }),
+        },
+        policyOptions: {
+          env: {},
+          homeDir: "/tmp/saga-recall-policy-home",
+          readFile: () => JSON.stringify({ embeddings: { remote: "disabled" } }),
+        },
+      },
+    );
+
+    expect(embedding).toBeUndefined();
+  });
+
+  test("does not embed the recall query when credentials are unavailable", async () => {
+    const embedding = await resolveQueryEmbedding(
+      "lexical recall",
+      {},
+      {
+        authOptions: {
+          env: {},
+          homeDir: "/tmp/saga-recall-missing-codex",
+          readFile: () => {
+            throw Object.assign(new Error("missing"), { code: "ENOENT" });
+          },
+        },
+        policyOptions: {
+          env: {},
+          homeDir: "/tmp/saga-recall-enabled-home",
+          readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+        },
+      },
+    );
+
+    expect(embedding).toBeUndefined();
   });
 });
 

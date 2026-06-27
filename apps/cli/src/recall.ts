@@ -13,7 +13,13 @@ import {
   type RecallSearchResult,
   type RecallSegmentMatch,
 } from "@saga/db";
-import { loadRuntimeConfig, resolveCodexAuth } from "@saga/runtime";
+import {
+  loadRuntimeConfig,
+  resolveCodexAuth,
+  resolveEmbeddingPolicy,
+  type CodexAuthResolutionOptions,
+  type EmbeddingPolicyResolutionOptions,
+} from "@saga/runtime";
 import { Effect } from "effect";
 import { type WorkspaceBindingFile, findProjectRoot, readBindingFile } from "./init.js";
 import { formatCommandOutput } from "./output.js";
@@ -202,15 +208,27 @@ async function openDatabase(projectRoot: string) {
   return Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
 }
 
-async function resolveQueryEmbedding(
+export interface ResolveQueryEmbeddingOptions {
+  authOptions?: CodexAuthResolutionOptions | undefined;
+  policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
+}
+
+export async function resolveQueryEmbedding(
   query: string,
   dependencies: RecallCommandDependencies,
+  options: ResolveQueryEmbeddingOptions = {},
 ): Promise<RecallQueryEmbedding | undefined> {
   if (dependencies.resolveQueryEmbedding !== undefined) {
     return dependencies.resolveQueryEmbedding(query);
   }
 
-  const auth = resolveCodexAuth();
+  // Installation policy gates remote embedding data flow: when remote embeddings are not
+  // enabled, the recall query text is never sent to the remote provider (ADR 0032).
+  if (resolveEmbeddingPolicy(options.policyOptions).remoteEmbeddings !== "enabled") {
+    return undefined;
+  }
+
+  const auth = resolveCodexAuth(options.authOptions);
   if (auth.status !== "available") return undefined;
 
   const generator = createOpenAiSessionEmbeddingGenerator({ apiKey: auth.openaiApiKey });
