@@ -23,16 +23,19 @@ lexical fallback due to missing credentials/provider.
 - Enforce the gate at both embedding-generation points (indexing + recall query).
 - Fail-closed default (deny) and graceful handling of unreadable/malformed config.
 - doctor reporting of effective mode + policy source.
-- An `embeddingPolicy` posture field on CLI/MCP recall output.
 
 **Out → SGA-154** (Align CLI and MCP recall modes)
 
 - Making MCP actually _generate_ query embeddings (vector-aware MCP).
 - Per-search `vector / lexical / degraded` mode + fallback-reason records in CLI/MCP.
+- The CLI/MCP recall-output posture/mode field. Deferred here during implementation
+  because SGA-154 already owns "expose lexical/vector/degraded mode and fallback reason in
+  CLI/MCP records"; adding a posture field now would be reworked immediately. doctor
+  fully covers the operator-facing three-state report for this task.
 - Tightening MCP numeric schemas.
 
-This task reports the installation **posture**; SGA-154 reports the **per-search actual
-mode**.
+doctor reports the installation **posture** in this task; SGA-154 reports the
+**per-search actual mode** in CLI/MCP records.
 
 **Out — deferred (seam only)**
 

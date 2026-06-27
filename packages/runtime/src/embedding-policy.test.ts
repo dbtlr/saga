@@ -61,6 +61,15 @@ describe("resolveEmbeddingPolicy", () => {
     });
   });
 
+  test("defaults to disabled for non-canonical remote values", () => {
+    const home = tempHome();
+    for (const remote of [true, "ENABLED", "yes", 1, null]) {
+      writeSagaConfig(home, JSON.stringify({ embeddings: { remote } }));
+      const policy = resolveEmbeddingPolicy({ env: {}, homeDir: home });
+      expect(policy).toMatchObject({ remoteEmbeddings: "disabled", source: "default" });
+    }
+  });
+
   test("fails closed to disabled when the config is malformed JSON", () => {
     const home = tempHome();
     writeSagaConfig(home, "{ not valid json");

@@ -287,28 +287,60 @@ describe("runRecallCommand", () => {
 });
 
 describe("resolveQueryEmbedding", () => {
-  test("does not embed the recall query when remote embeddings are disabled by policy", async () => {
+  const availableAuthOptions = {
+    env: {},
+    homeDir: "/tmp/saga-recall-available-codex",
+    readFile: () => JSON.stringify({ OPENAI_API_KEY: "sk-recall-secret" }),
+  };
+  const disabledPolicyOptions = {
+    env: {},
+    homeDir: "/tmp/saga-recall-disabled-home",
+    readFile: () => JSON.stringify({ embeddings: { remote: "disabled" } }),
+  };
+  const enabledPolicyOptions = {
+    env: {},
+    homeDir: "/tmp/saga-recall-enabled-home",
+    readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+  };
+
+  function recordingFetch(): { calls: number; impl: typeof fetch } {
+    const state = { calls: 0 };
+    const impl = (async () => {
+      state.calls += 1;
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    return {
+      get calls() {
+        return state.calls;
+      },
+      impl,
+    };
+  }
+
+  test("never calls the remote provider when remote embeddings are disabled by policy", async () => {
+    const fetchSpy = recordingFetch();
+
     const embedding = await resolveQueryEmbedding(
       "lexical recall",
       {},
       {
-        authOptions: {
-          env: {},
-          homeDir: "/tmp/saga-recall-policy-codex",
-          readFile: () => JSON.stringify({ OPENAI_API_KEY: "sk-recall-secret" }),
-        },
-        policyOptions: {
-          env: {},
-          homeDir: "/tmp/saga-recall-policy-home",
-          readFile: () => JSON.stringify({ embeddings: { remote: "disabled" } }),
-        },
+        // Valid credentials are present; only policy should keep the query text local.
+        authOptions: availableAuthOptions,
+        fetchImpl: fetchSpy.impl,
+        policyOptions: disabledPolicyOptions,
       },
     );
 
     expect(embedding).toBeUndefined();
+    expect(fetchSpy.calls).toBe(0);
   });
 
-  test("does not embed the recall query when credentials are unavailable", async () => {
+  test("never calls the remote provider when credentials are unavailable", async () => {
+    const fetchSpy = recordingFetch();
+
     const embedding = await resolveQueryEmbedding(
       "lexical recall",
       {},
@@ -320,15 +352,33 @@ describe("resolveQueryEmbedding", () => {
             throw Object.assign(new Error("missing"), { code: "ENOENT" });
           },
         },
-        policyOptions: {
-          env: {},
-          homeDir: "/tmp/saga-recall-enabled-home",
-          readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
-        },
+        fetchImpl: fetchSpy.impl,
+        policyOptions: enabledPolicyOptions,
       },
     );
 
     expect(embedding).toBeUndefined();
+    expect(fetchSpy.calls).toBe(0);
+  });
+
+  test("embeds the query against the remote provider when policy enabled and credentials available", async () => {
+    const fetchSpy = recordingFetch();
+
+    const embedding = await resolveQueryEmbedding(
+      "lexical recall",
+      {},
+      {
+        authOptions: availableAuthOptions,
+        fetchImpl: fetchSpy.impl,
+        policyOptions: enabledPolicyOptions,
+      },
+    );
+
+    expect(fetchSpy.calls).toBe(1);
+    expect(embedding).toMatchObject({
+      provider: "openai",
+      vector: [0.1, 0.2, 0.3],
+    });
   });
 });
 
