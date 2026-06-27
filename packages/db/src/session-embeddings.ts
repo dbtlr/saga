@@ -357,9 +357,13 @@ function resolveEmbeddingGenerator(
   input: IndexSessionSegmentEmbeddingsInput,
 ): ResolvedEmbeddingGenerator {
   if (input.generator !== undefined) {
-    // An explicitly supplied generator is the caller's chosen mechanism (e.g. a fake in
-    // tests or a future local, non-remote generator). ADR 0032 governs remote embedding
-    // data flow specifically, so it does not gate an explicit generator.
+    // EGRESS SEAM: an explicitly supplied generator is the caller's chosen mechanism (e.g. a
+    // fake in tests or a future local, non-remote generator), so it is not gated here. ADR
+    // 0032 governs *remote* embedding data flow; the only remote generator in this package
+    // (createOpenAiSessionEmbeddingGenerator) is constructed below, behind the policy gate.
+    // WARNING: there is no production caller of indexSessionSegmentEmbeddings yet. When one is
+    // added, it MUST NOT pass a remote generator here — let the policy-gated path below build
+    // it, or resolve installation policy before supplying any remote generator.
     return {
       generator: input.generator,
       lexicalFallback: {

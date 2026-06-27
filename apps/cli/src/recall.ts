@@ -210,6 +210,7 @@ async function openDatabase(projectRoot: string) {
 
 export interface ResolveQueryEmbeddingOptions {
   authOptions?: CodexAuthResolutionOptions | undefined;
+  fetchImpl?: typeof fetch | undefined;
   policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
 }
 
@@ -231,7 +232,10 @@ export async function resolveQueryEmbedding(
   const auth = resolveCodexAuth(options.authOptions);
   if (auth.status !== "available") return undefined;
 
-  const generator = createOpenAiSessionEmbeddingGenerator({ apiKey: auth.openaiApiKey });
+  const generator = createOpenAiSessionEmbeddingGenerator({
+    apiKey: auth.openaiApiKey,
+    fetch: options.fetchImpl,
+  });
   try {
     const [output] = await generator.embedSegments([
       {

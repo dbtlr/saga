@@ -19,6 +19,11 @@ type JsonRecord = Record<string, unknown>;
 
 export interface RecallSearchInput {
   activityIntervalId?: string | undefined;
+  // EGRESS SEAM: when set, the query text is sent to this provider for a query embedding.
+  // @saga/db is policy-agnostic, so callers MUST gate this on installation embedding policy
+  // (ADR 0032) before supplying it — only pass an embeddingProvider/queryEmbedding when
+  // remote embeddings are enabled. The CLI gates via resolveQueryEmbedding; SGA-154 must do
+  // the same when it makes MCP vector-aware.
   embeddingProvider?: RecallQueryEmbeddingProvider | undefined;
   limit?: number | undefined;
   minTrigramScore?: number | undefined;
