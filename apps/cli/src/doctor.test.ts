@@ -112,12 +112,17 @@ describe("doctorProject", () => {
         env: {},
         homeDir,
       },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), "saga-doctor-policy-")),
+        readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+      },
     });
 
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "openai/text-embedding-3-small (1536 dimensions) available; cached OPENAI_API_KEY present in ~/.codex/auth.json; lexical fallback: standby",
+          "openai/text-embedding-3-small (1536 dimensions) vector-aware; cached OPENAI_API_KEY present in ~/.codex/auth.json; lexical fallback: standby",
         label: "embeddings",
         status: "ok",
       }),
@@ -145,12 +150,17 @@ describe("doctorProject", () => {
         env: {},
         homeDir,
       },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), "saga-doctor-policy-")),
+        readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+      },
     });
 
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "openai/text-embedding-3-small (1536 dimensions) skipped; Codex login/account tokens found in ~/.codex/auth.json, but no cached OPENAI_API_KEY is present; Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.",
+          "openai/text-embedding-3-small (1536 dimensions) lexical fallback; Codex login/account tokens found in ~/.codex/auth.json, but no cached OPENAI_API_KEY is present; Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.",
         label: "embeddings",
         status: "warn",
       }),
@@ -172,6 +182,11 @@ describe("doctorProject", () => {
         env: { CODEX_HOME: codexHome },
         homeDir: join(cwd, "home"),
       },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), "saga-doctor-policy-")),
+        readFile: () => JSON.stringify({ embeddings: { remote: "enabled" } }),
+      },
     });
     const output = renderDoctor(checks, {
       ascii: true,
@@ -184,7 +199,7 @@ describe("doctorProject", () => {
     expect(checks).toContainEqual(
       expect.objectContaining({
         detail:
-          "openai/text-embedding-3-small (1536 dimensions) skipped; could not parse CODEX_HOME/auth.json; Embedding generation is skipped; repair Codex auth or provide valid embedding credentials. Lexical recall remains available.",
+          "openai/text-embedding-3-small (1536 dimensions) lexical fallback; could not parse CODEX_HOME/auth.json; Embedding generation is skipped; repair Codex auth or provide valid embedding credentials. Lexical recall remains available.",
         label: "embeddings",
         status: "warn",
       }),
@@ -195,6 +210,39 @@ describe("doctorProject", () => {
     expect(publicStatus).not.toContain("access_token");
     expect(publicStatus).not.toContain("Unexpected");
     expect(publicStatus).not.toContain("JSON");
+  });
+
+  test("reports lexical-only by policy when remote embeddings are disabled, even with valid auth", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "saga-doctor-"));
+    const homeDir = mkdtempSync(join(tmpdir(), "saga-codex-home-"));
+    mkdirSync(join(homeDir, ".codex"), { recursive: true });
+    writeFileSync(
+      join(homeDir, ".codex", "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk-policy-doctor-secret" }),
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: {},
+        homeDir,
+      },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), "saga-doctor-policy-")),
+        readFile: () => JSON.stringify({ embeddings: { remote: "disabled" } }),
+      },
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          "openai/text-embedding-3-small (1536 dimensions) lexical-only by policy; remote embeddings disabled by installation standard in ~/.saga/config.json; Remote embeddings are disabled by installation policy; Saga uses lexical recall. Enable embeddings.remote in the installation config to use vector recall.",
+        label: "embeddings",
+        status: "warn",
+      }),
+    );
+    expect(JSON.stringify(checks)).not.toContain("sk-policy-doctor-secret");
   });
 
   test("reports harness target states", async () => {
