@@ -2132,6 +2132,85 @@ describePostgres("raw session import", () => {
     );
   });
 
+  test("a second distinct same-content boundary settles the active interval without corrupting the first (ADR-0031)", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("raw-import-second-boundary");
+    const rawContent = codexTranscript([
+      {
+        timestamp: "2026-06-23T04:00:00.000Z",
+        type: "session_meta",
+        payload: { id: "codex-second-boundary-session" },
+      },
+      {
+        timestamp: "2026-06-23T04:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Pre-boundary work." }],
+        },
+      },
+    ]);
+    const baseInput = {
+      author: { handle: "drew" },
+      capturedAt: "2026-06-23T04:00:01.000Z",
+      contentType: "jsonl",
+      harness: "codex",
+      host: { id: "host-second-boundary" },
+      locator: "/tmp/codex-second-boundary.jsonl",
+      rawContent,
+      workspaceId,
+    } as const;
+
+    const first = await Effect.runPromise(importRawSessionRecord(service, baseInput));
+    const clearOnce = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: { hookEventName: "SessionStart", sessionStartSource: "clear" },
+        capturedAt: "2026-06-23T04:05:00.000Z",
+      }),
+    );
+    // A second, distinct boundary on the still-unchanged transcript.
+    const clearTwice = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        ...baseInput,
+        activity: { hookEventName: "SessionStart", sessionStartSource: "clear" },
+        capturedAt: "2026-06-23T04:10:00.000Z",
+      }),
+    );
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+
+    // The second boundary must genuinely settle the (empty) active interval and open a new one,
+    // not silently collapse back onto the record's already-settled producing interval.
+    expect(intervals.map((interval) => interval.status)).toEqual(["settled", "settled", "active"]);
+    expect(clearTwice.activityInterval.id).toBe(intervals[2]?.id);
+    expect(clearTwice.activityInterval.id).not.toBe(clearOnce.activityInterval.id);
+
+    // The first boundary's settlement on the producing interval must remain intact — never wiped.
+    expect(intervals[0]).toMatchObject({
+      id: first.activityInterval.id,
+      settlementReason: "clear_context",
+      status: "settled",
+    });
+    expect(intervals[0]?.settledAt).not.toBeNull();
+    expect(intervals[0]?.endedAt).not.toBeNull();
+
+    // ADR-0031: the derived rows still live in the producing interval and nowhere else.
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, first.session.id));
+    expect(turns.length).toBeGreaterThan(0);
+    expect(new Set(turns.map((turn) => turn.activityIntervalId))).toEqual(
+      new Set([first.activityInterval.id]),
+    );
+  });
+
   test("opens a new Activity Interval for same-content idle-boundary input", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("raw-import-same-content-idle");
