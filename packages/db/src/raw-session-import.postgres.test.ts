@@ -6207,6 +6207,11 @@ describePostgres("raw session import", () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.sessionId, result.session.id));
     expect(segments).toHaveLength(0);
+    const embeddings = await service.db
+      .select()
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.workspaceId, workspaceId));
+    expect(embeddings).toHaveLength(0);
 
     // Provenance to the triggering Raw Event lives on the opened interval's metadata.
     expect((result.activityInterval.metadata as Record<string, unknown>).triggerRawEventId).toBe(
@@ -6603,6 +6608,149 @@ describePostgres("raw session import", () => {
       .orderBy(asc(activityIntervals.ordinal));
     expect(intervals.map((i) => i.status)).toEqual(["settled", "active"]);
     expect(intervals[0]?.settlementReason).toBe("idle_timeout");
+  });
+
+  test("Stop lifecycle event with no prior active interval settles immediately (no dangling active interval)", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-stop-no-interval");
+    const seed = await seedSourceBindingAndRawEvent({
+      eventType: "Stop",
+      externalEventId: "evt-stop-no-interval-1",
+      harness: "codex",
+      hostId: "host-stop-no-interval",
+      occurredAt: "2026-06-27T14:00:00.000Z",
+      workspaceId,
+    });
+
+    const result = await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        activity: {
+          hookEventName: "Stop",
+          sessionStartSource: undefined,
+          settlementTriggerRawEventId: seed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T14:00:00.000Z",
+        harness: "codex",
+        harnessSessionId: "codex-stop-no-interval-session",
+        host: { id: "host-stop-no-interval" },
+        sourceBindingId: seed.sourceBindingId,
+        workspaceId,
+      }),
+    );
+
+    expect(result.operation).toBe("settled");
+    expect(result.session.status).toBe("completed");
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, result.session.id));
+    expect(intervals).toHaveLength(1);
+    expect(intervals[0]?.status).toBe("settled");
+    expect(intervals[0]?.settlementReason).toBe("stop_event");
+  });
+
+  test("importLifecycleBoundaryEvent rejects when neither harnessSessionId nor locator is provided", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-no-identity");
+    const seed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-no-identity-1",
+      harness: "codex",
+      hostId: "host-no-identity",
+      occurredAt: "2026-06-27T14:00:00.000Z",
+      workspaceId,
+    });
+
+    await expect(
+      Effect.runPromise(
+        importLifecycleBoundaryEvent(service, {
+          activity: {
+            hookEventName: "SessionStart",
+            sessionStartSource: "startup",
+            settlementTriggerRawEventId: seed.rawEventId,
+          },
+          author: { handle: "drew" },
+          capturedAt: "2026-06-27T14:00:00.000Z",
+          harness: "codex",
+          // no harnessSessionId, no locator
+          host: { id: "host-no-identity" },
+          sourceBindingId: seed.sourceBindingId,
+          workspaceId,
+        }),
+      ),
+    ).rejects.toThrow("harnessSessionId or locator is required to identify a raw session");
+  });
+
+  test("re-processing the same lifecycle clear (settled_opened) raw event is an idempotent no-op", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-idempotent-clear");
+    const base = {
+      author: { handle: "drew" },
+      harness: "codex",
+      harnessSessionId: "codex-idempotent-clear-session",
+      host: { id: "host-idempotent-clear" },
+      workspaceId,
+    } as const;
+
+    // First: open interval 0 with a SessionStart.
+    const startSeed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idempotent-clear-start",
+      harness: "codex",
+      hostId: base.host.id,
+      occurredAt: "2026-06-27T15:00:00.000Z",
+      workspaceId,
+    });
+    await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        ...base,
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: startSeed.rawEventId,
+        },
+        capturedAt: "2026-06-27T15:00:00.000Z",
+        sourceBindingId: startSeed.sourceBindingId,
+      }),
+    );
+
+    // Second: clear event triggers settled_opened (interval 0 settled, interval 1 opened).
+    const clearSeed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idempotent-clear-clear",
+      harness: "codex",
+      hostId: base.host.id,
+      occurredAt: "2026-06-27T15:05:00.000Z",
+      workspaceId,
+    });
+
+    const makeImport = () =>
+      importLifecycleBoundaryEvent(service!, {
+        ...base,
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "clear",
+          settlementTriggerRawEventId: clearSeed.rawEventId,
+        },
+        capturedAt: "2026-06-27T15:05:00.000Z",
+        sourceBindingId: clearSeed.sourceBindingId,
+      });
+
+    const first = await Effect.runPromise(makeImport());
+    expect(first.operation).toBe("settled_opened");
+
+    // Replay the same clear rawEventId — must be a no-op.
+    const second = await Effect.runPromise(makeImport());
+    expect(second.operation).toBe("unchanged");
+
+    // Interval count must stay at 2 — no third interval opened.
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id));
+    expect(intervals).toHaveLength(2);
   });
 });
 

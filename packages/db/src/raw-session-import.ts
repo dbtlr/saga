@@ -1466,6 +1466,11 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
 
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
+  if (cleanOptional(input.harnessSessionId) === undefined && sourceLocatorHash === undefined) {
+    throw new RawSessionImportError({
+      message: "harnessSessionId or locator is required to identify a raw session",
+    });
+  }
 
   return {
     activity: { ...input.activity, settlementTriggerRawEventId: triggerId },
@@ -1566,6 +1571,32 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
       sessionId: session.id,
       startedAt: input.capturedAt,
     });
+    const isStop = cleanOptional(input.activity?.hookEventName) === "Stop";
+    if (isStop) {
+      await settleActivityInterval(tx, {
+        interval: opened,
+        now,
+        settlement: {
+          endedAt: input.capturedAt,
+          metadata: { settlementSource: "hook" },
+          reason: "stop_event",
+          settledAt: now,
+          triggerRawEventId,
+        },
+      });
+      const settledInterval = await findActivityIntervalById(tx, {
+        id: opened.id,
+        workspaceId: input.workspaceId,
+      });
+      const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
+      return {
+        activityInterval: settledInterval,
+        authorUser,
+        operation: "settled",
+        session: updatedSession,
+        sourceBinding,
+      };
+    }
     const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
     return {
       activityInterval: opened,
