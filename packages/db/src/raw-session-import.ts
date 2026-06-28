@@ -1509,14 +1509,14 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     sourceBindingId: sourceBinding.id,
   });
 
-  const triggerRawEventId = input.activity?.settlementTriggerRawEventId;
+  const triggerRawEventId = input.activity!.settlementTriggerRawEventId;
   const activeInterval = await findActiveActivityInterval(tx, {
     sessionId: session.id,
     workspaceId: input.workspaceId,
   });
   const latestOrdinal = await findLatestActivityIntervalOrdinal(tx, { sessionId: session.id });
 
-  // Task 1 scope: no active interval => open interval 0 with trigger provenance.
+  // No active interval → open interval 0 with trigger provenance.
   if (activeInterval === undefined) {
     const opened = await insertActivityInterval(tx, {
       input,
@@ -1535,12 +1535,46 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     };
   }
 
-  // Active interval present but no boundary semantics yet (full handling in Task 2).
+  // Active interval present: resolve boundary semantics (Stop, clear/compact, idle, or unchanged).
+  const activityResolution = await resolveActivityInterval(tx, {
+    input,
+    now,
+    openedIntervalMetadata: { importBoundary: "lifecycle_event", triggerRawEventId },
+    session,
+    transcriptNormalization: undefined,
+  });
+
+  if (activityResolution.settlement !== undefined) {
+    // Stop: settle the active interval, mark session completed.
+    await settleActivityInterval(tx, {
+      interval: activityResolution.activityInterval,
+      now,
+      settlement: activityResolution.settlement,
+    });
+    const settledInterval = await findActivityIntervalById(tx, {
+      id: activityResolution.activityInterval.id,
+      workspaceId: input.workspaceId,
+    });
+    const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
+    return {
+      activityInterval: settledInterval,
+      authorUser,
+      operation: "settled",
+      session: updatedSession,
+      sourceBinding,
+    };
+  }
+
+  // clear/compact/idle → new interval opened; or unchanged-active → same interval.
   const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
+  const operation =
+    activityResolution.activityInterval.ordinal > activeInterval.ordinal
+      ? "settled_opened"
+      : "updated";
   return {
-    activityInterval: activeInterval,
+    activityInterval: activityResolution.activityInterval,
     authorUser,
-    operation: "updated",
+    operation,
     session: updatedSession,
     sourceBinding,
   };
@@ -1912,6 +1946,7 @@ async function resolveActivityInterval(
   input: {
     input: NormalizedRawSessionImportInput;
     now: Date;
+    openedIntervalMetadata?: Record<string, unknown> | undefined;
     session: Session;
     transcriptNormalization?: TranscriptNormalization | undefined;
   },
@@ -1964,6 +1999,7 @@ async function resolveActivityInterval(
     return {
       activityInterval: await insertActivityInterval(tx, {
         input: input.input,
+        metadata: input.openedIntervalMetadata,
         ordinal: latestOrdinal + 1,
         sessionId: input.session.id,
         startedAt: observedStart,
@@ -1980,6 +2016,7 @@ async function resolveActivityInterval(
     return {
       activityInterval: await insertActivityInterval(tx, {
         input: input.input,
+        metadata: input.openedIntervalMetadata,
         ordinal: latestOrdinal + 1,
         sessionId: input.session.id,
         startedAt: idleSettlement.settledAt,
