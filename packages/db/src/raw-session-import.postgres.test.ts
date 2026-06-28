@@ -6458,11 +6458,19 @@ describePostgres("raw session import", () => {
         locator,
         sourceBindingId: startSeed.sourceBindingId,
         rawContent: codexTranscript([
-          { timestamp: "2026-06-27T13:00:00.000Z", type: "session_meta", payload: { id: harnessSessionId } },
+          {
+            timestamp: "2026-06-27T13:00:00.000Z",
+            type: "session_meta",
+            payload: { id: harnessSessionId },
+          },
           {
             timestamp: "2026-06-27T13:01:00.000Z",
             type: "response_item",
-            payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Real work." }] },
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "Real work." }],
+            },
           },
         ]),
         workspaceId,
@@ -6495,7 +6503,11 @@ describePostgres("raw session import", () => {
     });
     await Effect.runPromise(
       importLifecycleBoundaryEvent(service, {
-        activity: { hookEventName: "SessionStart", sessionStartSource: "clear", settlementTriggerRawEventId: clearSeed.rawEventId },
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "clear",
+          settlementTriggerRawEventId: clearSeed.rawEventId,
+        },
         author: { handle: "drew" },
         capturedAt: "2026-06-27T13:05:00.000Z",
         harness: "codex",
