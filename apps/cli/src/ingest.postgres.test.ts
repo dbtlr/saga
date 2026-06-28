@@ -9,7 +9,9 @@ import {
   rawEvents,
   rawSessionRecords,
   runMigrations,
+  sessionSegmentEmbeddings,
   sessionSegments,
+  sessionTurns,
   sessions,
   sourceBindings,
   type DatabaseService,
@@ -331,6 +333,122 @@ describePostgres("ambient hook ingest postgres integration", () => {
     expect(segmentRows.map((segment) => segment.searchText)).toEqual([
       "Resolve transcript relative to hook cwd.",
     ]);
+  });
+
+  test("lifecycle boundary: opens session and interval for transcript-less Codex hook", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-codex-lifecycle-"));
+    await initProject({ cwd: projectRoot, handle: "Lifecycle Codex" });
+    await installHarness({ cwd: projectRoot, target: "codex" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+
+    const result = await captureHook("codex", {
+      cwd: projectRoot,
+      hook_event_name: "SessionStart",
+      session_id: "codex-lifecycle-session",
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.mode).toBe("captured");
+    expect(result.lifecycleBoundary).toBe("opened");
+
+    const sessionRows = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.workspaceId, binding.workspace.id));
+    expect(sessionRows).toHaveLength(1);
+    expect(sessionRows[0]?.harnessSessionId).toBe("codex-lifecycle-session");
+
+    const intervalRows = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.workspaceId, binding.workspace.id));
+    expect(intervalRows).toHaveLength(1);
+    expect(intervalRows[0]?.ordinal).toBe(0);
+    expect(intervalRows[0]?.status).toBe("active");
+
+    const rawRecordRows = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.workspaceId, binding.workspace.id));
+    expect(rawRecordRows).toHaveLength(0);
+
+    const turnRows = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.workspaceId, binding.workspace.id));
+    expect(turnRows).toHaveLength(0);
+
+    const segmentRows = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.workspaceId, binding.workspace.id));
+    expect(segmentRows).toHaveLength(0);
+
+    const embeddingRows = await service.db
+      .select()
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.workspaceId, binding.workspace.id));
+    expect(embeddingRows).toHaveLength(0);
+  });
+
+  test("lifecycle boundary: opens session and interval for transcript-less Claude hook", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const projectRoot = mkdtempSync(join(tmpdir(), "saga-ingest-claude-lifecycle-"));
+    await initProject({ cwd: projectRoot, handle: "Lifecycle Claude" });
+    await installHarness({ cwd: projectRoot, target: "claude" });
+    const binding = readBindingFile(projectRoot);
+    if (binding?.host === undefined) throw new Error("binding host was not initialized");
+
+    const result = await captureHook("claude", {
+      cwd: projectRoot,
+      hook_event_name: "SessionStart",
+      session_id: "claude-lifecycle-session",
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.mode).toBe("captured");
+    expect(result.lifecycleBoundary).toBe("opened");
+
+    const sessionRows = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.workspaceId, binding.workspace.id));
+    expect(sessionRows).toHaveLength(1);
+    expect(sessionRows[0]?.harnessSessionId).toBe("claude-lifecycle-session");
+
+    const intervalRows = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.workspaceId, binding.workspace.id));
+    expect(intervalRows).toHaveLength(1);
+    expect(intervalRows[0]?.ordinal).toBe(0);
+    expect(intervalRows[0]?.status).toBe("active");
+
+    const rawRecordRows = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.workspaceId, binding.workspace.id));
+    expect(rawRecordRows).toHaveLength(0);
+
+    const turnRows = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.workspaceId, binding.workspace.id));
+    expect(turnRows).toHaveLength(0);
+
+    const segmentRows = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.workspaceId, binding.workspace.id));
+    expect(segmentRows).toHaveLength(0);
+
+    const embeddingRows = await service.db
+      .select()
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.workspaceId, binding.workspace.id));
+    expect(embeddingRows).toHaveLength(0);
   });
 
   test("imports and settles Claude transcript snapshots through ambient Stop hooks", async () => {
