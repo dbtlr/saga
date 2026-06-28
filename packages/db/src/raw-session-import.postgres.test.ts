@@ -6412,6 +6412,117 @@ describePostgres("raw session import", () => {
     expect(intervals).toHaveLength(1); // no duplicate interval opened on replay
   });
 
+  test("transcript import reuses a lifecycle-created session shell and preserves derived rows across a later boundary", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-coherence");
+    const harnessSessionId = "codex-coherence-session";
+    const host = { id: "host-coherence" } as const;
+    const locator = "/tmp/codex-coherence.jsonl";
+
+    const startSeed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-coherence-start",
+      harness: "codex",
+      hostId: host.id,
+      occurredAt: "2026-06-27T13:00:00.000Z",
+      workspaceId,
+    });
+
+    const shell = await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: startSeed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T13:00:00.000Z",
+        harness: "codex",
+        harnessSessionId,
+        host,
+        locator,
+        sourceBindingId: startSeed.sourceBindingId,
+        workspaceId,
+      }),
+    );
+
+    // Later transcript snapshot for the SAME harness session — reuses the seeded binding.
+    const content = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T13:01:00.000Z",
+        contentType: "jsonl",
+        harness: "codex",
+        harnessSessionId,
+        host,
+        locator,
+        sourceBindingId: startSeed.sourceBindingId,
+        rawContent: codexTranscript([
+          { timestamp: "2026-06-27T13:00:00.000Z", type: "session_meta", payload: { id: harnessSessionId } },
+          {
+            timestamp: "2026-06-27T13:01:00.000Z",
+            type: "response_item",
+            payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Real work." }] },
+          },
+        ]),
+        workspaceId,
+      }),
+    );
+
+    // Coherence: same session, no fork.
+    expect(content.session.id).toBe(shell.session.id);
+    const sessionCount = await service.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.harnessSessionId, harnessSessionId));
+    expect(sessionCount).toHaveLength(1);
+
+    const turnsAfterContent = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, shell.session.id));
+    expect(turnsAfterContent.length).toBeGreaterThan(0);
+    const derivedIntervalIds = new Set(turnsAfterContent.map((t) => t.activityIntervalId));
+
+    // A later transcript-less clear boundary must NOT reassign/delete those derived rows (ADR-0031).
+    const clearSeed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-coherence-clear",
+      harness: "codex",
+      hostId: host.id,
+      occurredAt: "2026-06-27T13:05:00.000Z",
+      workspaceId,
+    });
+    await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        activity: { hookEventName: "SessionStart", sessionStartSource: "clear", settlementTriggerRawEventId: clearSeed.rawEventId },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T13:05:00.000Z",
+        harness: "codex",
+        harnessSessionId,
+        host,
+        locator,
+        sourceBindingId: clearSeed.sourceBindingId,
+        workspaceId,
+      }),
+    );
+
+    // The clear boundary must genuinely settle interval 0 and open interval 1; otherwise the
+    // no-reassignment assertions below would pass vacuously (no new interval to move rows into).
+    const intervalsAfterClear = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, shell.session.id));
+    expect(intervalsAfterClear).toHaveLength(2);
+
+    const turnsAfterClear = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, shell.session.id));
+    expect(turnsAfterClear).toHaveLength(turnsAfterContent.length);
+    expect(new Set(turnsAfterClear.map((t) => t.activityIntervalId))).toEqual(derivedIntervalIds);
+  });
+
   test("lifecycle idle timeout settles and opens a new interval without transcript content", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("lifecycle-idle-timeout");
