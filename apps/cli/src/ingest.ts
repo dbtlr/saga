@@ -14,10 +14,13 @@ import {
 import {
   insertExtractedCandidateClaims,
   insertRawEvent,
+  importLifecycleBoundaryEvent,
   importRawSessionRecord,
   listRecentRawEvents,
   makeDatabase,
   type ClaimProjectionResult,
+  type LifecycleBoundaryInput,
+  type LifecycleBoundaryOperation,
   type RawEvent,
   type RawSessionContentType,
   type RawSessionImportInput,
@@ -32,6 +35,7 @@ export interface HookIngestResult {
   accepted: boolean;
   error?: string | undefined;
   eventId?: string | undefined;
+  lifecycleBoundary?: LifecycleBoundaryOperation | "skipped" | undefined;
   mode: "captured" | "skipped";
   rawSessionImport?: "inserted" | "skipped" | "unchanged" | undefined;
   rawSessionRecordId?: string | undefined;
@@ -277,16 +281,53 @@ export async function captureHook(
           source,
           sourceBindingId: sourceBinding.sourceBindingId,
         });
-        const rawSessionImport =
-          rawSessionImportInput === undefined
-            ? undefined
-            : await Effect.runPromise(importRawSessionRecord(service, rawSessionImportInput));
+        if (rawSessionImportInput === undefined) {
+          let lifecycleBoundary: LifecycleBoundaryOperation | "skipped" = "skipped";
+          try {
+            const lifecycle = await Effect.runPromise(
+              importLifecycleBoundaryEvent(
+                service,
+                buildLifecycleBoundaryInput({
+                  binding: bindingWithHost,
+                  hookInput: input,
+                  projectRoot,
+                  rawEventId: row.id,
+                  rawEventOccurredAt: row.occurredAt,
+                  source,
+                  sourceBindingId: sourceBinding.sourceBindingId,
+                }),
+              ),
+            );
+            lifecycleBoundary = lifecycle.operation;
+          } catch (lifecycleError) {
+            return {
+              accepted: true,
+              error: boundedErrorMessage(lifecycleError),
+              eventId: row.id,
+              lifecycleBoundary: "skipped",
+              mode: "captured",
+              rawSessionImport: "skipped",
+              source,
+            };
+          }
+          return {
+            accepted: true,
+            eventId: row.id,
+            lifecycleBoundary,
+            mode: "captured",
+            rawSessionImport: "skipped",
+            source,
+          };
+        }
+        const rawSessionImport = await Effect.runPromise(
+          importRawSessionRecord(service, rawSessionImportInput),
+        );
         return {
           accepted: true,
           eventId: row.id,
           mode: "captured",
-          rawSessionImport: rawSessionImport === undefined ? "skipped" : rawSessionImport.operation,
-          rawSessionRecordId: rawSessionImport?.rawSessionRecord.id,
+          rawSessionImport: rawSessionImport.operation,
+          rawSessionRecordId: rawSessionImport.rawSessionRecord.id,
           source,
         };
       } catch (error) {
@@ -376,6 +417,40 @@ function buildAmbientRawSessionImportInput(input: {
       transcriptPath: resolvedTranscriptPath,
     },
     rawContent,
+    sourceBindingId: input.sourceBindingId,
+    status: hookEventName === "Stop" ? "completed" : "active",
+    workspaceId: input.binding.workspace.id,
+  };
+}
+
+function buildLifecycleBoundaryInput(input: {
+  binding: WorkspaceBindingFileWithHost;
+  hookInput: HarnessHookInput;
+  projectRoot: string;
+  rawEventId: string;
+  rawEventOccurredAt: Date;
+  source: HarnessSource;
+  sourceBindingId: string;
+}): LifecycleBoundaryInput {
+  const hookEventName =
+    typeof input.hookInput.hook_event_name === "string" ? input.hookInput.hook_event_name : undefined;
+  const sessionStartSource =
+    readHookString(input.hookInput.source) ?? readHookString(input.hookInput.session_start_source);
+  return {
+    activity: { hookEventName, sessionStartSource, settlementTriggerRawEventId: input.rawEventId },
+    author: defaultAuthor(),
+    capturedAt: input.rawEventOccurredAt,
+    harness: input.source,
+    harnessMetadata: {
+      hookEventName,
+      permissionMode: readHookString(input.hookInput.permission_mode),
+      sessionStartSource,
+    },
+    harnessSessionId: readHookString(input.hookInput.session_id),
+    host: { id: input.binding.host.id, label: input.binding.host.label, projectRoot: input.projectRoot },
+    metadata: { importMode: "ambient_hook", triggerRawEventId: input.rawEventId },
+    model: readHookString(input.hookInput.model),
+    provenance: { hookEventName, importedBy: `saga ingest ${input.source}-hook`, rawEventId: input.rawEventId },
     sourceBindingId: input.sourceBindingId,
     status: hookEventName === "Stop" ? "completed" : "active",
     workspaceId: input.binding.workspace.id,
