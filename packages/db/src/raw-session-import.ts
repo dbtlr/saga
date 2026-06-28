@@ -631,34 +631,39 @@ async function reuseExistingRawSessionRecord(
   rawSessionRecord: RawSessionRecord;
   session: Session;
 }> {
-  const existingInterval =
-    input.existingRecord.activityIntervalId === null
+  // ADR-0031: the record stays in its producing interval, which an earlier same-content boundary
+  // may have settled. A boundary in THIS event acts on the session's current active interval, so
+  // evaluate boundary work against that active interval — not the record's (possibly settled) one.
+  // Derived rows still home to the record's producing interval (derivedHomeIntervalId below).
+  const boundaryBaseInterval =
+    (await findActiveActivityInterval(tx, {
+      sessionId: input.session.id,
+      workspaceId: input.input.workspaceId,
+    })) ??
+    (input.existingRecord.activityIntervalId === null
+      ? undefined
+      : await findActivityIntervalById(tx, {
+          id: input.existingRecord.activityIntervalId,
+          workspaceId: input.input.workspaceId,
+        }));
+  const requiresBoundaryWork =
+    input.existingRecord.isActive &&
+    boundaryBaseInterval !== undefined &&
+    activityIntervalBoundaryRequiredForExistingRawSessionRecord({
+      activityInterval: boundaryBaseInterval,
+      input: input.input,
+      session: input.session,
+      transcriptNormalization: input.transcriptNormalization,
+    });
+  const resolvedInterval =
+    requiresBoundaryWork || boundaryBaseInterval === undefined
       ? await resolveActivityInterval(tx, {
           input: input.input,
           now: input.now,
           session: input.session,
           transcriptNormalization: input.transcriptNormalization,
         }).then((resolution) => resolution.activityInterval)
-      : await findActivityIntervalById(tx, {
-          id: input.existingRecord.activityIntervalId,
-          workspaceId: input.input.workspaceId,
-        });
-  const requiresBoundaryWork =
-    input.existingRecord.isActive &&
-    activityIntervalBoundaryRequiredForExistingRawSessionRecord({
-      activityInterval: existingInterval,
-      input: input.input,
-      session: input.session,
-      transcriptNormalization: input.transcriptNormalization,
-    });
-  const resolvedInterval = requiresBoundaryWork
-    ? await resolveActivityInterval(tx, {
-        input: input.input,
-        now: input.now,
-        session: input.session,
-        transcriptNormalization: input.transcriptNormalization,
-      }).then((resolution) => resolution.activityInterval)
-    : existingInterval;
+      : boundaryBaseInterval;
   const boundaryAlreadySatisfied =
     !requiresBoundaryWork &&
     repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
