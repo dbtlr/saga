@@ -6302,6 +6302,116 @@ describePostgres("raw session import", () => {
     expect(embeddings).toHaveLength(0);
   });
 
+  test("re-processing the same lifecycle raw event is an idempotent no-op", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-idempotent");
+
+    // Open an active interval so the subsequent Stop can settle it.
+    const startSeed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idempotent-start",
+      harness: "codex",
+      hostId: "host-idempotent",
+      occurredAt: "2026-06-27T11:50:00.000Z",
+      workspaceId,
+    });
+    await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: startSeed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T11:50:00.000Z",
+        harness: "codex",
+        harnessSessionId: "codex-idempotent-session",
+        host: { id: "host-idempotent" },
+        locator: "/tmp/codex-idempotent.jsonl",
+        sourceBindingId: startSeed.sourceBindingId,
+        workspaceId,
+      }),
+    );
+
+    const seed = await seedSourceBindingAndRawEvent({
+      eventType: "Stop",
+      externalEventId: "evt-idempotent-1",
+      harness: "codex",
+      hostId: "host-idempotent",
+      occurredAt: "2026-06-27T12:00:00.000Z",
+      workspaceId,
+    });
+
+    const make = () =>
+      importLifecycleBoundaryEvent(service!, {
+        activity: {
+          hookEventName: "Stop",
+          sessionStartSource: undefined,
+          settlementTriggerRawEventId: seed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T12:00:00.000Z",
+        harness: "codex",
+        harnessSessionId: "codex-idempotent-session",
+        host: { id: "host-idempotent" },
+        locator: "/tmp/codex-idempotent.jsonl",
+        sourceBindingId: seed.sourceBindingId,
+        workspaceId,
+      });
+
+    const first = await Effect.runPromise(make());
+    expect(first.operation).toBe("settled");
+    const second = await Effect.runPromise(make());
+    expect(second.operation).toBe("unchanged");
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id));
+    expect(intervals).toHaveLength(1); // no duplicate interval opened on replay
+  });
+
+  test("re-processing a lifecycle SessionStart raw event (opened) is an idempotent no-op", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-idempotent-opened");
+    const seed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idempotent-opened-1",
+      harness: "codex",
+      hostId: "host-idempotent-opened",
+      occurredAt: "2026-06-27T12:00:00.000Z",
+      workspaceId,
+    });
+
+    const make = () =>
+      importLifecycleBoundaryEvent(service!, {
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: seed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T12:00:00.000Z",
+        harness: "codex",
+        harnessSessionId: "codex-idempotent-opened-session",
+        host: { id: "host-idempotent-opened" },
+        locator: "/tmp/codex-idempotent-opened.jsonl",
+        sourceBindingId: seed.sourceBindingId,
+        workspaceId,
+      });
+
+    const first = await Effect.runPromise(make());
+    expect(first.operation).toBe("opened");
+    const second = await Effect.runPromise(make());
+    expect(second.operation).toBe("unchanged");
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, first.session.id));
+    expect(intervals).toHaveLength(1); // no duplicate interval opened on replay
+  });
+
   test("lifecycle idle timeout settles and opens a new interval without transcript content", async () => {
     if (service === undefined) throw new Error("database service was not initialized");
     const workspaceId = await createBoundWorkspace("lifecycle-idle-timeout");
