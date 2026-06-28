@@ -529,6 +529,15 @@ async function findCurrentNoopRawSessionImport(
     id: existingRecord.activityIntervalId,
     workspaceId: input.input.workspaceId,
   });
+  // ADR-0031: the record and the Turns/Segments it produced stay in their producing interval, which
+  // an earlier same-content boundary may have settled. The session's current active interval — the
+  // freshly opened, possibly empty one — is what an idempotent boundary reimport should observe and
+  // return, even though the active record itself sits in the prior (settled) interval.
+  const activeInterval =
+    (await findActiveActivityInterval(tx, {
+      sessionId: session.id,
+      workspaceId: input.input.workspaceId,
+    })) ?? activityInterval;
   const authorUser = await findCurrentHostUser(tx, input.input);
   if (authorUser === undefined || session.authorUserId !== authorUser.id) return undefined;
 
@@ -565,13 +574,13 @@ async function findCurrentNoopRawSessionImport(
 
   const repeatedBoundaryAlreadySatisfied =
     repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRecord({
-      activityInterval,
+      activityInterval: activeInterval,
       input: input.input,
       session,
     });
 
   const settlement = settlementForExistingRawSessionRecord({
-    activityInterval,
+    activityInterval: activeInterval,
     input: input.input,
     now: input.now,
     transcriptNormalization: input.transcriptNormalization,
@@ -586,7 +595,7 @@ async function findCurrentNoopRawSessionImport(
       transcriptNormalization: input.transcriptNormalization,
     }) ||
     !activityIntervalIsCurrentForRefresh({
-      activityInterval,
+      activityInterval: activeInterval,
       activityIntervalStartedAt: repeatedBoundaryAlreadySatisfied
         ? input.input.capturedAt
         : undefined,
@@ -598,7 +607,7 @@ async function findCurrentNoopRawSessionImport(
   }
 
   return {
-    activityInterval,
+    activityInterval: activeInterval,
     authorUser,
     contentHash: input.input.contentHash,
     operation: "unchanged",
@@ -657,10 +666,15 @@ async function reuseExistingRawSessionRecord(
       input: input.input,
       session: input.session,
     });
+  // ADR-0031: a same-content boundary may settle the old interval and open a new empty one, but
+  // the existing record and the Turns/Segments its snapshot produced stay in the interval whose
+  // snapshot produced them — they are never reassigned to the freshly opened interval. Only an
+  // unattributed record adopts the resolved interval.
+  const derivedHomeIntervalId = input.existingRecord.activityIntervalId ?? resolvedInterval.id;
   const intervalAdjustedRecord =
-    requiresBoundaryWork && input.existingRecord.activityIntervalId !== resolvedInterval.id
+    requiresBoundaryWork && input.existingRecord.activityIntervalId === null
       ? await updateActiveRawSessionRecordActivityInterval(tx, {
-          activityIntervalId: resolvedInterval.id,
+          activityIntervalId: derivedHomeIntervalId,
           existingRecord: input.existingRecord,
           now: input.now,
         })
@@ -668,7 +682,7 @@ async function reuseExistingRawSessionRecord(
   const repairedRecord =
     intervalAdjustedRecord.isActive && input.transcriptNormalization !== undefined
       ? await repairActiveRawSessionRecordDerivedRows(tx, {
-          activityIntervalId: resolvedInterval.id,
+          activityIntervalId: derivedHomeIntervalId,
           existingRecord: intervalAdjustedRecord,
           input: input.input,
           sessionId: input.session.id,
