@@ -17,6 +17,7 @@ import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
 import {
   activityIntervals,
   rawSessionRecords,
+  sessionSegmentEmbeddings,
   sessions,
   sessionRelationships,
   sessionSegments,
@@ -6211,6 +6212,164 @@ describePostgres("raw session import", () => {
     expect((result.activityInterval.metadata as Record<string, unknown>).triggerRawEventId).toBe(
       seed.rawEventId,
     );
+  });
+
+  test("lifecycle boundaries settle and open intervals without transcript content", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-boundaries");
+    const base = {
+      author: { handle: "drew" },
+      harness: "claude",
+      host: { id: "host-lifecycle-boundaries" },
+      locator: "/tmp/claude-lifecycle-boundaries.jsonl",
+      workspaceId,
+    } as const;
+    let eventSeq = 0;
+
+    async function event(
+      hookEventName: string,
+      sessionStartSource: string | undefined,
+      capturedAt: string,
+    ) {
+      eventSeq += 1;
+      const seed = await seedSourceBindingAndRawEvent({
+        eventType: hookEventName,
+        externalEventId: `evt-boundary-${eventSeq}`,
+        harness: "claude",
+        hostId: "host-lifecycle-boundaries",
+        occurredAt: capturedAt,
+        workspaceId,
+      });
+      return Effect.runPromise(
+        importLifecycleBoundaryEvent(service!, {
+          ...base,
+          activity: {
+            hookEventName,
+            sessionStartSource,
+            settlementTriggerRawEventId: seed.rawEventId,
+          },
+          capturedAt,
+          harnessSessionId: "claude-lifecycle-boundaries-session",
+          sourceBindingId: seed.sourceBindingId,
+        }),
+      );
+    }
+
+    const start = await event("SessionStart", "startup", "2026-06-27T11:00:00.000Z");
+    expect(start.operation).toBe("opened");
+
+    const clear = await event("SessionStart", "clear", "2026-06-27T11:05:00.000Z");
+    expect(clear.operation).toBe("settled_opened");
+    expect(clear.activityInterval.ordinal).toBe(1);
+    expect(
+      (clear.activityInterval.metadata as Record<string, unknown>).triggerRawEventId,
+    ).not.toBeUndefined();
+
+    const stop = await event("Stop", undefined, "2026-06-27T11:10:00.000Z");
+    expect(stop.operation).toBe("settled");
+    expect(stop.session.status).toBe("completed");
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, start.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(intervals.map((i) => i.status)).toEqual(["settled", "settled"]);
+    expect(intervals[0]).toMatchObject({ settlementReason: "clear_context" });
+    expect(intervals[1]).toMatchObject({ settlementReason: "stop_event" });
+    expect(intervals[0]?.settlementTriggerRawEventId).not.toBeNull();
+    // Still no derived content anywhere.
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, start.session.id));
+    expect(records).toHaveLength(0);
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, start.session.id));
+    expect(turns).toHaveLength(0);
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.sessionId, start.session.id));
+    expect(segments).toHaveLength(0);
+    // ADR-0030: no embeddings on the transcript-less path.
+    const embeddings = await service.db
+      .select()
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.workspaceId, workspaceId));
+    expect(embeddings).toHaveLength(0);
+  });
+
+  test("lifecycle idle timeout settles and opens a new interval without transcript content", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-idle-timeout");
+    const base = {
+      author: { handle: "drew" },
+      harness: "claude",
+      host: { id: "host-lifecycle-idle-timeout" },
+      locator: "/tmp/claude-lifecycle-idle-timeout.jsonl",
+      workspaceId,
+    } as const;
+    const T = "2026-06-27T12:00:00.000Z";
+    const T45 = "2026-06-27T12:45:00.000Z";
+
+    const seed1 = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idle-1",
+      harness: "claude",
+      hostId: "host-lifecycle-idle-timeout",
+      occurredAt: T,
+      workspaceId,
+    });
+    const start = await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        ...base,
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: seed1.rawEventId,
+        },
+        capturedAt: T,
+        harnessSessionId: "claude-lifecycle-idle-timeout-session",
+        sourceBindingId: seed1.sourceBindingId,
+      }),
+    );
+    expect(start.operation).toBe("opened");
+    expect(start.activityInterval.ordinal).toBe(0);
+
+    const seed2 = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-idle-2",
+      harness: "claude",
+      hostId: "host-lifecycle-idle-timeout",
+      occurredAt: T45,
+      workspaceId,
+    });
+    const idle = await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        ...base,
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: seed2.rawEventId,
+        },
+        capturedAt: T45,
+        harnessSessionId: "claude-lifecycle-idle-timeout-session",
+        sourceBindingId: seed1.sourceBindingId,
+      }),
+    );
+    expect(idle.operation).toBe("settled_opened");
+    expect(idle.activityInterval.ordinal).toBe(1);
+
+    const intervals = await service.db
+      .select()
+      .from(activityIntervals)
+      .where(eq(activityIntervals.sessionId, start.session.id))
+      .orderBy(asc(activityIntervals.ordinal));
+    expect(intervals.map((i) => i.status)).toEqual(["settled", "active"]);
+    expect(intervals[0]?.settlementReason).toBe("idle_timeout");
   });
 });
 
