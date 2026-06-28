@@ -1486,6 +1486,30 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
   };
 }
 
+async function findLifecycleNoop(
+  tx: DatabaseService["db"],
+  input: { input: NormalizedRawSessionImportInput; session: Session },
+): Promise<ActivityInterval | undefined> {
+  const trigger = input.input.activity?.settlementTriggerRawEventId;
+  if (trigger === undefined) return undefined;
+  const [interval] = await tx
+    .select()
+    .from(activityIntervals)
+    .where(
+      and(
+        eq(activityIntervals.sessionId, input.session.id),
+        eq(activityIntervals.workspaceId, input.input.workspaceId),
+        sql`(
+          ${activityIntervals.settlementTriggerRawEventId} = ${trigger}
+          or ${activityIntervals.metadata} ->> 'triggerRawEventId' = ${trigger}
+        )`,
+      ),
+    )
+    .orderBy(desc(activityIntervals.ordinal))
+    .limit(1);
+  return interval;
+}
+
 async function importLifecycleBoundaryEventInTransactionUnsafe(
   tx: DatabaseService["db"],
   input: NormalizedRawSessionImportInput,
@@ -1508,6 +1532,11 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     input,
     sourceBindingId: sourceBinding.id,
   });
+
+  const noopInterval = await findLifecycleNoop(tx, { input, session });
+  if (noopInterval !== undefined) {
+    return { activityInterval: noopInterval, authorUser, operation: "unchanged", session, sourceBinding };
+  }
 
   const triggerRawEventId = input.activity!.settlementTriggerRawEventId;
   const activeInterval = await findActiveActivityInterval(tx, {
