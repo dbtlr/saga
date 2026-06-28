@@ -433,7 +433,9 @@ function buildLifecycleBoundaryInput(input: {
   sourceBindingId: string;
 }): LifecycleBoundaryInput {
   const hookEventName =
-    typeof input.hookInput.hook_event_name === "string" ? input.hookInput.hook_event_name : undefined;
+    typeof input.hookInput.hook_event_name === "string"
+      ? input.hookInput.hook_event_name
+      : undefined;
   const sessionStartSource =
     readHookString(input.hookInput.source) ?? readHookString(input.hookInput.session_start_source);
   return {
@@ -447,10 +449,18 @@ function buildLifecycleBoundaryInput(input: {
       sessionStartSource,
     },
     harnessSessionId: readHookString(input.hookInput.session_id),
-    host: { id: input.binding.host.id, label: input.binding.host.label, projectRoot: input.projectRoot },
+    host: {
+      id: input.binding.host.id,
+      label: input.binding.host.label,
+      projectRoot: input.projectRoot,
+    },
     metadata: { importMode: "ambient_hook", triggerRawEventId: input.rawEventId },
     model: readHookString(input.hookInput.model),
-    provenance: { hookEventName, importedBy: `saga ingest ${input.source}-hook`, rawEventId: input.rawEventId },
+    provenance: {
+      hookEventName,
+      importedBy: `saga ingest ${input.source}-hook`,
+      rawEventId: input.rawEventId,
+    },
     sourceBindingId: input.sourceBindingId,
     status: hookEventName === "Stop" ? "completed" : "active",
     workspaceId: input.binding.workspace.id,

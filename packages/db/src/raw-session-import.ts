@@ -117,7 +117,11 @@ export interface LifecycleBoundaryInput {
     sessionStartSource?: string | undefined;
     settlementTriggerRawEventId: string;
   };
-  author: { displayName?: string | undefined; handle: string; externalSubject?: string | undefined };
+  author: {
+    displayName?: string | undefined;
+    handle: string;
+    externalSubject?: string | undefined;
+  };
   capturedAt: Date | string;
   harness: RawSessionHarness;
   harnessMetadata?: Record<string, unknown> | undefined;
@@ -1452,7 +1456,8 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
   const hostId = input.host.id.trim();
   if (hostId === "") throw new RawSessionImportError({ message: "host.id is required" });
   const authorHandle = input.author.handle.trim();
-  if (authorHandle === "") throw new RawSessionImportError({ message: "author.handle is required" });
+  if (authorHandle === "")
+    throw new RawSessionImportError({ message: "author.handle is required" });
   const triggerId = input.activity.settlementTriggerRawEventId.trim();
   if (triggerId === "")
     throw new RawSessionImportError({
@@ -1465,7 +1470,8 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
   return {
     activity: { ...input.activity, settlementTriggerRawEventId: triggerId },
     author: { ...input.author, handle: authorHandle },
-    capturedAt: typeof input.capturedAt === "string" ? new Date(input.capturedAt) : input.capturedAt,
+    capturedAt:
+      typeof input.capturedAt === "string" ? new Date(input.capturedAt) : input.capturedAt,
     contentBytes: 0,
     contentHash: "",
     contentType: "text",
@@ -1535,7 +1541,13 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
 
   const noopInterval = await findLifecycleNoop(tx, { input, session });
   if (noopInterval !== undefined) {
-    return { activityInterval: noopInterval, authorUser, operation: "unchanged", session, sourceBinding };
+    return {
+      activityInterval: noopInterval,
+      authorUser,
+      operation: "unchanged",
+      session,
+      sourceBinding,
+    };
   }
 
   const triggerRawEventId = input.activity!.settlementTriggerRawEventId;
