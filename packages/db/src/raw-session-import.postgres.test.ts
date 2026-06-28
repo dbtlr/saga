@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { normalizeClaudeTranscript } from "./claude-transcript-normalizer.js";
 import { normalizeCodexTranscript } from "./codex-transcript-normalizer.js";
 import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { importRawSessionRecord } from "./raw-session-import.js";
+import { insertRawEvent } from "./raw-event.js";
+import { importLifecycleBoundaryEvent, importRawSessionRecord } from "./raw-session-import.js";
 import {
   getSessionDetail,
   listRecentSessionRecords,
@@ -143,6 +144,54 @@ describePostgres("raw session import", () => {
 
   function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function seedSourceBindingAndRawEvent(input: {
+    eventType: string;
+    externalEventId: string;
+    harness: "claude" | "codex";
+    hostId: string;
+    occurredAt: string;
+    workspaceId: string;
+  }): Promise<{ rawEventId: string; sourceBindingId: string }> {
+    if (service === undefined) throw new Error("database service was not initialized");
+    // sourceBindings has a unique index on (workspaceId, sourceType, sourceUri); upsert so repeated
+    // calls for the same host/harness return ONE stable binding id (else session lookup forks).
+    const sourceUri = `${input.harness}://host/${input.hostId}`;
+    await service.db
+      .insert(sourceBindings)
+      .values({ sourceType: input.harness, sourceUri, workspaceId: input.workspaceId })
+      .onConflictDoNothing({
+        target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],
+      });
+    const [binding] = await service.db
+      .select()
+      .from(sourceBindings)
+      .where(
+        and(
+          eq(sourceBindings.workspaceId, input.workspaceId),
+          eq(sourceBindings.sourceType, input.harness),
+          eq(sourceBindings.sourceUri, sourceUri),
+        ),
+      )
+      .limit(1);
+    if (binding === undefined) throw new Error("source binding upsert returned no row");
+    const rawEvent = await Effect.runPromise(
+      insertRawEvent(service, {
+        actorId: input.hostId,
+        eventType: input.eventType,
+        externalEventId: input.externalEventId,
+        occurredAt: input.occurredAt,
+        payload: { hook_event_name: input.eventType },
+        provenance: { importedBy: "test" },
+        sourceBindingId: binding.id,
+        sourceId: `${input.harness}:local`,
+        sourceType: input.harness,
+        trustLevel: "raw",
+        workspaceId: input.workspaceId,
+      }),
+    );
+    return { rawEventId: rawEvent.id, sourceBindingId: binding.id };
   }
 
   test("migrates lexical indexes for session segment search", async () => {
@@ -6103,6 +6152,65 @@ describePostgres("raw session import", () => {
         }),
       ),
     ).rejects.toThrow("workspace binding is required before importing raw sessions");
+  });
+
+  test("lifecycle boundary creates a session shell and opens interval 0 without derived content", async () => {
+    if (service === undefined) throw new Error("database service was not initialized");
+    const workspaceId = await createBoundWorkspace("lifecycle-shell");
+    const seed = await seedSourceBindingAndRawEvent({
+      eventType: "SessionStart",
+      externalEventId: "evt-shell-1",
+      harness: "codex",
+      hostId: "host-lifecycle-shell",
+      occurredAt: "2026-06-27T10:00:00.000Z",
+      workspaceId,
+    });
+
+    const result = await Effect.runPromise(
+      importLifecycleBoundaryEvent(service, {
+        activity: {
+          hookEventName: "SessionStart",
+          sessionStartSource: "startup",
+          settlementTriggerRawEventId: seed.rawEventId,
+        },
+        author: { handle: "drew" },
+        capturedAt: "2026-06-27T10:00:00.000Z",
+        harness: "codex",
+        harnessSessionId: "codex-lifecycle-shell-session",
+        host: { id: "host-lifecycle-shell" },
+        locator: "/tmp/codex-lifecycle-shell.jsonl",
+        provenance: { importedBy: "saga ingest codex-hook", rawEventId: seed.rawEventId },
+        sourceBindingId: seed.sourceBindingId,
+        workspaceId,
+      }),
+    );
+
+    expect(result.operation).toBe("opened");
+    expect(result.session.harnessSessionId).toBe("codex-lifecycle-shell-session");
+    expect(result.activityInterval.ordinal).toBe(0);
+    expect(result.activityInterval.status).toBe("active");
+
+    // ADR-0030: no Raw Session Records, Turns, Segments, or embeddings.
+    const records = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.sessionId, result.session.id));
+    expect(records).toHaveLength(0);
+    const turns = await service.db
+      .select()
+      .from(sessionTurns)
+      .where(eq(sessionTurns.sessionId, result.session.id));
+    expect(turns).toHaveLength(0);
+    const segments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.sessionId, result.session.id));
+    expect(segments).toHaveLength(0);
+
+    // Provenance to the triggering Raw Event lives on the opened interval's metadata.
+    expect((result.activityInterval.metadata as Record<string, unknown>).triggerRawEventId).toBe(
+      seed.rawEventId,
+    );
   });
 });
 
