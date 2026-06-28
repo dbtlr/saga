@@ -101,6 +101,47 @@ export interface RawSessionImportResult {
   sourceBinding: SourceBinding;
 }
 
+// operation: "opened" = new interval opened (incl. fresh SessionStart shell);
+//            "settled" = active interval settled (Stop); "settled_opened" = settle old + open new (clear/compact/idle);
+//            "updated" = session touched, no interval boundary; "unchanged" = idempotent no-op for this rawEventId.
+export type LifecycleBoundaryOperation =
+  | "opened"
+  | "settled"
+  | "settled_opened"
+  | "updated"
+  | "unchanged";
+
+export interface LifecycleBoundaryInput {
+  activity: {
+    hookEventName?: string | undefined;
+    sessionStartSource?: string | undefined;
+    settlementTriggerRawEventId: string;
+  };
+  author: { displayName?: string | undefined; handle: string; externalSubject?: string | undefined };
+  capturedAt: Date | string;
+  harness: RawSessionHarness;
+  harnessMetadata?: Record<string, unknown> | undefined;
+  harnessSessionId?: string | undefined;
+  host: { id: string; label?: string | undefined; projectRoot?: string | undefined };
+  locator?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
+  model?: string | undefined;
+  provenance?: Record<string, unknown> | undefined;
+  sourceBindingId?: string | undefined;
+  status?: "active" | "completed" | undefined;
+  title?: string | undefined;
+  workspaceId: string;
+}
+
+export interface LifecycleBoundaryResult {
+  activityInterval: ActivityInterval;
+  authorUser: User;
+  operation: LifecycleBoundaryOperation;
+  session: Session;
+  sourceBinding: SourceBinding;
+  // NOTE: deliberately NO rawSessionRecord field — ADR-0030.
+}
+
 export class RawSessionImportError extends Data.TaggedError("RawSessionImportError")<{
   readonly message: string;
 }> {}
@@ -124,6 +165,25 @@ export function importRawSessionRecordInTransaction(
 ): Effect.Effect<RawSessionImportResult, DatabaseError | RawSessionImportError> {
   return Effect.tryPromise({
     try: () => importRawSessionRecordInTransactionUnsafe(tx, normalizeInput(input)),
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+export function importLifecycleBoundaryEvent(
+  service: DatabaseService,
+  input: LifecycleBoundaryInput,
+): Effect.Effect<LifecycleBoundaryResult, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db.transaction((tx) =>
+        importLifecycleBoundaryEventInTransactionUnsafe(
+          tx as DatabaseService["db"],
+          normalizeLifecycleInput(input),
+        ),
+      ),
     catch: (cause) =>
       cause instanceof RawSessionImportError
         ? cause
@@ -189,36 +249,7 @@ async function importRawSessionRecordInTransactionUnsafe(
     };
   }
 
-  const [authorUser] = await tx
-    .insert(users)
-    .values({
-      displayName: input.author.displayName,
-      externalSubject: input.author.externalSubject ?? input.host.id,
-      handle: input.author.handle,
-      identitySource: "host",
-      metadata: {
-        hostId: input.host.id,
-        hostLabel: input.host.label,
-      },
-      workspaceId: input.workspaceId,
-    })
-    .onConflictDoUpdate({
-      set: {
-        displayName: input.author.displayName,
-        externalSubject: input.author.externalSubject ?? input.host.id,
-        metadata: {
-          hostId: input.host.id,
-          hostLabel: input.host.label,
-        },
-        updatedAt: now,
-      },
-      target: [users.workspaceId, users.identitySource, users.handle, users.externalSubject],
-    })
-    .returning();
-  if (authorUser === undefined) {
-    throw new RawSessionImportError({ message: "host user attribution returned no row" });
-  }
-
+  const authorUser = await upsertHostAuthor(tx, { input, now });
   const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
 
   const session = await resolveSession(tx, {
@@ -1415,6 +1446,126 @@ function extractTranscriptImportHints(
   });
 }
 
+function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSessionImportInput {
+  const workspaceId = input.workspaceId.trim();
+  if (workspaceId === "") throw new RawSessionImportError({ message: "workspaceId is required" });
+  const hostId = input.host.id.trim();
+  if (hostId === "") throw new RawSessionImportError({ message: "host.id is required" });
+  const authorHandle = input.author.handle.trim();
+  if (authorHandle === "") throw new RawSessionImportError({ message: "author.handle is required" });
+  const triggerId = input.activity.settlementTriggerRawEventId.trim();
+  if (triggerId === "")
+    throw new RawSessionImportError({
+      message: "activity.settlementTriggerRawEventId is required",
+    });
+
+  const locator = cleanOptional(input.locator);
+  const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
+
+  return {
+    activity: { ...input.activity, settlementTriggerRawEventId: triggerId },
+    author: { ...input.author, handle: authorHandle },
+    capturedAt: typeof input.capturedAt === "string" ? new Date(input.capturedAt) : input.capturedAt,
+    contentBytes: 0,
+    contentHash: "",
+    contentType: "text",
+    harness: input.harness,
+    harnessMetadata: input.harnessMetadata,
+    harnessSessionId: cleanOptional(input.harnessSessionId),
+    host: { ...input.host, id: hostId },
+    locator,
+    metadata: input.metadata,
+    model: input.model,
+    provenance: input.provenance,
+    rawContent: "",
+    sourceBindingId: cleanOptional(input.sourceBindingId),
+    sourceLocatorHash,
+    status: input.status,
+    title: input.title,
+    workspaceId,
+  };
+}
+
+async function importLifecycleBoundaryEventInTransactionUnsafe(
+  tx: DatabaseService["db"],
+  input: NormalizedRawSessionImportInput,
+): Promise<LifecycleBoundaryResult> {
+  const [workspace] = await tx
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  if (workspace === undefined)
+    throw new RawSessionImportError({
+      message: "workspace binding is required before lifecycle import",
+    });
+
+  const now = new Date();
+  const authorUser = await upsertHostAuthor(tx, { input, now });
+  const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
+  const session = await resolveSession(tx, {
+    authorUserId: authorUser.id,
+    input,
+    sourceBindingId: sourceBinding.id,
+  });
+
+  const triggerRawEventId = input.activity?.settlementTriggerRawEventId;
+  const activeInterval = await findActiveActivityInterval(tx, {
+    sessionId: session.id,
+    workspaceId: input.workspaceId,
+  });
+  const latestOrdinal = await findLatestActivityIntervalOrdinal(tx, { sessionId: session.id });
+
+  // Task 1 scope: no active interval => open interval 0 with trigger provenance.
+  if (activeInterval === undefined) {
+    const opened = await insertActivityInterval(tx, {
+      input,
+      metadata: { importBoundary: "lifecycle_event", triggerRawEventId },
+      ordinal: latestOrdinal + 1,
+      sessionId: session.id,
+      startedAt: input.capturedAt,
+    });
+    const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
+    return {
+      activityInterval: opened,
+      authorUser,
+      operation: "opened",
+      session: updatedSession,
+      sourceBinding,
+    };
+  }
+
+  // Active interval present but no boundary semantics yet (full handling in Task 2).
+  const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
+  return {
+    activityInterval: activeInterval,
+    authorUser,
+    operation: "updated",
+    session: updatedSession,
+    sourceBinding,
+  };
+}
+
+async function applyLifecycleSessionUpdate(
+  tx: DatabaseService["db"],
+  input: { input: NormalizedRawSessionImportInput; now: Date; session: Session },
+): Promise<Session> {
+  const isStop = cleanOptional(input.input.activity?.hookEventName) === "Stop";
+  const [updated] = await tx
+    .update(sessions)
+    .set({
+      endedAt: isStop ? input.input.capturedAt : input.session.endedAt,
+      lastActivityAt: input.input.capturedAt,
+      status: isStop ? "completed" : (input.input.status ?? input.session.status),
+      updatedAt: input.now,
+    })
+    .where(eq(sessions.id, input.session.id))
+    .returning();
+  if (updated === undefined)
+    throw new RawSessionImportError({ message: "session update returned no row" });
+  return updated;
+}
+
 function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImportInput {
   const workspaceId = input.workspaceId.trim();
   if (workspaceId === "") {
@@ -1937,6 +2088,7 @@ async function insertActivityInterval(
   tx: DatabaseService["db"],
   input: {
     input: NormalizedRawSessionImportInput;
+    metadata?: Record<string, unknown> | undefined;
     ordinal: number;
     sessionId: string;
     startedAt: Date;
@@ -1947,6 +2099,7 @@ async function insertActivityInterval(
     .values({
       metadata: {
         importBoundary: "raw_session",
+        ...input.metadata,
       },
       ordinal: input.ordinal,
       sessionId: input.sessionId,
@@ -2360,6 +2513,42 @@ function sourceBindingConfig(input: NormalizedRawSessionImportInput): Record<str
 
 function sourceBindingDisplayName(input: NormalizedRawSessionImportInput): string {
   return `${harnessDisplayName(input.harness)} on ${input.host.label ?? input.host.id}`;
+}
+
+async function upsertHostAuthor(
+  tx: DatabaseService["db"],
+  input: { input: NormalizedRawSessionImportInput; now: Date },
+): Promise<User> {
+  const [authorUser] = await tx
+    .insert(users)
+    .values({
+      displayName: input.input.author.displayName,
+      externalSubject: input.input.author.externalSubject ?? input.input.host.id,
+      handle: input.input.author.handle,
+      identitySource: "host",
+      metadata: {
+        hostId: input.input.host.id,
+        hostLabel: input.input.host.label,
+      },
+      workspaceId: input.input.workspaceId,
+    })
+    .onConflictDoUpdate({
+      set: {
+        displayName: input.input.author.displayName,
+        externalSubject: input.input.author.externalSubject ?? input.input.host.id,
+        metadata: {
+          hostId: input.input.host.id,
+          hostLabel: input.input.host.label,
+        },
+        updatedAt: input.now,
+      },
+      target: [users.workspaceId, users.identitySource, users.handle, users.externalSubject],
+    })
+    .returning();
+  if (authorUser === undefined) {
+    throw new RawSessionImportError({ message: "host user attribution returned no row" });
+  }
+  return authorUser;
 }
 
 async function findCurrentHostUser(
