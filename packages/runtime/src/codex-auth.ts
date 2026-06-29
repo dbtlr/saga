@@ -216,21 +216,14 @@ function mostRelevantUnavailable(
 }
 
 function unavailableRank(status: CodexAuthUnavailable): number {
-  switch (status.reason) {
-    case 'login-without-api-key': {
-      return 3;
-    }
-    case 'openai-api-key-missing': {
-      return 2;
-    }
-    case 'missing-auth-file': {
-      return 1;
-    }
-    case 'malformed-auth-file':
-    case 'unreadable-auth-file': {
-      return 0;
-    }
-  }
+  const ranks: Record<CodexAuthUnavailableReason, number> = {
+    'login-without-api-key': 3,
+    'openai-api-key-missing': 2,
+    'missing-auth-file': 1,
+    'malformed-auth-file': 0,
+    'unreadable-auth-file': 0,
+  };
+  return ranks[status.reason];
 }
 
 function parseAuthJson(rawAuth: string):

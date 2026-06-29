@@ -323,17 +323,12 @@ function checkEmbeddings(
 
 function renderEmbeddingWorkflow(workflow: EmbeddingWorkflowBoundary): string {
   const provider = `${workflow.provider.id}/${workflow.provider.model} (${String(workflow.provider.dimensions)} dimensions)`;
-  switch (workflow.mode) {
-    case 'vector-aware': {
-      return `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
-    }
-    case 'lexical-only-by-policy': {
-      return `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`;
-    }
-    case 'lexical-fallback': {
-      return `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
-    }
-  }
+  const detail: Record<EmbeddingWorkflowBoundary['mode'], string> = {
+    'vector-aware': `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`,
+    'lexical-only-by-policy': `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`,
+    'lexical-fallback': `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`,
+  };
+  return detail[workflow.mode];
 }
 
 async function checkHarnesses(
