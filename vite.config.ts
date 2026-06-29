@@ -67,7 +67,6 @@ const config = {
         'vitest/require-hook': 'off',
         'typescript/parameter-properties': 'off',
         'typescript/consistent-return': 'off',
-        'typescript/no-misused-spread': 'off',
         'promise/prefer-await-to-callbacks': 'off',
         'promise/prefer-await-to-then': 'off',
         'promise/param-names': 'off',
