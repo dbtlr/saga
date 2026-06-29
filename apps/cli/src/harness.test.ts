@@ -1209,21 +1209,21 @@ describe('uninstallHarness', () => {
   });
 });
 
-function withCwd<T>(cwd: string, callback: () => T): T {
+function withCwd<T>(cwd: string, run: () => T): T {
   const previous = process.cwd();
   process.chdir(cwd);
   try {
-    return callback();
+    return run();
   } finally {
     process.chdir(previous);
   }
 }
 
-async function withoutDatabaseUrl<T>(callback: () => Promise<T>): Promise<T> {
+async function withoutDatabaseUrl<T>(run: () => Promise<T>): Promise<T> {
   const previous = process.env.DATABASE_URL;
   delete process.env.DATABASE_URL;
   try {
-    return await callback();
+    return await run();
   } finally {
     if (previous === undefined) {
       delete process.env.DATABASE_URL;

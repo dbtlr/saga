@@ -357,7 +357,7 @@ export async function updateClaimReview(input: UpdateClaimReviewInput): Promise<
 }
 
 async function withBoundDatabase<T>(
-  callback: (input: { binding: WorkspaceBindingFile; service: DatabaseService }) => Promise<T>,
+  run: (input: { binding: WorkspaceBindingFile; service: DatabaseService }) => Promise<T>,
 ): Promise<T> {
   const projectRoot = findProjectRoot(process.cwd());
   const bindingResult = readBindingFile(projectRoot);
@@ -368,7 +368,7 @@ async function withBoundDatabase<T>(
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
-    return await callback({ binding: bindingResult.binding, service });
+    return await run({ binding: bindingResult.binding, service });
   } finally {
     await Effect.runPromise(service.close());
   }

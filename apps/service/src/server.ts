@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { promisify } from 'node:util';
 
 import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
@@ -78,14 +79,6 @@ function listen(server: Server, port: number, host: string): Promise<void> {
   });
 }
 
-function close(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error === undefined) {
-        resolve();
-        return;
-      }
-      reject(error);
-    });
-  });
+async function close(server: Server): Promise<void> {
+  await promisify(server.close.bind(server))();
 }
