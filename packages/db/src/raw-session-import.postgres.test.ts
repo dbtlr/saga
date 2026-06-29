@@ -751,7 +751,10 @@ describePostgres('raw session import', () => {
       group by u.external_subject
       order by u.external_subject
     `;
-    expect(rows).toStrictEqual([
+    // postgres.js rows have a non-plain prototype; toStrictEqual fails on it
+    // even when contents match, so use structural toEqual here.
+    // oxlint-disable-next-line vitest/prefer-strict-equal
+    expect(rows).toEqual([
       { external_subject: 'host-1', sessions: '1' },
       { external_subject: 'host-2', sessions: '1' },
     ]);

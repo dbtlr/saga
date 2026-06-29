@@ -418,21 +418,26 @@ describePostgres('postgres integration', () => {
             AND "handle" = 'drew'
             AND "external_subject" IS NULL
         `;
-        expect(nullableUsers).toStrictEqual([{ id: canonicalUser.id }]);
+        // postgres.js rows have a non-plain prototype; toStrictEqual fails on it
+        // even when contents match, so use structural toEqual here.
+        // oxlint-disable-next-line vitest/prefer-strict-equal
+        expect(nullableUsers).toEqual([{ id: canonicalUser.id }]);
 
         const sessionAuthors = await tx<{ author_user_id: string }[]>`
           SELECT DISTINCT "author_user_id"
           FROM "sessions"
           WHERE "workspace_id" = ${workspace.id}
         `;
-        expect(sessionAuthors).toStrictEqual([{ author_user_id: canonicalUser.id }]);
+        // oxlint-disable-next-line vitest/prefer-strict-equal -- postgres.js row prototype
+        expect(sessionAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
 
         const rawRecordAuthors = await tx<{ author_user_id: string }[]>`
           SELECT DISTINCT "author_user_id"
           FROM "raw_session_records"
           WHERE "workspace_id" = ${workspace.id}
         `;
-        expect(rawRecordAuthors).toStrictEqual([{ author_user_id: canonicalUser.id }]);
+        // oxlint-disable-next-line vitest/prefer-strict-equal -- postgres.js row prototype
+        expect(rawRecordAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
 
         throw new RollbackMigrationFixtureError();
       });
