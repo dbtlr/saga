@@ -64,7 +64,6 @@ const config = {
         'vitest/require-hook': 'off',
         'promise/prefer-await-to-callbacks': 'off',
         'promise/prefer-await-to-then': 'off',
-        'promise/param-names': 'off',
       },
       overrides: [
         forbid(

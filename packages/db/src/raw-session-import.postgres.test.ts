@@ -33,13 +33,13 @@ function deferred<T>(): {
   reject: (reason?: unknown) => void;
   resolve: (value: T | PromiseLike<T>) => void;
 } {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
-    reject = promiseReject;
+  let capturedResolve!: (value: T | PromiseLike<T>) => void;
+  let capturedReject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    capturedResolve = resolve;
+    capturedReject = reject;
   });
-  return { promise, reject, resolve };
+  return { promise, reject: capturedReject, resolve: capturedResolve };
 }
 
 function sleep(ms: number): Promise<void> {
