@@ -28,7 +28,7 @@ export type SearchMemoryInput = {
 };
 
 export type SearchMemoryToolResult = {
-  matches: Array<{
+  matches: {
     confidence: number;
     key: string;
     kind: string;
@@ -37,7 +37,7 @@ export type SearchMemoryToolResult = {
     source?: string | undefined;
     state: string;
     text: string;
-  }>;
+  }[];
   markdown: string;
 };
 

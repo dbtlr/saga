@@ -61,7 +61,6 @@ export default {
         'vitest/require-to-throw-message': 'off',
         'vitest/require-hook': 'off',
         'vitest/valid-expect': 'off',
-        'typescript/array-type': 'off',
         'typescript/no-unnecessary-type-conversion': 'off',
         'typescript/method-signature-style': 'off',
         'typescript/parameter-properties': 'off',

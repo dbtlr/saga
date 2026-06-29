@@ -103,7 +103,7 @@ describe('installHarness', () => {
     expect(readFileSync(join(projectRoot, '.gitignore'), 'utf8')).toContain('.codex/\n');
 
     const hooks = JSON.parse(readFileSync(status.hooksPath, 'utf8')) as {
-      hooks: Record<string, { hooks: Array<{ command: string }>; matcher?: string }[]>;
+      hooks: Record<string, { hooks: { command: string }[]; matcher?: string }[]>;
     };
     expect(hooks.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(hooks.hooks.SessionStart?.[0]?.matcher).toBe('startup|resume|clear|compact');
@@ -146,7 +146,7 @@ describe('installHarness', () => {
     );
 
     const settings = JSON.parse(readFileSync(status.hooksPath, 'utf8')) as {
-      hooks: Record<string, { hooks: Array<{ command: string }>; matcher?: string }[]>;
+      hooks: Record<string, { hooks: { command: string }[]; matcher?: string }[]>;
     };
     expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(settings.hooks.SessionStart?.[0]?.matcher).toBe('startup|resume|clear|compact');
@@ -185,7 +185,7 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'codex' });
 
     const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
-      hooks: { Stop?: { hooks: Array<{ command: string }> }[] };
+      hooks: { Stop?: { hooks: { command: string }[] }[] };
     };
     expect(hooks.hooks.Stop?.[0]?.hooks[0]?.command).toBe('echo keep');
     expect(inspectHarness({ cwd: projectRoot, target: 'codex' }).hooks).toBe('missing');
@@ -217,7 +217,7 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'claude' });
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      hooks: { Stop?: { hooks: Array<{ command: string }> }[] };
+      hooks: { Stop?: { hooks: { command: string }[] }[] };
     };
     expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toBe('echo keep');
     expect(inspectHarness({ cwd: projectRoot, target: 'claude' }).hooks).toBe('missing');
@@ -254,7 +254,7 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'claude' });
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      hooks: { Stop?: { hooks: Array<{ type: string }> }[] };
+      hooks: { Stop?: { hooks: { type: string }[] }[] };
     };
     expect(settings.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toStrictEqual([
       'prompt',
@@ -1203,7 +1203,7 @@ describe('uninstallHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'codex' });
 
     const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
-      hooks: { Stop?: { hooks: Array<{ type: string }> }[] };
+      hooks: { Stop?: { hooks: { type: string }[] }[] };
     };
     expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toStrictEqual(['prompt']);
   });

@@ -300,10 +300,10 @@ describePostgres('MCP session recall postgres integration', () => {
 });
 
 type ToolResult = {
-  content: Array<{
+  content: {
     text: string;
     type: 'text';
-  }>;
+  }[];
   structuredContent: unknown;
 };
 
