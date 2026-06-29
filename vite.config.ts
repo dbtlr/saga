@@ -32,17 +32,12 @@ const config = {
     lint: {
       // routeTree.gen.ts and other generated files are generator-owned.
       ignores: ['**/*.generated.ts', '**/*.gen.ts'],
-      // SGA-170: rules disabled pending case-by-case enablement. Each is
-      // re-enabled, evaluated, and either fixed or justified in its own commit.
       rules: {
-        // === SGA-170 GLOBAL-DISABLE CANDIDATES (for end-of-task discussion) ===
-        // Each is more correct to disable project-wide than to fix/inline-disable
-        // at every site; left off pending the user's call.
+        // === SGA-170: rules deliberately kept off (more correct than fixing or
+        // inline-disabling at every site). ===
         //  - reorders object literals -> changes Object.keys() order (load-bearing,
         //    e.g. CLI command order); 542 sites, behavior-risky, mostly noise.
         'sort-keys': 'off',
-        //  - 273 sites; autofix rewrites test()->it() without fixing the vitest
-        //    import; large mechanical churn of debatable value.
         //  - sequential awaits in DB/transaction loops, ordered imports, and a
         //    health-poll-with-delay are intentional; Promise.all would be wrong.
         'no-await-in-loop': 'off',
@@ -53,7 +48,7 @@ const config = {
         //    flags the idiomatic describe-scope shared-connection pattern in
         //    DB-gated integration tests.
         'vitest/require-hook': 'off',
-        // === Pending fix in the rule loop (SGA-170) ===
+        // === Configured (not disabled) ===
         // new-cap fires on capitalized factory idioms that are correct without
         // `new`: Effect's Data.TaggedError / Context.GenericTag and our Effect
         // Layer constructors (e.g. DatabaseLive, RuntimeConfigLive). Exempt those
