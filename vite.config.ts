@@ -30,8 +30,9 @@ const config = {
     node: ['apps/**', 'packages/**', 'scripts/**'],
     react: ['apps/control-plane/**'],
     lint: {
-      // routeTree.gen.ts and other generated files are generator-owned.
-      ignores: ['**/*.generated.ts', '**/*.gen.ts'],
+      // routeTree.gen.ts and other generated files are generator-owned;
+      // .claude holds nested agent worktrees that own their own checked-in style.
+      ignores: ['.claude/**', '**/*.generated.ts', '**/*.gen.ts'],
       rules: {
         // === SGA-170: rules deliberately kept off (more correct than fixing or
         // inline-disabling at every site). ===
@@ -132,17 +133,28 @@ const config = {
         'coverage/**',
         '.turbo/**',
         '.vite/**',
-        // saga-specific: generator owns the route tree / generated files' style
+        // saga-specific: nested agent worktrees, transient plan/scratch docs,
+        // and generator-owned files.
+        '.claude/**',
+        'docs/superpowers/**',
         '**/*.generated.ts',
         '**/*.gen.ts',
       ],
     },
   }),
   // Monorepo layout: members run under the centralized root config, so test
-  // discovery globs must reach each package's src (the helper's package-relative
-  // default would match nothing here). toolingConfig omits the test block in
-  // scoped/monorepo mode, so add it explicitly.
-  ...vitestNode({ include: ['**/src/**/*.test.{ts,tsx}', '**/tests/**/*.test.{ts,tsx}'] }),
+  // discovery globs must reach each package's src. They are anchored to the
+  // real package roots (apps/* and packages/*) rather than a bare **/ so they
+  // can't descend into nested agent worktrees under .claude/. toolingConfig
+  // omits the test block in scoped/monorepo mode, so add it explicitly.
+  ...vitestNode({
+    include: [
+      'apps/*/src/**/*.test.{ts,tsx}',
+      'packages/*/src/**/*.test.{ts,tsx}',
+      'apps/*/tests/**/*.test.{ts,tsx}',
+      'packages/*/tests/**/*.test.{ts,tsx}',
+    ],
+  }),
 };
 
 export default config;
