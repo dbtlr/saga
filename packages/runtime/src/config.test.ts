@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -176,8 +176,8 @@ describe('loadRuntimeConfig', () => {
       }),
     );
 
-    expect(result._tag).toBe('Failure');
-    if (result._tag === 'Failure') {
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
       expect(result.cause.toString()).toContain('ConfigError');
     }
   });

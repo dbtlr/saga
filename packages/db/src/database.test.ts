@@ -1,5 +1,5 @@
 import { RuntimeConfigLive } from '@saga/runtime';
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -63,8 +63,8 @@ describe('makeDatabase', () => {
       }),
     );
 
-    expect(result._tag).toBe('Failure');
-    if (result._tag === 'Failure') {
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
       expect(result.cause.toString()).toContain('DATABASE_URL is required');
     }
   });
