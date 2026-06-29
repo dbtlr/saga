@@ -57,7 +57,6 @@ const config = {
         'no-shadow': 'off',
         'new-cap': 'off',
         'promise/avoid-new': 'off',
-        'vitest/valid-expect': 'off',
         // SGA-170 GLOBAL-DISABLE CANDIDATE (for discussion): misfires on
         // non-test entry points/scripts, and in real suites only flags the
         // idiomatic describe-scope `const sql = postgres(...)` shared-connection

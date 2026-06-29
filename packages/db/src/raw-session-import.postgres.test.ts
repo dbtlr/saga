@@ -7257,7 +7257,11 @@ function expectSessionDetailTimestampsCanRender(detail: SessionDetail): void {
 }
 
 function expectDate(value: Date, label: string): void {
+  // `label` is vitest's supported failure-message hint (expect(actual, message));
+  // the rule's default maxArgs misjudges this valid vitest idiom.
+  // oxlint-disable-next-line vitest/valid-expect
   expect(value, label).toBeInstanceOf(Date);
+  // oxlint-disable-next-line vitest/valid-expect
   expect(value.toISOString(), label).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 }
 

@@ -13,7 +13,7 @@ describe('local CLI invocation', () => {
       encoding: 'utf8',
     });
 
-    expect(result.status, result.stderr).toBe(0);
+    expect({ status: result.status, stderr: result.stderr }).toMatchObject({ status: 0 });
     expect(result.stdout).toContain('usage: saga <command> [options]');
   });
 });
