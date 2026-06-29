@@ -78,6 +78,7 @@ export function DatabaseLive(
 ): Layer.Layer<DatabaseService, DatabaseError, RuntimeConfig> {
   return Layer.scoped(
     DatabaseTag,
+    // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
     Effect.gen(function* () {
       const config = yield* RuntimeConfigTag;
       const service = yield* makeDatabase(config, options);

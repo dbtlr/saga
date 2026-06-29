@@ -77,7 +77,6 @@ const config = {
         'unicorn/custom-error-definition': 'off',
         'oxc/no-map-spread': 'off',
         'no-underscore-dangle': 'off',
-        'func-names': 'off',
         'no-new': 'off',
       },
       overrides: [

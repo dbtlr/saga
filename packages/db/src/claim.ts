@@ -112,6 +112,7 @@ export function insertExtractedCandidateClaim(
   service: DatabaseService,
   candidate: CandidateClaim,
 ): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
+  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
   return Effect.gen(function* () {
     const result = yield* insertClaimEventAndProject(service, {
       attributes: candidate.attributes,
@@ -310,6 +311,7 @@ function projectContradictionsForCandidate(
   candidate: CandidateClaim,
   candidateKey: string,
 ): Effect.Effect<void, ClaimProjectionError | DatabaseError> {
+  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
   return Effect.gen(function* () {
     const existingClaims = yield* listCurrentClaims(service, {
       limit: 100,
