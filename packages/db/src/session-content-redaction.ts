@@ -1,6 +1,6 @@
 type JsonRecord = Record<string, unknown>;
 
-const SKIPPED_SEGMENT_KINDS = new Set(["tool_group_skipped", "turn_skipped"]);
+const SKIPPED_SEGMENT_KINDS = new Set(['tool_group_skipped', 'turn_skipped']);
 
 export interface SkippedContentSegment {
   metadata: unknown;
@@ -16,10 +16,10 @@ export function safeContentPartsForSkippedSegments(
 
   return [
     {
-      type: "omitted",
-      text: "[content omitted: skipped turn payload]",
+      type: 'omitted',
+      text: '[content omitted: skipped turn payload]',
       omitted: true,
-      reason: "skipped_segment_payload",
+      reason: 'skipped_segment_payload',
       filterReasons: summary.filterReasons,
       skippedPartCount: summary.skippedPartCount,
       skippedSegmentCount: summary.skippedSegmentCount,
@@ -67,7 +67,7 @@ function summarizeSkippedSegments(segments: readonly SkippedContentSegment[]):
 function hasSkippedObservability(segment: SkippedContentSegment, metadata: JsonRecord): boolean {
   return (
     (segment.segmentKind !== null && SKIPPED_SEGMENT_KINDS.has(segment.segmentKind)) ||
-    metadata.segmentStatus === "skipped" ||
+    metadata.segmentStatus === 'skipped' ||
     metadata.omittedSearchText === true ||
     readSkippedPartCount(metadata) > 0 ||
     readFilterReasons(metadata).length > 0
@@ -89,7 +89,7 @@ function readFilterReasons(metadata: JsonRecord): string[] {
 function appendStringArray(target: string[], value: unknown): void {
   if (!Array.isArray(value)) return;
   for (const entry of value) {
-    if (typeof entry === "string" && entry.length > 0) target.push(entry);
+    if (typeof entry === 'string' && entry.length > 0) target.push(entry);
   }
 }
 
@@ -97,7 +97,7 @@ function appendFilterReasons(target: string[], value: unknown): void {
   if (!Array.isArray(value)) return;
   for (const entry of value) {
     const reason = asRecord(entry).reason;
-    if (typeof reason === "string" && reason.length > 0) target.push(reason);
+    if (typeof reason === 'string' && reason.length > 0) target.push(reason);
   }
 }
 
@@ -109,9 +109,9 @@ function readSkippedPartCount(metadata: JsonRecord): number {
 }
 
 function readNonNegativeNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === "object" && value !== null ? (value as JsonRecord) : {};
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : {};
 }

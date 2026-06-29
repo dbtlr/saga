@@ -1,6 +1,6 @@
-export const packageName = "@saga/contracts";
+export const packageName = '@saga/contracts';
 
-export type TrustLevel = "raw" | "trusted";
+export type TrustLevel = 'raw' | 'trusted';
 
 export interface RawEventEnvelope {
   actorId: string;

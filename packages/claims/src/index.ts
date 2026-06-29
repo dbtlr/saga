@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash } from 'node:crypto';
 
-export const packageName = "@saga/claims";
+export const packageName = '@saga/claims';
 
-export type ClaimKind = "decision" | "follow_up" | "observation" | "preference";
+export type ClaimKind = 'decision' | 'follow_up' | 'observation' | 'preference';
 
 export interface ClaimEvidence {
   eventType: string;
@@ -43,20 +43,20 @@ const CLASSIFIERS: Array<{
   kind: ClaimKind;
   pattern: RegExp;
 }> = [
-  { confidence: 0.72, kind: "decision", pattern: /\b(agreed|sounds good|that makes sense)\b/i },
+  { confidence: 0.72, kind: 'decision', pattern: /\b(agreed|sounds good|that makes sense)\b/i },
   {
     confidence: 0.7,
-    kind: "preference",
+    kind: 'preference',
     pattern: /\b(i'?d|i would|my bias|prefer|lean(?:ing)?|make sure)\b/i,
   },
   {
     confidence: 0.66,
-    kind: "follow_up",
+    kind: 'follow_up',
     pattern: /\b(we should|let'?s|can you|please|need to|worth)\b/i,
   },
   {
     confidence: 0.58,
-    kind: "observation",
+    kind: 'observation',
     pattern: /\b(i think|i imagine|it might|it feels|my guess)\b/i,
   },
 ];
@@ -80,8 +80,8 @@ export function extractCandidateClaimsFromRawEvent(
     return [
       {
         attributes: {
-          extractor: "deterministic-v1",
-          source: "agent-hook-prompt",
+          extractor: 'deterministic-v1',
+          source: 'agent-hook-prompt',
         },
         confidence: classifier.confidence,
         evidence: {
@@ -105,7 +105,7 @@ export function extractCandidateClaimsFromRawEvent(
 }
 
 export function candidateClaimKey(claim: CandidateClaim): string {
-  return createHash("sha256")
+  return createHash('sha256')
     .update(
       stableJson({
         kind: claim.kind,
@@ -113,7 +113,7 @@ export function candidateClaimKey(claim: CandidateClaim): string {
         workspaceId: claim.workspaceId,
       }),
     )
-    .digest("hex");
+    .digest('hex');
 }
 
 export function detectClaimContradiction(
@@ -129,33 +129,33 @@ export function detectClaimContradiction(
 }
 
 function promptFromRawEvent(event: ClaimExtractionRawEvent): string | undefined {
-  if (!event.eventType.endsWith(".UserPromptSubmit")) return undefined;
+  if (!event.eventType.endsWith('.UserPromptSubmit')) return undefined;
   const prompt = event.payload.prompt;
-  return typeof prompt === "string" && prompt.trim() !== "" ? prompt : undefined;
+  return typeof prompt === 'string' && prompt.trim() !== '' ? prompt : undefined;
 }
 
 function candidateStatements(prompt: string): string[] {
   const statements: string[] = [];
-  let prefix = "";
+  let prefix = '';
   for (const line of prompt
     .split(/\r?\n|(?<=[.!])\s+/)
-    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
-    .filter((line) => !line.endsWith("?"))) {
+    .map((line) => line.trim().replace(/^[-*]\s+/, ''))
+    .filter((line) => !line.endsWith('?'))) {
     if (/^(agreed|sounds good|that makes sense)[.!]?$/i.test(line)) {
       prefix = line;
       continue;
     }
     if (line.length < 12) continue;
-    statements.push(prefix === "" ? line : `${prefix} ${line}`);
-    prefix = "";
+    statements.push(prefix === '' ? line : `${prefix} ${line}`);
+    prefix = '';
   }
   return statements;
 }
 
 function normalizeClaimText(statement: string): string {
   return statement
-    .replace(/\s+/g, " ")
-    .replace(/^(agreed[,.:;\s-]*)/i, "")
+    .replace(/\s+/g, ' ')
+    .replace(/^(agreed[,.:;\s-]*)/i, '')
     .trim();
 }
 
@@ -172,9 +172,9 @@ function normalizeContradictionStatement(statement: string): {
     lower
       .replace(
         /\b(no longer|do not|don't|does not|doesn't|should not|shouldn't|must not|avoid|instead of)\b/g,
-        " ",
+        ' ',
       )
-      .replace(/[^a-z0-9\s-]/g, " ")
+      .replace(/[^a-z0-9\s-]/g, ' ')
       .split(/\s+/)
       .filter((token) => token.length > 2)
       .filter((token) => !CONTRADICTION_STOP_WORDS.has(token)),
@@ -183,20 +183,20 @@ function normalizeContradictionStatement(statement: string): {
 }
 
 const CONTRADICTION_STOP_WORDS = new Set([
-  "and",
-  "are",
-  "but",
-  "for",
-  "from",
-  "into",
-  "not",
-  "our",
-  "that",
-  "the",
-  "this",
-  "use",
-  "using",
-  "with",
+  'and',
+  'are',
+  'but',
+  'for',
+  'from',
+  'into',
+  'not',
+  'our',
+  'that',
+  'the',
+  'this',
+  'use',
+  'using',
+  'with',
 ]);
 
 function jaccard(left: Set<string>, right: Set<string>): number {
@@ -207,12 +207,12 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 }
 
 function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
+  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
-      .join(",")}}`;
+      .join(',')}}`;
   }
   return JSON.stringify(value);
 }

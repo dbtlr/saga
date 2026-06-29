@@ -1,6 +1,6 @@
 type JsonRecord = Record<string, unknown>;
 
-const LOCAL_PATH_REDACTION = "[local-path-redacted]";
+const LOCAL_PATH_REDACTION = '[local-path-redacted]';
 const SAFE_URI_PATTERN =
   /\b(?:(?:https?|codex|github|norn|mimir):\/\/[^\s"',}\])]+|saga:(?!\/)[^\s"',}\])]+)/gu;
 const SAFE_SOURCE_LOCATOR_PATTERN =
@@ -39,7 +39,7 @@ const WINDOWS_UNC_LOCAL_PATH_PATTERN =
 export function redactAgentFacingSessionValue(value: unknown): unknown {
   if (value instanceof Date) return value;
   if (Array.isArray(value)) return value.map((entry) => redactAgentFacingSessionValue(entry));
-  if (typeof value === "string") return redactLocalPathString(value);
+  if (typeof value === 'string') return redactLocalPathString(value);
   if (!isRecord(value)) return value;
 
   return Object.fromEntries(
@@ -54,7 +54,7 @@ export function redactAgentFacingJsonRecord(value: JsonRecord): JsonRecord {
 
 export function redactAgentFacingSessionText(value: string): string {
   const redacted = redactAgentFacingSessionValue(value);
-  return typeof redacted === "string" ? redacted : value;
+  return typeof redacted === 'string' ? redacted : value;
 }
 
 export function redactAgentFacingSourceLocator(value: string | null): string | null {
@@ -137,5 +137,5 @@ function redactLocalPathString(value: string): string {
 }
 
 function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
-export const packageName = "@saga/connectors";
+export const packageName = '@saga/connectors';
 
 export interface ConnectorSourceBinding {
   config?: Record<string, unknown> | undefined;
@@ -47,7 +47,7 @@ export interface SagaLinkedReference extends ConnectorReference {
   url?: string | undefined;
 }
 
-export interface SagaLinkedRetrievalResult extends Omit<ConnectorRetrievalResult, "references"> {
+export interface SagaLinkedRetrievalResult extends Omit<ConnectorRetrievalResult, 'references'> {
   references: SagaLinkedReference[];
 }
 
@@ -59,7 +59,7 @@ export interface ResolveConnectorInput {
 }
 
 export interface ConnectorRetrieveInput extends ResolveConnectorInput {
-  target: NonNullable<ConnectorRetrievalResult["target"]>;
+  target: NonNullable<ConnectorRetrievalResult['target']>;
 }
 
 export interface ConnectorRetrievedRecord {
@@ -178,37 +178,37 @@ function createGitHubConnector(): ConnectorAdapter {
         content: record.content,
         evidence: record.evidence,
         provenance: {
-          connector: "github",
+          connector: 'github',
           repository,
         },
         references: mergeReferences(
           input,
-          "github",
+          'github',
           record.references,
           readMetadataReferences(input),
         ),
         target: connectorTarget,
       };
     },
-    sourceTypes: ["github"],
+    sourceTypes: ['github'],
   };
 }
 
 function createMimirConnector(): ConnectorAdapter {
   return simpleConnector({
-    connector: "mimir",
-    label: "Mimir work item",
-    sourceTypes: ["mimir"],
-    urlPrefix: "mimir:",
+    connector: 'mimir',
+    label: 'Mimir work item',
+    sourceTypes: ['mimir'],
+    urlPrefix: 'mimir:',
   });
 }
 
 function createNornConnector(): ConnectorAdapter {
   return simpleConnector({
-    connector: "norn",
-    label: "Norn document",
-    sourceTypes: ["norn"],
-    urlPrefix: "norn:",
+    connector: 'norn',
+    label: 'Norn document',
+    sourceTypes: ['norn'],
+    urlPrefix: 'norn:',
   });
 }
 
@@ -216,11 +216,11 @@ function createDocumentStoreConnector(): ConnectorAdapter {
   return {
     resolve: async (input, context) => {
       const connector = normalizeSourceType(input.sourceBinding.sourceType);
-      const baseUrl = input.sourceBinding.sourceUri.replace(/\/$/u, "");
+      const baseUrl = input.sourceBinding.sourceUri.replace(/\/$/u, '');
       const url = joinDocumentUrl(baseUrl, input.externalId);
       const connectorTarget = {
         externalId: input.externalId,
-        kind: "document",
+        kind: 'document',
         sourceBindingId: input.sourceBinding.id,
         sourceType: input.sourceBinding.sourceType,
         sourceUri: input.sourceBinding.sourceUri,
@@ -246,7 +246,7 @@ function createDocumentStoreConnector(): ConnectorAdapter {
         target: connectorTarget,
       };
     },
-    sourceTypes: ["confluence", "document", "docs", "notion", "vault"],
+    sourceTypes: ['confluence', 'document', 'docs', 'notion', 'vault'],
   };
 }
 
@@ -260,13 +260,13 @@ function simpleConnector(input: {
     resolve: async (request, context) => {
       const target = {
         externalId: request.externalId,
-        kind: "document",
+        kind: 'document',
         sourceBindingId: request.sourceBinding.id,
         sourceType: request.sourceBinding.sourceType,
         sourceUri: request.sourceBinding.sourceUri,
         url: `${input.urlPrefix}${request.externalId}`,
       };
-      const client = input.connector === "mimir" ? context.clients?.mimir : context.clients?.norn;
+      const client = input.connector === 'mimir' ? context.clients?.mimir : context.clients?.norn;
       const record = await (client ?? createDefaultMetadataClient(input.label)).retrieve({
         ...request,
         target,
@@ -297,9 +297,9 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
   );
   if (configured !== undefined) return validateGitHubRepository(configured);
 
-  if (sourceBinding.sourceUri.startsWith("github://")) {
+  if (sourceBinding.sourceUri.startsWith('github://')) {
     return validateGitHubRepository(
-      sourceBinding.sourceUri.slice("github://".length).replace(/^\/+/u, ""),
+      sourceBinding.sourceUri.slice('github://'.length).replace(/^\/+/u, ''),
     );
   }
 
@@ -307,7 +307,7 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
   if (match?.[1] !== undefined) return validateGitHubRepository(match[1]);
 
   throw new Error(
-    "GitHub connector requires repositoryFullName, repository, or github://owner/repo sourceUri",
+    'GitHub connector requires repositoryFullName, repository, or github://owner/repo sourceUri',
   );
 }
 
@@ -317,12 +317,12 @@ function validateGitHubRepository(repository: string): string {
 }
 
 function parseGitHubExternalId(externalId: string): { id: string; kind: string } {
-  const [kind, ...rest] = externalId.split(":");
-  const id = rest.join(":");
-  if ((kind === "issue" || kind === "pr") && /^[1-9][0-9]*$/u.test(id)) {
+  const [kind, ...rest] = externalId.split(':');
+  const id = rest.join(':');
+  if ((kind === 'issue' || kind === 'pr') && /^[1-9][0-9]*$/u.test(id)) {
     return { id, kind };
   }
-  if (kind === "commit" && /^[0-9a-f]{7,40}$/iu.test(id)) {
+  if (kind === 'commit' && /^[0-9a-f]{7,40}$/iu.test(id)) {
     return { id, kind };
   }
 
@@ -331,17 +331,17 @@ function parseGitHubExternalId(externalId: string): { id: string; kind: string }
 
 function githubWebUrl(repository: string, target: { id: string; kind: string }): string {
   const base = `https://github.com/${repository}`;
-  if (target.kind === "pr") return `${base}/pull/${target.id}`;
-  if (target.kind === "issue") return `${base}/issues/${target.id}`;
-  if (target.kind === "commit") return `${base}/commit/${target.id}`;
+  if (target.kind === 'pr') return `${base}/pull/${target.id}`;
+  if (target.kind === 'issue') return `${base}/issues/${target.id}`;
+  if (target.kind === 'commit') return `${base}/commit/${target.id}`;
   return `${base}/${target.id}`;
 }
 
 function githubApiUrl(repository: string, target: { id: string; kind: string }): string {
   const base = `https://api.github.com/repos/${repository}`;
-  if (target.kind === "pr") return `${base}/pulls/${target.id}`;
-  if (target.kind === "issue") return `${base}/issues/${target.id}`;
-  if (target.kind === "commit") return `${base}/commits/${target.id}`;
+  if (target.kind === 'pr') return `${base}/pulls/${target.id}`;
+  if (target.kind === 'issue') return `${base}/issues/${target.id}`;
+  if (target.kind === 'commit') return `${base}/commits/${target.id}`;
   return base;
 }
 
@@ -349,7 +349,7 @@ function createDefaultGitHubClient(): ConnectorClient {
   return {
     retrieve: async (input) => {
       if (input.target.apiUrl === undefined) {
-        throw new Error("GitHub connector target is missing apiUrl");
+        throw new Error('GitHub connector target is missing apiUrl');
       }
 
       const response = await fetch(input.target.apiUrl, {
@@ -361,13 +361,13 @@ function createDefaultGitHubClient(): ConnectorClient {
 
       const payload = (await response.json()) as unknown;
       if (!isRecord(payload)) {
-        throw new Error("GitHub connector returned a non-object response");
+        throw new Error('GitHub connector returned a non-object response');
       }
 
       return {
         content: renderGitHubContent(input.target.kind, payload),
         evidence: {
-          connector: "github",
+          connector: 'github',
           payload,
         },
         references: [],
@@ -383,22 +383,22 @@ function createDefaultDocumentClient(): ConnectorClient {
       if (metadataContent !== undefined) {
         return {
           content: metadataContent,
-          evidence: { source: "metadata" },
+          evidence: { source: 'metadata' },
           references: [],
         };
       }
 
-      if (input.target.url?.startsWith("file://") === true) {
+      if (input.target.url?.startsWith('file://') === true) {
         return {
-          content: await readFile(fileURLToPath(input.target.url), "utf8"),
+          content: await readFile(fileURLToPath(input.target.url), 'utf8'),
           evidence: { source: input.target.url },
           references: [],
         };
       }
 
       if (
-        input.target.url?.startsWith("http://") === true ||
-        input.target.url?.startsWith("https://") === true
+        input.target.url?.startsWith('http://') === true ||
+        input.target.url?.startsWith('https://') === true
       ) {
         const response = await fetch(input.target.url);
         if (!response.ok) {
@@ -411,7 +411,7 @@ function createDefaultDocumentClient(): ConnectorClient {
         };
       }
 
-      throw new Error("document connector requires metadata.content, file URL, or HTTP URL");
+      throw new Error('document connector requires metadata.content, file URL, or HTTP URL');
     },
   };
 }
@@ -426,7 +426,7 @@ function createDefaultMetadataClient(label: string): ConnectorClient {
 
       return {
         content: metadataContent,
-        evidence: { source: "metadata" },
+        evidence: { source: 'metadata' },
         references: [],
       };
     },
@@ -435,24 +435,24 @@ function createDefaultMetadataClient(label: string): ConnectorClient {
 
 function githubHeaders(sourceBinding: ConnectorSourceBinding): Headers {
   const headers = new Headers({
-    accept: "application/vnd.github+json",
-    "user-agent": "saga",
+    accept: 'application/vnd.github+json',
+    'user-agent': 'saga',
   });
   const token = readString(sourceBinding.config?.token ?? sourceBinding.config?.authToken);
-  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+  if (token !== undefined) headers.set('authorization', `Bearer ${token}`);
   return headers;
 }
 
 function renderGitHubContent(kind: string | undefined, payload: Record<string, unknown>): string {
-  if (kind === "pr" || kind === "issue") {
-    return [`# ${readString(payload.title) ?? "Untitled"}`, "", readString(payload.body) ?? ""]
-      .join("\n")
+  if (kind === 'pr' || kind === 'issue') {
+    return [`# ${readString(payload.title) ?? 'Untitled'}`, '', readString(payload.body) ?? '']
+      .join('\n')
       .trim();
   }
 
-  if (kind === "commit") {
+  if (kind === 'commit') {
     const commit = isRecord(payload.commit) ? payload.commit : {};
-    return readString(commit.message) ?? readString(payload.sha) ?? "GitHub commit";
+    return readString(commit.message) ?? readString(payload.sha) ?? 'GitHub commit';
   }
 
   return JSON.stringify(payload);
@@ -482,15 +482,15 @@ function joinDocumentUrl(baseUrl: string, externalId: string): string {
 }
 
 function encodeDocumentPath(externalId: string): string {
-  const segments = externalId.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+  const segments = externalId.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     throw new Error(`invalid document external id: ${externalId}`);
   }
-  return segments.map((segment) => encodeURIComponent(segment)).join("/");
+  return segments.map((segment) => encodeURIComponent(segment)).join('/');
 }
 
 function readMetadataReferences(
-  input: Pick<ResolveConnectorInput, "metadata" | "sourceBinding">,
+  input: Pick<ResolveConnectorInput, 'metadata' | 'sourceBinding'>,
 ): Array<{
   connector?: string | undefined;
   externalId: string;
@@ -523,9 +523,9 @@ function normalizeSourceType(sourceType: string): string {
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

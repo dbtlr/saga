@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawnSync } from 'node:child_process';
 
 const projectName = `saga_service_smoke_${Date.now().toString(36)}_${process.pid.toString(36)}`;
-const composeArgs = ["compose", "-p", projectName, "-f", "docker-compose.service.yml"];
-const serviceUrl = "http://127.0.0.1:4766/health";
+const composeArgs = ['compose', '-p', projectName, '-f', 'docker-compose.service.yml'];
+const serviceUrl = 'http://127.0.0.1:4766/health';
 let started = false;
 
 try {
   await assertPortAvailable(serviceUrl);
-  run("docker", [...composeArgs, "build", "saga-service"]);
-  run("docker", [...composeArgs, "up", "-d", "postgres", "migrate", "saga-service"]);
+  run('docker', [...composeArgs, 'build', 'saga-service']);
+  run('docker', [...composeArgs, 'up', '-d', 'postgres', 'migrate', 'saga-service']);
   started = true;
   const health = await waitForHealth(serviceUrl);
-  if (health.ok !== true || health.service !== "saga") {
+  if (health.ok !== true || health.service !== 'saga') {
     throw new Error(`unexpected health payload: ${JSON.stringify(health)}`);
   }
 
@@ -21,17 +21,17 @@ try {
   console.log(`uptime seconds: ${String(health.uptimeSeconds)}`);
 } catch (error) {
   if (started) {
-    console.error("docker compose logs:");
-    const logs = spawnSync("docker", [...composeArgs, "logs", "--no-color"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+    console.error('docker compose logs:');
+    const logs = spawnSync('docker', [...composeArgs, 'logs', '--no-color'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    if (logs.stdout.trim() !== "") console.error(logs.stdout.trim());
-    if (logs.stderr.trim() !== "") console.error(logs.stderr.trim());
+    if (logs.stdout.trim() !== '') console.error(logs.stdout.trim());
+    if (logs.stderr.trim() !== '') console.error(logs.stderr.trim());
   }
   throw error;
 } finally {
-  run("docker", [...composeArgs, "down", "-v", "--remove-orphans"], { allowFailure: true });
+  run('docker', [...composeArgs, 'down', '-v', '--remove-orphans'], { allowFailure: true });
 }
 
 async function assertPortAvailable(url) {
@@ -41,7 +41,7 @@ async function assertPortAvailable(url) {
       `service smoke requires port 4766, but ${url} already responded with ${String(response.status)}`,
     );
   } catch (error) {
-    if (error instanceof Error && error.message.includes("already responded")) throw error;
+    if (error instanceof Error && error.message.includes('already responded')) throw error;
   }
 }
 
@@ -69,8 +69,8 @@ async function waitForHealth(url) {
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   if (result.error !== undefined) {
@@ -81,12 +81,12 @@ function run(command, args, options = {}) {
   if (result.status !== 0 && options.allowFailure !== true) {
     throw new Error(
       [
-        `${command} ${args.join(" ")} failed with exit code ${String(result.status)}`,
+        `${command} ${args.join(' ')} failed with exit code ${String(result.status)}`,
         result.stdout,
         result.stderr,
       ]
-        .filter((part) => part.trim() !== "")
-        .join("\n"),
+        .filter((part) => part.trim() !== '')
+        .join('\n'),
     );
   }
 

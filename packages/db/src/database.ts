@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { RuntimeConfigTag, type RuntimeConfig } from "@saga/runtime";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { Context, Data, Effect, Layer } from "effect";
-import postgres, { type Options, type PostgresType, type Sql } from "postgres";
-import { schema, type SagaSchema } from "./schema.js";
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { RuntimeConfigTag, type RuntimeConfig } from '@saga/runtime';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { Context, Data, Effect, Layer } from 'effect';
+import postgres, { type Options, type PostgresType, type Sql } from 'postgres';
+import { schema, type SagaSchema } from './schema.js';
 
 export type SagaDatabase = PostgresJsDatabase<SagaSchema>;
 export type SagaSql = Sql<Record<string, PostgresType>>;
@@ -32,14 +32,14 @@ export interface MigrationStatus {
     | undefined;
 }
 
-export class DatabaseError extends Data.TaggedError("DatabaseError")<{
+export class DatabaseError extends Data.TaggedError('DatabaseError')<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-export const DatabaseTag = Context.GenericTag<DatabaseService>("@saga/db/Database");
+export const DatabaseTag = Context.GenericTag<DatabaseService>('@saga/db/Database');
 
-export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
+export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL('../drizzle', import.meta.url));
 export const EXPECTED_MIGRATION_COUNT =
   readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).length;
 
@@ -54,7 +54,7 @@ export function makeDatabase(
   return Effect.try({
     try: () => {
       if (config.databaseUrl === undefined) {
-        throw new DatabaseError({ message: "DATABASE_URL is required" });
+        throw new DatabaseError({ message: 'DATABASE_URL is required' });
       }
 
       const sql = postgres(config.databaseUrl, options.postgres);
@@ -63,7 +63,7 @@ export function makeDatabase(
     catch: (cause) =>
       cause instanceof DatabaseError
         ? cause
-        : new DatabaseError({ message: "failed to create database client", cause }),
+        : new DatabaseError({ message: 'failed to create database client', cause }),
   });
 }
 
@@ -134,10 +134,10 @@ export function getMigrationStatus(
       }
 
       const migrations = await service.sql.unsafe(
-        "select hash from drizzle.__drizzle_migrations order by created_at asc, id asc",
+        'select hash from drizzle.__drizzle_migrations order by created_at asc, id asc',
       );
       const appliedHashes = migrations.flatMap((row) =>
-        typeof row.hash === "string" ? [row.hash] : [],
+        typeof row.hash === 'string' ? [row.hash] : [],
       );
       const mismatchIndex = appliedHashes.findIndex((hash, index) => {
         const expected = expectedMigrations[index];
@@ -147,7 +147,7 @@ export function getMigrationStatus(
         mismatchIndex < 0 || expectedMigrations[mismatchIndex] === undefined
           ? undefined
           : {
-              appliedHash: appliedHashes[mismatchIndex] ?? "",
+              appliedHash: appliedHashes[mismatchIndex] ?? '',
               expectedHash: expectedMigrations[mismatchIndex].hash,
               index: mismatchIndex,
               tag: expectedMigrations[mismatchIndex].tag,
@@ -199,7 +199,7 @@ function incompatibleMigrationError(status: MigrationStatus): DatabaseError {
   return new DatabaseError({
     message:
       mismatch === undefined
-        ? "database migrations do not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing."
+        ? 'database migrations do not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.'
         : `database migration ${String(mismatch.index)} (${mismatch.tag}) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.`,
   });
 }
@@ -207,15 +207,15 @@ function incompatibleMigrationError(status: MigrationStatus): DatabaseError {
 export function readExpectedMigrationHashes(
   migrationsFolder: string,
 ): Array<{ hash: string; tag: string }> {
-  const journal = JSON.parse(readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"));
+  const journal = JSON.parse(readFileSync(join(migrationsFolder, 'meta', '_journal.json'), 'utf8'));
   if (!isMigrationJournal(journal)) {
     throw new Error(`invalid Drizzle migration journal: ${migrationsFolder}`);
   }
 
   return journal.entries.map((entry) => {
-    const sql = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), "utf8");
+    const sql = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), 'utf8');
     return {
-      hash: createHash("sha256").update(sql).digest("hex"),
+      hash: createHash('sha256').update(sql).digest('hex'),
       tag: entry.tag,
     };
   });
@@ -224,13 +224,13 @@ export function readExpectedMigrationHashes(
 function isMigrationJournal(value: unknown): value is { entries: Array<{ tag: string }> } {
   return (
     value !== null &&
-    typeof value === "object" &&
+    typeof value === 'object' &&
     Array.isArray((value as { entries?: unknown }).entries) &&
     (value as { entries: unknown[] }).entries.every(
       (entry) =>
         entry !== null &&
-        typeof entry === "object" &&
-        typeof (entry as { tag?: unknown }).tag === "string",
+        typeof entry === 'object' &&
+        typeof (entry as { tag?: unknown }).tag === 'string',
     )
   );
 }
@@ -244,7 +244,7 @@ function makeDatabaseService(sql: SagaSql): DatabaseService {
         try: async () => {
           await sql.end({ timeout: 5 });
         },
-        catch: (cause) => new DatabaseError({ message: "failed to close database client", cause }),
+        catch: (cause) => new DatabaseError({ message: 'failed to close database client', cause }),
       }),
   };
 }

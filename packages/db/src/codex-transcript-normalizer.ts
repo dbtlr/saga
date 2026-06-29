@@ -4,7 +4,7 @@ import type {
   NormalizedTurnRole,
   TranscriptImportHints,
   TranscriptNormalization,
-} from "./transcript-normalizer.js";
+} from './transcript-normalizer.js';
 
 export type CodexTranscriptImportHints = TranscriptImportHints;
 export type CodexTranscriptNormalization = TranscriptNormalization;
@@ -48,13 +48,13 @@ interface TranscriptState {
 }
 
 export function extractCodexTranscriptImportHints(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   rawContent: string;
 }): CodexTranscriptImportHints {
   const { records } = parseCodexJsonRecords(input);
-  const sessionMeta = records.find((record) => record.value.type === "session_meta")?.value;
+  const sessionMeta = records.find((record) => record.value.type === 'session_meta')?.value;
   const sessionPayload = asRecord(sessionMeta?.payload);
-  const turnContext = records.find((record) => record.value.type === "turn_context")?.value;
+  const turnContext = records.find((record) => record.value.type === 'turn_context')?.value;
   const turnPayload = asRecord(turnContext?.payload);
 
   return {
@@ -65,7 +65,7 @@ export function extractCodexTranscriptImportHints(input: {
 }
 
 export function normalizeCodexTranscript(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   fallbackHarnessSessionId?: string | undefined;
   fallbackModel?: string | undefined;
   rawContent: string;
@@ -92,13 +92,13 @@ export function normalizeCodexTranscript(input: {
     const payload = asRecord(record.value.payload);
     const payloadType = readString(payload?.type);
 
-    if (type === "session_meta") {
+    if (type === 'session_meta') {
       state.sessionMeta = payload;
       state.cwd = readString(payload?.cwd) ?? state.cwd;
       continue;
     }
 
-    if (type === "turn_context") {
+    if (type === 'turn_context') {
       state.currentTurnId = readString(payload?.turn_id) ?? state.currentTurnId;
       state.cwd = readString(payload?.cwd) ?? state.cwd;
       state.model = readString(payload?.model) ?? state.model;
@@ -106,18 +106,18 @@ export function normalizeCodexTranscript(input: {
       continue;
     }
 
-    if (type === "event_msg") {
+    if (type === 'event_msg') {
       handleEventMessage(record, payload, payloadType, state, turns);
       continue;
     }
 
-    if (type === "response_item" && payload !== undefined) {
+    if (type === 'response_item' && payload !== undefined) {
       const turn = responseItemTurn(record, payload, state);
       if (turn !== undefined) turns.push(turn);
       continue;
     }
 
-    if (type === "compacted") {
+    if (type === 'compacted') {
       state.lifecycleEvents.push(topLevelLifecycleEvent(record));
       continue;
     }
@@ -132,7 +132,7 @@ export function normalizeCodexTranscript(input: {
       ...turn.metadata,
       codexTurnId: turn.codexTurnId,
       cwd: state.cwd,
-      normalizer: "codex-transcript-v1",
+      normalizer: 'codex-transcript-v1',
     }),
   }));
 
@@ -147,7 +147,7 @@ export function normalizeCodexTranscript(input: {
       metadata: compactRecord({
         cwd: state.cwd,
         lifecycleEvents: state.lifecycleEvents,
-        normalizer: "codex-transcript-v1",
+        normalizer: 'codex-transcript-v1',
         parseErrors: state.parseErrors,
         turnContexts: state.turnContexts,
       }),
@@ -157,7 +157,7 @@ export function normalizeCodexTranscript(input: {
       cwd: state.cwd,
       detectedHarnessSessionId: sessionId,
       lifecycleEvents: state.lifecycleEvents,
-      normalizer: "codex-transcript-v1",
+      normalizer: 'codex-transcript-v1',
       parseErrors: state.parseErrors,
       sessionMeta: state.sessionMeta,
       subagentEvidence,
@@ -172,7 +172,7 @@ export function normalizeCodexTranscript(input: {
         git: state.sessionMeta?.git,
         lifecycleEventCount: state.lifecycleEvents.length,
         modelProvider: readString(state.sessionMeta?.model_provider),
-        normalizer: "codex-transcript-v1",
+        normalizer: 'codex-transcript-v1',
         subagentEvidence,
         turnCount: sortedTurns.length,
       }),
@@ -202,11 +202,11 @@ function handleEventMessage(
     }),
   );
 
-  if (payloadType !== "agent_message" && payloadType !== "user_message") return;
+  if (payloadType !== 'agent_message' && payloadType !== 'user_message') return;
   const message = readString(payload.message);
   if (message === undefined) return;
 
-  const role = payloadType === "user_message" ? "user" : "assistant";
+  const role = payloadType === 'user_message' ? 'user' : 'assistant';
   if (
     state.responseMessageKeys.has(messageKey(role, message, readString(record.value.timestamp)))
   ) {
@@ -214,11 +214,11 @@ function handleEventMessage(
   }
 
   turns.push({
-    actorKind: role === "user" ? "host_user" : "agent",
-    contentParts: [{ text: message, type: "text" }],
+    actorKind: role === 'user' ? 'host_user' : 'agent',
+    contentParts: [{ text: message, type: 'text' }],
     codexTurnId: state.currentTurnId,
     harnessTurnId: stableHarnessTurnId(record, role, state.currentTurnId),
-    metadata: { sourceRecordType: "event_msg", sourcePayloadType: payloadType },
+    metadata: { sourceRecordType: 'event_msg', sourcePayloadType: payloadType },
     rawSpan: rawSpan(record),
     role,
     searchText: message,
@@ -236,12 +236,12 @@ function responseItemTurn(
   const codexTurnId = readString(metadata?.turn_id) ?? state.currentTurnId;
   const timestamp = parseOptionalDate(readString(record.value.timestamp));
 
-  if (payloadType === "message") {
+  if (payloadType === 'message') {
     const role = normalizeRole(readString(payload.role));
     if (role === undefined) return undefined;
     const contentParts = normalizeContentParts(payload.content);
     const searchText = contentPartsToSearchText(contentParts);
-    if (contentParts.length === 0 && searchText === "") return undefined;
+    if (contentParts.length === 0 && searchText === '') return undefined;
     return {
       actorKind: actorKindForRole(role),
       actorLabel: actorLabelForRole(role, payload),
@@ -251,7 +251,7 @@ function responseItemTurn(
       metadata: compactRecord({
         phase: readString(payload.phase),
         sourcePayloadType: payloadType,
-        sourceRecordType: "response_item",
+        sourceRecordType: 'response_item',
       }),
       model: state.model,
       rawSpan: rawSpan(record),
@@ -261,47 +261,47 @@ function responseItemTurn(
     };
   }
 
-  if (payloadType === "function_call" || payloadType === "custom_tool_call") {
+  if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
     const callId = readString(payload.call_id);
-    const name = readString(payload.name) ?? "tool";
+    const name = readString(payload.name) ?? 'tool';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
       if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
     }
     const argumentsText = readString(payload.arguments);
-    const customInput = payloadType === "custom_tool_call" ? payload.input : undefined;
+    const customInput = payloadType === 'custom_tool_call' ? payload.input : undefined;
     const contentParts = [
       compactRecord({
         arguments:
-          payloadType === "function_call"
+          payloadType === 'function_call'
             ? (parseJsonValue(argumentsText) ?? argumentsText)
             : undefined,
         callId,
         input: customInput,
         name,
         status: readString(payload.status),
-        type: "tool_call",
+        type: 'tool_call',
       }),
     ];
     return {
-      actorKind: "tool",
+      actorKind: 'tool',
       actorLabel: name,
       codexTurnId,
       contentParts,
       harnessTurnId:
-        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, "tool", codexTurnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, 'tool', codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       model: state.model,
       rawSpan: rawSpan(record),
-      role: "tool",
+      role: 'tool',
       searchText: contentPartsToSearchText(contentParts),
       startedAt: timestamp,
     };
   }
 
-  if (payloadType === "web_search_call") {
+  if (payloadType === 'web_search_call') {
     const callId = readString(payload.call_id) ?? readString(payload.id);
-    const name = "web_search";
+    const name = 'web_search';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
       if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
@@ -313,28 +313,28 @@ function responseItemTurn(
         callId,
         name,
         status: readString(payload.status),
-        type: "tool_call",
+        type: 'tool_call',
       }),
     ];
     return {
-      actorKind: "tool",
+      actorKind: 'tool',
       actorLabel: name,
       codexTurnId,
       contentParts,
       harnessTurnId:
-        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, "tool", codexTurnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, 'tool', codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       model: state.model,
       rawSpan: rawSpan(record),
-      role: "tool",
+      role: 'tool',
       searchText: contentPartsToSearchText(contentParts),
       startedAt: timestamp,
     };
   }
 
-  if (payloadType === "tool_search_call") {
+  if (payloadType === 'tool_search_call') {
     const callId = readString(payload.call_id) ?? readString(payload.id);
-    const name = "tool_search";
+    const name = 'tool_search';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
       if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
@@ -347,26 +347,26 @@ function responseItemTurn(
         name,
         status: readString(payload.status),
         tools: payload.tools,
-        type: "tool_call",
+        type: 'tool_call',
       }),
     ];
     return {
-      actorKind: "tool",
+      actorKind: 'tool',
       actorLabel: name,
       codexTurnId,
       contentParts,
       harnessTurnId:
-        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, "tool", codexTurnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+        readString(payload.id) ?? callId ?? stableHarnessTurnId(record, 'tool', codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       model: state.model,
       rawSpan: rawSpan(record),
-      role: "tool",
+      role: 'tool',
       searchText: contentPartsToSearchText(contentParts),
       startedAt: timestamp,
     };
   }
 
-  if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
+  if (payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output') {
     const callId = readString(payload.call_id);
     const name = callId === undefined ? undefined : state.callIdToToolName.get(callId);
     const turnId =
@@ -376,27 +376,27 @@ function responseItemTurn(
         callId,
         name,
         output: normalizeToolOutput(payload.output),
-        type: "tool_result",
+        type: 'tool_result',
       }),
     ];
     return {
-      actorKind: "tool",
+      actorKind: 'tool',
       actorLabel: name,
       codexTurnId: turnId,
       contentParts,
-      harnessTurnId: stableHarnessTurnId(record, "tool", callId ?? turnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+      harnessTurnId: stableHarnessTurnId(record, 'tool', callId ?? turnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       rawSpan: rawSpan(record),
-      role: "tool",
+      role: 'tool',
       searchText: contentPartsToSearchText(contentParts),
       startedAt: timestamp,
     };
   }
 
-  if (payloadType === "tool_search_output") {
+  if (payloadType === 'tool_search_output') {
     const callId = readString(payload.call_id) ?? readString(payload.id);
     const name =
-      callId === undefined ? "tool_search" : (state.callIdToToolName.get(callId) ?? "tool_search");
+      callId === undefined ? 'tool_search' : (state.callIdToToolName.get(callId) ?? 'tool_search');
     const turnId =
       callId === undefined ? codexTurnId : (state.callIdToTurnId.get(callId) ?? codexTurnId);
     const contentParts = [
@@ -407,37 +407,37 @@ function responseItemTurn(
         output: normalizeToolOutput(payload.output),
         status: readString(payload.status),
         tools: payload.tools,
-        type: "tool_result",
+        type: 'tool_result',
       }),
     ];
     return {
-      actorKind: "tool",
+      actorKind: 'tool',
       actorLabel: name,
       codexTurnId: turnId,
       contentParts,
-      harnessTurnId: stableHarnessTurnId(record, "tool", callId ?? turnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+      harnessTurnId: stableHarnessTurnId(record, 'tool', callId ?? turnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       rawSpan: rawSpan(record),
-      role: "tool",
+      role: 'tool',
       searchText: contentPartsToSearchText(contentParts),
       startedAt: timestamp,
     };
   }
 
-  if (payloadType === "reasoning") {
+  if (payloadType === 'reasoning') {
     const contentParts = normalizeReasoningParts(payload.summary);
     const searchText = contentPartsToSearchText(contentParts);
-    if (contentParts.length === 0 || searchText === "") return undefined;
+    if (contentParts.length === 0 || searchText === '') return undefined;
     return {
-      actorKind: "agent",
+      actorKind: 'agent',
       codexTurnId,
       contentParts,
       harnessTurnId:
-        readString(payload.id) ?? stableHarnessTurnId(record, "assistant", codexTurnId),
-      metadata: { sourcePayloadType: payloadType, sourceRecordType: "response_item" },
+        readString(payload.id) ?? stableHarnessTurnId(record, 'assistant', codexTurnId),
+      metadata: { sourcePayloadType: payloadType, sourceRecordType: 'response_item' },
       model: state.model,
       rawSpan: rawSpan(record),
-      role: "assistant",
+      role: 'assistant',
       searchText,
       startedAt: timestamp,
     };
@@ -466,9 +466,9 @@ function legacyTopLevelTurn(
   if (text === undefined) return undefined;
   return {
     actorKind: actorKindForRole(role),
-    contentParts: [{ text, type: "text" }],
+    contentParts: [{ text, type: 'text' }],
     harnessTurnId: stableHarnessTurnId(record, role, state.currentTurnId),
-    metadata: { sourceRecordType: "legacy-jsonl" },
+    metadata: { sourceRecordType: 'legacy-jsonl' },
     rawSpan: rawSpan(record),
     role,
     searchText: text,
@@ -477,16 +477,16 @@ function legacyTopLevelTurn(
 }
 
 function parseCodexJsonRecords(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   rawContent: string;
 }): ParsedJsonRecords {
-  if (input.contentType === "json") {
+  if (input.contentType === 'json') {
     const parsed = tryParseJson(input.rawContent);
     if (!parsed.ok) {
       return {
         parseErrors: [
           compactRecord({
-            byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+            byteEnd: Buffer.byteLength(input.rawContent, 'utf8'),
             byteStart: 0,
             charEnd: input.rawContent.length,
             charStart: 0,
@@ -505,7 +505,7 @@ function parseCodexJsonRecords(input: {
           ? []
           : [
               {
-                byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+                byteEnd: Buffer.byteLength(input.rawContent, 'utf8'),
                 byteStart: 0,
                 charEnd: input.rawContent.length,
                 charStart: 0,
@@ -519,7 +519,7 @@ function parseCodexJsonRecords(input: {
     };
   }
 
-  if (input.contentType !== "jsonl") return { parseErrors: [], records: [] };
+  if (input.contentType !== 'jsonl') return { parseErrors: [], records: [] };
 
   const records: ParsedJsonRecord[] = [];
   const parseErrors: Record<string, unknown>[] = [];
@@ -527,13 +527,13 @@ function parseCodexJsonRecords(input: {
   let charOffset = 0;
   let lineNumber = 0;
   while (charOffset < input.rawContent.length) {
-    const newlineIndex = input.rawContent.indexOf("\n", charOffset);
+    const newlineIndex = input.rawContent.indexOf('\n', charOffset);
     const lineEndWithNewline = newlineIndex === -1 ? input.rawContent.length : newlineIndex + 1;
     const rawLineWithNewline = input.rawContent.slice(charOffset, lineEndWithNewline);
-    const rawLine = rawLineWithNewline.replace(/\r?\n$/u, "");
+    const rawLine = rawLineWithNewline.replace(/\r?\n$/u, '');
     const trimmed = rawLine.trim();
-    if (trimmed !== "") {
-      const byteLength = Buffer.byteLength(rawLine, "utf8");
+    if (trimmed !== '') {
+      const byteLength = Buffer.byteLength(rawLine, 'utf8');
       const parsed = tryParseJson(trimmed);
       if (!parsed.ok) {
         parseErrors.push(
@@ -563,7 +563,7 @@ function parseCodexJsonRecords(input: {
         }
       }
     }
-    byteOffset += Buffer.byteLength(rawLineWithNewline, "utf8");
+    byteOffset += Buffer.byteLength(rawLineWithNewline, 'utf8');
     charOffset = lineEndWithNewline;
     lineNumber += 1;
   }
@@ -574,26 +574,26 @@ function parseCodexJsonRecords(input: {
 function responseMessageKeys(records: readonly ParsedJsonRecord[]): Set<string> {
   const keys = new Set<string>();
   for (const record of records) {
-    if (record.value.type !== "response_item") continue;
+    if (record.value.type !== 'response_item') continue;
     const payload = asRecord(record.value.payload);
-    if (payload?.type !== "message") continue;
+    if (payload?.type !== 'message') continue;
     const role = normalizeRole(readString(payload.role));
-    if (role !== "assistant" && role !== "user") continue;
+    if (role !== 'assistant' && role !== 'user') continue;
     const text = contentPartsToSearchText(normalizeContentParts(payload.content));
-    if (text !== "") keys.add(messageKey(role, text, readString(record.value.timestamp)));
+    if (text !== '') keys.add(messageKey(role, text, readString(record.value.timestamp)));
   }
   return keys;
 }
 
 function messageKey(role: string, text: string, timestamp: string | undefined): string {
-  return `${role}\0${timestamp ?? ""}\0${text}`;
+  return `${role}\0${timestamp ?? ''}\0${text}`;
 }
 
 function normalizeContentParts(value: unknown): Record<string, unknown>[] {
-  if (typeof value === "string") return [{ text: value, type: "text" }];
+  if (typeof value === 'string') return [{ text: value, type: 'text' }];
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
-    if (typeof entry === "string") return [{ text: entry, type: "text" }];
+    if (typeof entry === 'string') return [{ text: entry, type: 'text' }];
     const record = asRecord(entry);
     if (record === undefined) return [];
     const type = readString(record.type);
@@ -603,21 +603,21 @@ function normalizeContentParts(value: unknown): Record<string, unknown>[] {
         compactRecord({
           text,
           type:
-            type === "input_text" || type === "output_text" || type === undefined ? "text" : type,
+            type === 'input_text' || type === 'output_text' || type === undefined ? 'text' : type,
         }),
       ];
     }
-    return [compactRecord({ ...record, type: type ?? "unknown" })];
+    return [compactRecord({ ...record, type: type ?? 'unknown' })];
   });
 }
 
 function normalizeReasoningParts(value: unknown): Record<string, unknown>[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
-    if (typeof entry === "string") return [{ text: entry, type: "summary" }];
+    if (typeof entry === 'string') return [{ text: entry, type: 'summary' }];
     const record = asRecord(entry);
     const text = readString(record?.text);
-    return text === undefined ? [] : [{ text, type: "summary" }];
+    return text === undefined ? [] : [{ text, type: 'summary' }];
   });
 }
 
@@ -625,7 +625,7 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
   return parts
     .map((part) => {
       const type = readString(part.type);
-      if (type === "tool_call") {
+      if (type === 'tool_call') {
         return [
           readString(part.name),
           stringifyForSearch(part.arguments ?? part.input ?? part.action),
@@ -634,9 +634,9 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
           stringifyForSearch(part.tools),
         ]
           .filter(Boolean)
-          .join(" ");
+          .join(' ');
       }
-      if (type === "tool_result") {
+      if (type === 'tool_result') {
         return [
           readString(part.name),
           stringifyForSearch(part.output),
@@ -645,21 +645,21 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
           stringifyForSearch(part.tools),
         ]
           .filter(Boolean)
-          .join(" ");
+          .join(' ');
       }
-      if (typeof part.text === "string") return part.text;
-      if (typeof part.output === "string") return part.output;
-      if (typeof part.arguments === "string") return part.arguments;
+      if (typeof part.text === 'string') return part.text;
+      if (typeof part.output === 'string') return part.output;
+      if (typeof part.arguments === 'string') return part.arguments;
       return stringifyForSearch(part);
     })
-    .filter((part) => part.trim() !== "")
-    .join("\n")
+    .filter((part) => part.trim() !== '')
+    .join('\n')
     .trim();
 }
 
 function lifecyclePayload(payload: Record<string, unknown>): Record<string, unknown> {
   return compactRecord({
-    messageLength: typeof payload.message === "string" ? payload.message.length : undefined,
+    messageLength: typeof payload.message === 'string' ? payload.message.length : undefined,
     source: readString(payload.source),
     type: readString(payload.type),
     turnId: readString(payload.turn_id),
@@ -704,30 +704,30 @@ function stableHarnessTurnId(
   role: string,
   codexTurnId: string | undefined,
 ): string {
-  return [codexTurnId ?? "record", role, record.lineNumber.toString()].join(":");
+  return [codexTurnId ?? 'record', role, record.lineNumber.toString()].join(':');
 }
 
 function normalizeRole(value: string | undefined): NormalizedTurnRole | undefined {
-  if (value === "assistant" || value === "tool" || value === "user") return value;
-  if (value === "developer" || value === "system") return "system";
-  if (value === "subagent") return "subagent";
+  if (value === 'assistant' || value === 'tool' || value === 'user') return value;
+  if (value === 'developer' || value === 'system') return 'system';
+  if (value === 'subagent') return 'subagent';
   return undefined;
 }
 
 function actorKindForRole(role: NormalizedTurnRole): NormalizedActorKind {
-  if (role === "assistant") return "agent";
-  if (role === "subagent") return "subagent";
-  if (role === "tool") return "tool";
-  if (role === "user") return "host_user";
-  return "harness";
+  if (role === 'assistant') return 'agent';
+  if (role === 'subagent') return 'subagent';
+  if (role === 'tool') return 'tool';
+  if (role === 'user') return 'host_user';
+  return 'harness';
 }
 
 function actorLabelForRole(
   role: NormalizedTurnRole,
   payload: Record<string, unknown>,
 ): string | undefined {
-  if (role === "system") return readString(payload.role) ?? "codex";
-  if (role === "assistant") return "codex";
+  if (role === 'system') return readString(payload.role) ?? 'codex';
+  if (role === 'assistant') return 'codex';
   return undefined;
 }
 
@@ -752,19 +752,19 @@ function isDate(value: Date | undefined): value is Date {
 }
 
 function stringifyForSearch(value: unknown): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
   return JSON.stringify(value);
 }
 
 function normalizeToolOutput(value: unknown): unknown {
-  if (typeof value === "string") return parseJsonValue(value) ?? value;
+  if (typeof value === 'string') return parseJsonValue(value) ?? value;
   if (value === undefined) return undefined;
   return value;
 }
 
 function normalizeToolArguments(value: unknown): unknown {
-  if (typeof value === "string") return parseJsonValue(value) ?? value;
+  if (typeof value === 'string') return parseJsonValue(value) ?? value;
   if (value === undefined) return undefined;
   return value;
 }
@@ -793,11 +793,11 @@ function errorMessage(cause: unknown): string {
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }

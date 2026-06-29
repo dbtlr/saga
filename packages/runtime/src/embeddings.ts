@@ -2,20 +2,20 @@ import {
   resolveCodexAuth,
   type CodexAuthResolutionOptions,
   type CodexAuthStatus,
-} from "./codex-auth.js";
+} from './codex-auth.js';
 import {
   resolveEmbeddingPolicy,
   type EmbeddingPolicy,
   type EmbeddingPolicyResolutionOptions,
-} from "./embedding-policy.js";
+} from './embedding-policy.js';
 
-export type EmbeddingProviderId = "openai";
-export type EmbeddingAvailabilityState = "available" | "skipped";
-export type LexicalFallbackState = "active" | "standby";
+export type EmbeddingProviderId = 'openai';
+export type EmbeddingAvailabilityState = 'available' | 'skipped';
+export type LexicalFallbackState = 'active' | 'standby';
 // The effective recall capability after composing installation policy with credentials.
-export type EmbeddingEffectiveMode = "vector-aware" | "lexical-only-by-policy" | "lexical-fallback";
+export type EmbeddingEffectiveMode = 'vector-aware' | 'lexical-only-by-policy' | 'lexical-fallback';
 
-export const DISABLED_BY_POLICY_REASON = "disabled-by-policy";
+export const DISABLED_BY_POLICY_REASON = 'disabled-by-policy';
 
 export interface EmbeddingProviderBoundary {
   dimensions: number;
@@ -24,9 +24,9 @@ export interface EmbeddingProviderBoundary {
 }
 
 export interface EmbeddingCredentialStatus {
-  authMode: CodexAuthStatus["mode"];
+  authMode: CodexAuthStatus['mode'];
   detail: string;
-  source: "codex-auth";
+  source: 'codex-auth';
 }
 
 export interface EmbeddingWorkflowAvailability {
@@ -50,8 +50,8 @@ export interface EmbeddingWorkflowBoundary {
 
 export const DEFAULT_OPENAI_EMBEDDING_PROVIDER: EmbeddingProviderBoundary = {
   dimensions: 1536,
-  id: "openai",
-  model: "text-embedding-3-small",
+  id: 'openai',
+  model: 'text-embedding-3-small',
 };
 
 export function inspectEmbeddingWorkflow(
@@ -71,42 +71,42 @@ export function composeEmbeddingWorkflow(input: {
   const { auth, policy } = input;
   const credential = credentialStatus(auth);
 
-  if (policy.remoteEmbeddings === "disabled") {
+  if (policy.remoteEmbeddings === 'disabled') {
     return {
       availability: {
         credential,
         detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} skipped: ${policy.detail}`,
         guidance:
-          "Remote embeddings are disabled by installation policy; Saga uses lexical recall. Enable embeddings.remote in the installation config to use vector recall.",
+          'Remote embeddings are disabled by installation policy; Saga uses lexical recall. Enable embeddings.remote in the installation config to use vector recall.',
         reason: DISABLED_BY_POLICY_REASON,
-        state: "skipped",
+        state: 'skipped',
       },
       lexicalFallback: {
-        detail: "Lexical recall is in use because remote embeddings are disabled by policy.",
-        state: "active",
+        detail: 'Lexical recall is in use because remote embeddings are disabled by policy.',
+        state: 'active',
       },
-      mode: "lexical-only-by-policy",
+      mode: 'lexical-only-by-policy',
       policy,
       provider: DEFAULT_OPENAI_EMBEDDING_PROVIDER,
     };
   }
 
-  if (auth.status === "available") {
+  if (auth.status === 'available') {
     return {
       availability: {
         credential,
         detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} available via ${auth.displayPath}`,
         guidance:
-          "Saga will use the read-only cached Codex OPENAI_API_KEY for embedding workflows and will not refresh or rewrite Codex credentials.",
-        reason: "openai-api-key-available",
-        state: "available",
+          'Saga will use the read-only cached Codex OPENAI_API_KEY for embedding workflows and will not refresh or rewrite Codex credentials.',
+        reason: 'openai-api-key-available',
+        state: 'available',
       },
       lexicalFallback: {
         detail:
-          "Lexical recall remains available as a fallback if embedding generation is skipped later.",
-        state: "standby",
+          'Lexical recall remains available as a fallback if embedding generation is skipped later.',
+        state: 'standby',
       },
-      mode: "vector-aware",
+      mode: 'vector-aware',
       policy,
       provider: DEFAULT_OPENAI_EMBEDDING_PROVIDER,
     };
@@ -118,13 +118,13 @@ export function composeEmbeddingWorkflow(input: {
       detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} skipped: ${auth.detail}`,
       guidance: auth.guidance,
       reason: auth.reason,
-      state: "skipped",
+      state: 'skipped',
     },
     lexicalFallback: {
-      detail: "Lexical recall remains available while embedding generation is skipped.",
-      state: "active",
+      detail: 'Lexical recall remains available while embedding generation is skipped.',
+      state: 'active',
     },
-    mode: "lexical-fallback",
+    mode: 'lexical-fallback',
     policy,
     provider: DEFAULT_OPENAI_EMBEDDING_PROVIDER,
   };
@@ -134,10 +134,10 @@ function credentialStatus(auth: CodexAuthStatus): EmbeddingCredentialStatus {
   return {
     authMode: auth.mode,
     detail:
-      auth.status === "available"
+      auth.status === 'available'
         ? `cached OPENAI_API_KEY present in ${auth.displayPath}`
         : auth.detail,
-    source: "codex-auth",
+    source: 'codex-auth',
   };
 }
 

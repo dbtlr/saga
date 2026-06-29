@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash } from 'node:crypto';
 import {
   DEFAULT_OPENAI_EMBEDDING_PROVIDER,
   inspectEmbeddingWorkflow,
@@ -6,16 +6,16 @@ import {
   type CodexAuthResolutionOptions,
   type EmbeddingPolicyResolutionOptions,
   type EmbeddingProviderBoundary,
-} from "@saga/runtime";
-import { sql } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { sessionSegmentEmbeddings } from "./schema.js";
+} from '@saga/runtime';
+import { sql } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
+import type { DatabaseError, DatabaseService } from './database.js';
+import { sessionSegmentEmbeddings } from './schema.js';
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5_000;
 const INPUT_HASH_VERSION = 1;
-const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -66,7 +66,7 @@ export interface SessionEmbeddingIndexResult {
   indexedCount: number;
   lexicalFallback: {
     detail: string;
-    state: "active" | "standby";
+    state: 'active' | 'standby';
   };
   provider: EmbeddingProviderBoundary;
   skipped: {
@@ -76,11 +76,11 @@ export interface SessionEmbeddingIndexResult {
     reason?: string | undefined;
   };
   staleCount: number;
-  status: "completed" | "skipped";
+  status: 'completed' | 'skipped';
   workspaceId: string;
 }
 
-export class SessionEmbeddingIndexError extends Data.TaggedError("SessionEmbeddingIndexError")<{
+export class SessionEmbeddingIndexError extends Data.TaggedError('SessionEmbeddingIndexError')<{
   readonly cause?: unknown;
   readonly message: string;
 }> {}
@@ -96,7 +96,7 @@ interface SegmentCandidateRow {
 
 interface ResolvedEmbeddingGenerator {
   generator?: SessionEmbeddingGenerator | undefined;
-  lexicalFallback: SessionEmbeddingIndexResult["lexicalFallback"];
+  lexicalFallback: SessionEmbeddingIndexResult['lexicalFallback'];
   provider: EmbeddingProviderBoundary;
   skipped?: {
     detail: string;
@@ -147,7 +147,7 @@ export function indexSessionSegmentEmbeddings(
             reason: resolved.skipped?.reason,
           },
           staleCount,
-          status: "skipped",
+          status: 'skipped',
           workspaceId: input.workspaceId,
         };
       }
@@ -220,7 +220,7 @@ export function indexSessionSegmentEmbeddings(
           count: 0,
         },
         staleCount,
-        status: "completed",
+        status: 'completed',
         workspaceId: input.workspaceId,
       };
     },
@@ -251,9 +251,9 @@ export function createOpenAiSessionEmbeddingGenerator(
         }),
         headers: {
           authorization: `Bearer ${options.apiKey}`,
-          "content-type": "application/json",
+          'content-type': 'application/json',
         },
-        method: "POST",
+        method: 'POST',
       });
       if (!response.ok) {
         throw new SessionEmbeddingIndexError({
@@ -293,7 +293,7 @@ export function sessionSegmentEmbeddingInputHash(
   text: string,
   provider: EmbeddingProviderBoundary,
 ): string {
-  return `sha256:${createHash("sha256")
+  return `sha256:${createHash('sha256')
     .update(
       JSON.stringify({
         dimensions: provider.dimensions,
@@ -303,7 +303,7 @@ export function sessionSegmentEmbeddingInputHash(
         text,
       }),
     )
-    .digest("hex")}`;
+    .digest('hex')}`;
 }
 
 async function selectEligibleSegments(
@@ -368,8 +368,8 @@ function resolveEmbeddingGenerator(
       generator: input.generator,
       lexicalFallback: {
         detail:
-          "Lexical recall remains available as a fallback if embedding generation fails later.",
-        state: "standby",
+          'Lexical recall remains available as a fallback if embedding generation fails later.',
+        state: 'standby',
       },
       provider: input.generator.provider,
     };
@@ -378,7 +378,7 @@ function resolveEmbeddingGenerator(
   // inspectEmbeddingWorkflow composes installation policy with credentials; a disabled
   // policy yields availability.state "skipped" with reason "disabled-by-policy" below.
   const workflow = inspectEmbeddingWorkflow(input.authOptions, input.policyOptions);
-  if (workflow.availability.state === "skipped") {
+  if (workflow.availability.state === 'skipped') {
     return {
       lexicalFallback: workflow.lexicalFallback,
       provider: workflow.provider,
@@ -391,11 +391,11 @@ function resolveEmbeddingGenerator(
   }
 
   const auth = resolveCodexAuth(input.authOptions);
-  if (auth.status !== "available") {
+  if (auth.status !== 'available') {
     return {
       lexicalFallback: {
-        detail: "Lexical recall remains available while embedding generation is skipped.",
-        state: "active",
+        detail: 'Lexical recall remains available while embedding generation is skipped.',
+        state: 'active',
       },
       provider: workflow.provider,
       skipped: {
@@ -429,7 +429,7 @@ function embeddingMetadata(input: {
       id: input.provider.id,
       model: input.provider.model,
     },
-    status: "indexed",
+    status: 'indexed',
   };
 }
 
@@ -441,21 +441,21 @@ function openAiHttpFailureCategory(status: number): string {
   switch (status) {
     case 400:
     case 422:
-      return "invalid request";
+      return 'invalid request';
     case 401:
-      return "authentication failed";
+      return 'authentication failed';
     case 403:
-      return "authorization failed";
+      return 'authorization failed';
     case 408:
-      return "request timeout";
+      return 'request timeout';
     case 409:
-      return "request conflict";
+      return 'request conflict';
     case 429:
-      return "rate limited";
+      return 'rate limited';
     default:
-      if (status >= 400 && status < 500) return "client error";
-      if (status >= 500 && status < 600) return "server error";
-      return "unexpected status";
+      if (status >= 400 && status < 500) return 'client error';
+      if (status >= 500 && status < 600) return 'server error';
+      return 'unexpected status';
   }
 }
 
@@ -465,35 +465,35 @@ async function readOpenAiEmbeddingResponseBody(response: Response): Promise<unkn
   } catch (cause) {
     throw new SessionEmbeddingIndexError({
       cause,
-      message: "OpenAI embeddings response was not valid JSON",
+      message: 'OpenAI embeddings response was not valid JSON',
     });
   }
 }
 
 function parseOpenAiEmbeddingResponse(value: unknown): OpenAiEmbeddingResponseEntry[] {
-  if (value === null || typeof value !== "object") {
+  if (value === null || typeof value !== 'object') {
     throw new SessionEmbeddingIndexError({
-      message: "OpenAI embeddings response was not an object",
+      message: 'OpenAI embeddings response was not an object',
     });
   }
   const data = (value as { data?: unknown }).data;
   if (!Array.isArray(data)) {
-    throw new SessionEmbeddingIndexError({ message: "OpenAI embeddings response missing data" });
+    throw new SessionEmbeddingIndexError({ message: 'OpenAI embeddings response missing data' });
   }
   return data.map((item, responsePosition) => {
-    if (item === null || typeof item !== "object") {
+    if (item === null || typeof item !== 'object') {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response data item ${String(responsePosition)} was not an object`,
       });
     }
     const index = (item as { index?: unknown }).index;
-    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response data item ${String(responsePosition)} missing valid index`,
       });
     }
     const embedding = (item as { embedding?: unknown }).embedding;
-    if (!Array.isArray(embedding) || !embedding.every((part) => typeof part === "number")) {
+    if (!Array.isArray(embedding) || !embedding.every((part) => typeof part === 'number')) {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response embedding at index ${String(index)} was malformed`,
       });
@@ -536,7 +536,7 @@ function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
     throw new SessionEmbeddingIndexError({
-      message: "embedding index limit must be a positive integer",
+      message: 'embedding index limit must be a positive integer',
     });
   }
   return Math.min(limit, MAX_LIMIT);

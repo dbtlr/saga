@@ -1,12 +1,12 @@
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
+import { Data, Effect } from 'effect';
+import type { DatabaseError, DatabaseService } from './database.js';
 import {
   sourceBindings,
   workspaceProfiles,
   workspaces,
   type SourceBinding,
   type Workspace,
-} from "./schema.js";
+} from './schema.js';
 
 export interface RegisterWorkspaceInput {
   displayName: string | undefined;
@@ -32,7 +32,7 @@ export interface RegisterSourceBindingInput {
   workspaceId: string;
 }
 
-export class WorkspaceRegistrationError extends Data.TaggedError("WorkspaceRegistrationError")<{
+export class WorkspaceRegistrationError extends Data.TaggedError('WorkspaceRegistrationError')<{
   readonly message: string;
 }> {}
 
@@ -59,7 +59,7 @@ export function registerWorkspace(
         .returning();
 
       if (workspace === undefined) {
-        throw new WorkspaceRegistrationError({ message: "workspace registration returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'workspace registration returned no row' });
       }
 
       await service.db
@@ -92,7 +92,7 @@ export function registerWorkspace(
         .returning();
 
       if (sourceBinding === undefined) {
-        throw new WorkspaceRegistrationError({ message: "source binding returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'source binding returned no row' });
       }
 
       return { sourceBinding, workspace };
@@ -132,7 +132,7 @@ export function registerSourceBinding(
         .returning();
 
       if (sourceBinding === undefined) {
-        throw new WorkspaceRegistrationError({ message: "source binding returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'source binding returned no row' });
       }
 
       return sourceBinding;

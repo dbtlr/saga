@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
-import { Effect } from "effect";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { makeDatabase, runMigrations, type DatabaseService } from "./database.js";
-import { expandRecallContext, searchSessionRecall } from "./session-recall.js";
-import { sessionSegmentEmbeddingInputHash } from "./session-embeddings.js";
+import { eq } from 'drizzle-orm';
+import { Effect } from 'effect';
+import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
+import { expandRecallContext, searchSessionRecall } from './session-recall.js';
+import { sessionSegmentEmbeddingInputHash } from './session-embeddings.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -15,29 +15,29 @@ import {
   sourceBindings,
   users,
   workspaces,
-} from "./schema.js";
+} from './schema.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
-describePostgres("session recall", () => {
+describePostgres('session recall', () => {
   const databaseName = `saga_session_recall_${Date.now().toString(36)}`;
-  const adminSql = postgres(databaseUrl ?? "", { max: 1 });
+  const adminSql = postgres(databaseUrl ?? '', { max: 1 });
   let service: DatabaseService | undefined;
 
   beforeAll(async () => {
     await adminSql.unsafe(`create database "${databaseName}"`);
-    const testDatabaseUrl = new URL(databaseUrl ?? "");
+    const testDatabaseUrl = new URL(databaseUrl ?? '');
     testDatabaseUrl.pathname = `/${databaseName}`;
 
     service = await Effect.runPromise(
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
-          environment: "test",
-          logLevel: "info",
+          environment: 'test',
+          logLevel: 'info',
           service: {
-            host: "127.0.0.1",
+            host: '127.0.0.1',
             port: 4766,
           },
           secrets: {
@@ -62,19 +62,19 @@ describePostgres("session recall", () => {
     await adminSql.end({ timeout: 5 });
   });
 
-  test("returns ranked segment matches grouped by session and Activity Interval with metadata", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "grouping");
+  test('returns ranked segment matches grouped by session and Activity Interval with metadata', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'grouping');
 
     const result = await Effect.runPromise(
       searchSessionRecall(service, {
         limit: 10,
-        query: "lexical recall",
+        query: 'lexical recall',
         workspaceId: corpus.workspaceId,
       }),
     );
 
-    expect(result.query).toBe("lexical recall");
+    expect(result.query).toBe('lexical recall');
     expect(result.matchCount).toBeGreaterThanOrEqual(3);
     expect(result.sessions.map((group) => group.session.id)).toContain(corpus.primary.sessionId);
     expect(result.sessions.map((group) => group.session.id)).toContain(corpus.secondary.sessionId);
@@ -88,40 +88,40 @@ describePostgres("session recall", () => {
     expect(first?.scores.trigram).toBeGreaterThan(0);
     expect(first?.scores.combined).toBe(first?.combinedScore);
     expect(first?.scores.vector).toBeUndefined();
-    expect(first?.snippet.toLowerCase()).toContain("lexical");
-    expect(first?.snippet.toLowerCase()).toContain("recall");
+    expect(first?.snippet.toLowerCase()).toContain('lexical');
+    expect(first?.snippet.toLowerCase()).toContain('recall');
     expect(first?.turn).toMatchObject({
-      actorKind: "host_user",
+      actorKind: 'host_user',
       ordinal: 0,
-      role: "user",
+      role: 'user',
     });
     expect(first?.session).toMatchObject({
-      harness: "codex",
-      harnessSessionId: "grouping-primary",
-      model: "gpt-5-codex",
-      title: "Primary recall fixture",
+      harness: 'codex',
+      harnessSessionId: 'grouping-primary',
+      model: 'gpt-5-codex',
+      title: 'Primary recall fixture',
     });
     expect(first?.session.authorUser).toMatchObject({
-      displayName: "Drew",
-      externalSubject: "host-grouping",
-      handle: "drew",
-      identitySource: "host",
+      displayName: 'Drew',
+      externalSubject: 'host-grouping',
+      handle: 'drew',
+      identitySource: 'host',
       metadata: {
-        hostId: "host-grouping",
-        hostLabel: "Recall Host",
+        hostId: 'host-grouping',
+        hostLabel: 'Recall Host',
       },
     });
     expect(first?.sourceBinding).toMatchObject({
       config: {
-        hostId: "host-grouping",
-        projectRoot: "[local-path-redacted]",
+        hostId: 'host-grouping',
+        projectRoot: '[local-path-redacted]',
       },
-      sourceType: "codex",
+      sourceType: 'codex',
     });
-    expect(JSON.stringify(first?.sourceBinding)).not.toContain("/work/saga");
+    expect(JSON.stringify(first?.sourceBinding)).not.toContain('/work/saga');
     expect(first?.rawSessionRecord).toMatchObject({
-      contentType: "jsonl",
-      harness: "codex",
+      contentType: 'jsonl',
+      harness: 'codex',
       isActive: true,
       snapshotOrdinal: 0,
     });
@@ -144,14 +144,14 @@ describePostgres("session recall", () => {
     );
   });
 
-  test("uses trigram similarity for typo recall while keeping lexical and trigram scores distinct", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "trigram");
+  test('uses trigram similarity for typo recall while keeping lexical and trigram scores distinct', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'trigram');
 
     const result = await Effect.runPromise(
       searchSessionRecall(service, {
         minTrigramScore: 0.1,
-        query: "authentcation",
+        query: 'authentcation',
         workspaceId: corpus.workspaceId,
       }),
     );
@@ -165,27 +165,27 @@ describePostgres("session recall", () => {
     );
     expect(typoMatch?.scores.lexical).toBe(0);
     expect(typoMatch?.scores.trigram).toBeGreaterThan(0.1);
-    expect(typoMatch?.snippet).toContain("Authentication cache invalidation");
+    expect(typoMatch?.snippet).toContain('Authentication cache invalidation');
 
     const highThresholdResult = await Effect.runPromise(
       searchSessionRecall(service, {
         minTrigramScore: 0.95,
-        query: "authentcation",
+        query: 'authentcation',
         workspaceId: corpus.workspaceId,
       }),
     );
     expect(highThresholdResult.matchCount).toBe(0);
   });
 
-  test("uses optional vector candidates while preserving segment-level recall pointers", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "vector");
+  test('uses optional vector candidates while preserving segment-level recall pointers', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'vector');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
       provider,
       rawSessionRecordId: corpus.primary.rawSessionRecordId,
       segmentId: corpus.primary.segmentIds.authentication,
-      text: "Authentication cache invalidation failed in Codex harness.",
+      text: 'Authentication cache invalidation failed in Codex harness.',
       vector: [1, 0, 0],
       workspaceId: corpus.workspaceId,
     });
@@ -193,14 +193,14 @@ describePostgres("session recall", () => {
       provider,
       rawSessionRecordId: corpus.primary.rawSessionRecordId,
       segmentId: corpus.primary.segmentIds.lexicalExact,
-      text: "Implement lexical recall lexical recall over session segments with full text search.",
+      text: 'Implement lexical recall lexical recall over session segments with full text search.',
       vector: [0, 1, 0],
       workspaceId: corpus.workspaceId,
     });
 
     const result = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "zzzznomatch",
+        query: 'zzzznomatch',
         queryEmbedding: {
           dimensions: provider.dimensions,
           model: provider.model,
@@ -221,15 +221,15 @@ describePostgres("session recall", () => {
     expect(first?.rawSessionRecord.id).toBe(corpus.primary.rawSessionRecordId);
   });
 
-  test("can generate the recall query vector through an injected provider callback", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "vector-provider");
+  test('can generate the recall query vector through an injected provider callback', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'vector-provider');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
       provider,
       rawSessionRecordId: corpus.primary.rawSessionRecordId,
       segmentId: corpus.primary.segmentIds.lexicalExact,
-      text: "Implement lexical recall lexical recall over session segments with full text search.",
+      text: 'Implement lexical recall lexical recall over session segments with full text search.',
       vector: [0, 1, 0],
       workspaceId: corpus.workspaceId,
     });
@@ -244,23 +244,23 @@ describePostgres("session recall", () => {
             return [0, 1, 0];
           },
         },
-        query: "provider callback query",
+        query: 'provider callback query',
         workspaceId: corpus.workspaceId,
       }),
     );
 
-    expect(queries).toEqual(["provider callback query"]);
+    expect(queries).toEqual(['provider callback query']);
     expect(result.sessions[0]?.matches[0]?.segment.id).toBe(corpus.primary.segmentIds.lexicalExact);
     expect(result.sessions[0]?.matches[0]?.scores.vector).toBeGreaterThan(0.99);
   });
 
-  test("scopes recall to the workspace and only searches filtered segment text", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "isolation");
+  test('scopes recall to the workspace and only searches filtered segment text', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'isolation');
 
     const workspaceResult = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "workspaceexclusive uniqueneedle",
+        query: 'workspaceexclusive uniqueneedle',
         workspaceId: corpus.workspaceId,
       }),
     );
@@ -268,7 +268,7 @@ describePostgres("session recall", () => {
 
     const otherWorkspaceResult = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "workspaceexclusive uniqueneedle",
+        query: 'workspaceexclusive uniqueneedle',
         workspaceId: corpus.otherWorkspace.workspaceId,
       }),
     );
@@ -277,22 +277,22 @@ describePostgres("session recall", () => {
 
     const filteredSecretResult = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "hunter2",
+        query: 'hunter2',
         workspaceId: corpus.workspaceId,
       }),
     );
     expect(filteredSecretResult.matchCount).toBe(0);
   });
 
-  test("excludes disabled source bindings from search and context expansion", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "disabled-source");
+  test('excludes disabled source bindings from search and context expansion', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'disabled-source');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
       provider,
       rawSessionRecordId: corpus.primary.rawSessionRecordId,
       segmentId: corpus.primary.segmentIds.authentication,
-      text: "Authentication cache invalidation failed in Codex harness.",
+      text: 'Authentication cache invalidation failed in Codex harness.',
       vector: [1, 0, 0],
       workspaceId: corpus.workspaceId,
     });
@@ -304,7 +304,7 @@ describePostgres("session recall", () => {
 
     const result = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "Authentication cache invalidation",
+        query: 'Authentication cache invalidation',
         workspaceId: corpus.workspaceId,
       }),
     );
@@ -312,7 +312,7 @@ describePostgres("session recall", () => {
 
     const vectorResult = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "zzzznomatch",
+        query: 'zzzznomatch',
         queryEmbedding: {
           dimensions: provider.dimensions,
           model: provider.model,
@@ -331,18 +331,18 @@ describePostgres("session recall", () => {
           workspaceId: corpus.workspaceId,
         }),
       ),
-    ).rejects.toThrow("recall segment was not found in workspace");
+    ).rejects.toThrow('recall segment was not found in workspace');
   });
 
-  test("excludes inactive raw session snapshots from search and context expansion", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "inactive-raw");
+  test('excludes inactive raw session snapshots from search and context expansion', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'inactive-raw');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
       provider,
       rawSessionRecordId: corpus.primary.rawSessionRecordId,
       segmentId: corpus.primary.segmentIds.authentication,
-      text: "Authentication cache invalidation failed in Codex harness.",
+      text: 'Authentication cache invalidation failed in Codex harness.',
       vector: [1, 0, 0],
       workspaceId: corpus.workspaceId,
     });
@@ -354,7 +354,7 @@ describePostgres("session recall", () => {
 
     const result = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "Authentication cache invalidation",
+        query: 'Authentication cache invalidation',
         workspaceId: corpus.workspaceId,
       }),
     );
@@ -362,7 +362,7 @@ describePostgres("session recall", () => {
 
     const vectorResult = await Effect.runPromise(
       searchSessionRecall(service, {
-        query: "zzzznomatch",
+        query: 'zzzznomatch',
         queryEmbedding: {
           dimensions: provider.dimensions,
           model: provider.model,
@@ -381,12 +381,12 @@ describePostgres("session recall", () => {
           workspaceId: corpus.workspaceId,
         }),
       ),
-    ).rejects.toThrow("recall segment was not found in workspace");
+    ).rejects.toThrow('recall segment was not found in workspace');
   });
 
-  test("expands deterministic turn context around a matched segment within interval and raw record bounds", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const corpus = await seedRecallCorpus(service, "context");
+  test('expands deterministic turn context around a matched segment within interval and raw record bounds', async () => {
+    if (service === undefined) throw new Error('database service was not initialized');
+    const corpus = await seedRecallCorpus(service, 'context');
 
     const expansion = await Effect.runPromise(
       expandRecallContext(service, {
@@ -402,11 +402,11 @@ describePostgres("session recall", () => {
     expect(expansion.afterTurns).toBe(1);
     expect(expansion.windowTurns).toBe(1);
     expect(expansion.session).toMatchObject({
-      harness: "codex",
-      model: "gpt-5-codex",
+      harness: 'codex',
+      model: 'gpt-5-codex',
     });
     expect(expansion.sourceBinding.config).toMatchObject({
-      hostId: "host-context",
+      hostId: 'host-context',
     });
     expect(expansion.turns.map((turn) => turn.ordinal)).toEqual([1, 2, 3]);
     expect(expansion.turns.map((turn) => turn.id)).toEqual([
@@ -420,8 +420,8 @@ describePostgres("session recall", () => {
     ]);
     expect(expansion.turns[2]?.contentParts).toEqual([
       {
-        text: "The raw transcript contained hunter2, but indexing filtered it.",
-        type: "text",
+        text: 'The raw transcript contained hunter2, but indexing filtered it.',
+        type: 'text',
       },
     ]);
     expect(
@@ -514,8 +514,8 @@ interface WorkspaceBundle {
 function recallVectorProvider() {
   return {
     dimensions: 3,
-    id: "openai",
-    model: "deterministic-recall-vector",
+    id: 'openai',
+    model: 'deterministic-recall-vector',
   } as const;
 }
 
@@ -535,8 +535,8 @@ async function insertRecallEmbedding(
     embedding: input.vector,
     inputHash: sessionSegmentEmbeddingInputHash(input.text, input.provider),
     metadata: {
-      fixture: "session-recall",
-      status: "indexed",
+      fixture: 'session-recall',
+      status: 'indexed',
     },
     model: input.provider.model,
     provider: input.provider.id,
@@ -548,148 +548,148 @@ async function insertRecallEmbedding(
 
 async function seedRecallCorpus(service: DatabaseService, suffix: string): Promise<SeededCorpus> {
   const primaryWorkspace = await createWorkspaceBundle(service, suffix, {
-    harness: "codex",
+    harness: 'codex',
     hostId: `host-${suffix}`,
     sourceUri: `codex://host/host-${suffix}`,
   });
   const primary = await insertSessionFixture(service, primaryWorkspace, {
-    capturedAt: new Date("2026-06-22T12:00:00.000Z"),
-    harness: "codex",
+    capturedAt: new Date('2026-06-22T12:00:00.000Z'),
+    harness: 'codex',
     harnessSessionId: `${suffix}-primary`,
-    model: "gpt-5-codex",
-    title: "Primary recall fixture",
+    model: 'gpt-5-codex',
+    title: 'Primary recall fixture',
     turns: [
       {
-        actorKind: "host_user",
-        actorLabel: "Drew",
+        actorKind: 'host_user',
+        actorLabel: 'Drew',
         contentParts: [
           {
-            text: "Implement lexical recall over session segments.",
-            type: "text",
+            text: 'Implement lexical recall over session segments.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "lexicalExact",
-        role: "user",
+        key: 'lexicalExact',
+        role: 'user',
         searchTexts: [
-          "Implement lexical recall lexical recall over session segments with full text search.",
+          'Implement lexical recall lexical recall over session segments with full text search.',
         ],
       },
       {
-        actorKind: "agent",
-        actorLabel: "Codex",
+        actorKind: 'agent',
+        actorLabel: 'Codex',
         contentParts: [
           {
-            text: "Group matches by session and Activity Interval.",
-            type: "text",
+            text: 'Group matches by session and Activity Interval.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "grouping",
-        role: "assistant",
+        key: 'grouping',
+        role: 'assistant',
         searchTexts: [
-          "Group segment-level matches by session and Activity Interval.",
-          "Carry snippets scores harness model and host user metadata.",
+          'Group segment-level matches by session and Activity Interval.',
+          'Carry snippets scores harness model and host user metadata.',
         ],
       },
       {
-        actorKind: "host_user",
-        actorLabel: "Drew",
+        actorKind: 'host_user',
+        actorLabel: 'Drew',
         contentParts: [
           {
-            text: "Authentication cache invalidation failed in the Codex harness.",
-            type: "text",
+            text: 'Authentication cache invalidation failed in the Codex harness.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "authentication",
-        role: "user",
-        searchTexts: ["Authentication cache invalidation failed in Codex harness."],
+        key: 'authentication',
+        role: 'user',
+        searchTexts: ['Authentication cache invalidation failed in Codex harness.'],
       },
       {
-        actorKind: "tool",
-        actorLabel: "shell",
+        actorKind: 'tool',
+        actorLabel: 'shell',
         contentParts: [
           {
-            text: "The raw transcript contained hunter2, but indexing filtered it.",
-            type: "text",
+            text: 'The raw transcript contained hunter2, but indexing filtered it.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "filtered",
-        role: "tool",
+        key: 'filtered',
+        role: 'tool',
         searchTexts: [
-          "Command output was filtered before indexing and should not expose credentials.",
+          'Command output was filtered before indexing and should not expose credentials.',
         ],
       },
       {
-        actorKind: "agent",
-        actorLabel: "Codex",
+        actorKind: 'agent',
+        actorLabel: 'Codex',
         contentParts: [
           {
-            text: "The next interval also discussed lexical recall.",
-            type: "text",
+            text: 'The next interval also discussed lexical recall.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 1,
-        key: "secondInterval",
-        role: "assistant",
+        key: 'secondInterval',
+        role: 'assistant',
         searchTexts: [
-          "Lexical recall second interval keeps Activity Interval boundaries deterministic.",
+          'Lexical recall second interval keeps Activity Interval boundaries deterministic.',
         ],
       },
     ],
   });
 
   const secondary = await insertSessionFixture(service, primaryWorkspace, {
-    capturedAt: new Date("2026-06-22T13:00:00.000Z"),
-    harness: "claude",
+    capturedAt: new Date('2026-06-22T13:00:00.000Z'),
+    harness: 'claude',
     harnessSessionId: `${suffix}-secondary`,
-    model: "claude-sonnet-4-5",
-    title: "Secondary recall fixture",
+    model: 'claude-sonnet-4-5',
+    title: 'Secondary recall fixture',
     turns: [
       {
-        actorKind: "agent",
-        actorLabel: "Claude",
+        actorKind: 'agent',
+        actorLabel: 'Claude',
         contentParts: [
           {
-            text: "Claude also mentioned lexical recall.",
-            type: "text",
+            text: 'Claude also mentioned lexical recall.',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "secondary",
-        role: "assistant",
-        searchTexts: ["Lexical recall in Claude sidechain should group under its own session."],
+        key: 'secondary',
+        role: 'assistant',
+        searchTexts: ['Lexical recall in Claude sidechain should group under its own session.'],
       },
     ],
   });
 
   const otherWorkspace = await createWorkspaceBundle(service, `${suffix}-other`, {
-    harness: "codex",
+    harness: 'codex',
     hostId: `other-host-${suffix}`,
     sourceUri: `codex://host/other-host-${suffix}`,
   });
   const other = await insertSessionFixture(service, otherWorkspace, {
-    capturedAt: new Date("2026-06-22T14:00:00.000Z"),
-    harness: "codex",
+    capturedAt: new Date('2026-06-22T14:00:00.000Z'),
+    harness: 'codex',
     harnessSessionId: `${suffix}-other`,
-    model: "gpt-5-codex",
-    title: "Other workspace recall fixture",
+    model: 'gpt-5-codex',
+    title: 'Other workspace recall fixture',
     turns: [
       {
-        actorKind: "host_user",
-        actorLabel: "Drew",
+        actorKind: 'host_user',
+        actorLabel: 'Drew',
         contentParts: [
           {
-            text: "workspaceexclusive uniqueneedle",
-            type: "text",
+            text: 'workspaceexclusive uniqueneedle',
+            type: 'text',
           },
         ],
         intervalOrdinal: 0,
-        key: "other",
-        role: "user",
-        searchTexts: ["workspaceexclusive uniqueneedle"],
+        key: 'other',
+        role: 'user',
+        searchTexts: ['workspaceexclusive uniqueneedle'],
       },
     ],
   });
@@ -701,22 +701,22 @@ async function seedRecallCorpus(service: DatabaseService, suffix: string): Promi
     },
     primary: {
       segmentIds: {
-        authentication: primary.segmentIds.authentication?.[0] ?? "",
-        filtered: primary.segmentIds.filtered?.[0] ?? "",
-        groupingA: primary.segmentIds.grouping?.[0] ?? "",
-        groupingB: primary.segmentIds.grouping?.[1] ?? "",
-        lexicalExact: primary.segmentIds.lexicalExact?.[0] ?? "",
-        secondInterval: primary.segmentIds.secondInterval?.[0] ?? "",
+        authentication: primary.segmentIds.authentication?.[0] ?? '',
+        filtered: primary.segmentIds.filtered?.[0] ?? '',
+        groupingA: primary.segmentIds.grouping?.[0] ?? '',
+        groupingB: primary.segmentIds.grouping?.[1] ?? '',
+        lexicalExact: primary.segmentIds.lexicalExact?.[0] ?? '',
+        secondInterval: primary.segmentIds.secondInterval?.[0] ?? '',
       },
       rawSessionRecordId: primary.rawSessionRecordId,
       sessionId: primary.sessionId,
       sourceBindingId: primaryWorkspace.sourceBindingId,
       turnIds: {
-        authentication: primary.turnIds.authentication ?? "",
-        filtered: primary.turnIds.filtered ?? "",
-        grouping: primary.turnIds.grouping ?? "",
-        lexicalExact: primary.turnIds.lexicalExact ?? "",
-        secondInterval: primary.turnIds.secondInterval ?? "",
+        authentication: primary.turnIds.authentication ?? '',
+        filtered: primary.turnIds.filtered ?? '',
+        grouping: primary.turnIds.grouping ?? '',
+        lexicalExact: primary.turnIds.lexicalExact ?? '',
+        secondInterval: primary.turnIds.secondInterval ?? '',
       },
     },
     secondary: {
@@ -741,15 +741,15 @@ async function createWorkspaceBundle(
       handle: `recall-${suffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     })
     .returning();
-  if (workspace === undefined) throw new Error("workspace insert returned no row");
+  if (workspace === undefined) throw new Error('workspace insert returned no row');
 
   const [sourceBinding] = await service.db
     .insert(sourceBindings)
     .values({
       config: {
         hostId: input.hostId,
-        hostLabel: "Recall Host",
-        projectRoot: "/work/saga",
+        hostLabel: 'Recall Host',
+        projectRoot: '/work/saga',
       },
       displayName: `${input.harness} recall fixture`,
       sourceType: input.harness,
@@ -757,23 +757,23 @@ async function createWorkspaceBundle(
       workspaceId: workspace.id,
     })
     .returning();
-  if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+  if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
 
   const [author] = await service.db
     .insert(users)
     .values({
-      displayName: "Drew",
+      displayName: 'Drew',
       externalSubject: input.hostId,
-      handle: "drew",
-      identitySource: "host",
+      handle: 'drew',
+      identitySource: 'host',
       metadata: {
         hostId: input.hostId,
-        hostLabel: "Recall Host",
+        hostLabel: 'Recall Host',
       },
       workspaceId: workspace.id,
     })
     .returning();
-  if (author === undefined) throw new Error("user insert returned no row");
+  if (author === undefined) throw new Error('user insert returned no row');
 
   return {
     authorUserId: author.id,
@@ -819,17 +819,17 @@ async function insertSessionFixture(
       harnessSessionId: input.harnessSessionId,
       lastActivityAt: input.capturedAt,
       metadata: {
-        fixture: "session-recall",
+        fixture: 'session-recall',
       },
       model: input.model,
       sourceBindingId: bundle.sourceBindingId,
       startedAt: input.capturedAt,
-      status: "completed",
+      status: 'completed',
       title: input.title,
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (session === undefined) throw new Error("session insert returned no row");
+  if (session === undefined) throw new Error('session insert returned no row');
 
   const intervalOrdinals = [...new Set(input.turns.map((turn) => turn.intervalOrdinal))].sort(
     (left, right) => left - right,
@@ -841,47 +841,47 @@ async function insertSessionFixture(
       .values({
         endedAt: new Date(input.capturedAt.getTime() + (intervalOrdinal + 1) * 60_000),
         metadata: {
-          fixture: "session-recall",
+          fixture: 'session-recall',
         },
         ordinal: intervalOrdinal,
         sessionId: session.id,
         settledAt: new Date(input.capturedAt.getTime() + (intervalOrdinal + 1) * 60_000),
-        settlementReason: "stop_event",
+        settlementReason: 'stop_event',
         startedAt: new Date(input.capturedAt.getTime() + intervalOrdinal * 60_000),
-        status: "settled",
+        status: 'settled',
         workspaceId: bundle.workspaceId,
       })
       .returning();
-    if (interval === undefined) throw new Error("activity interval insert returned no row");
+    if (interval === undefined) throw new Error('activity interval insert returned no row');
     intervalIds.set(intervalOrdinal, interval.id);
   }
 
   const firstIntervalId = intervalIds.get(intervalOrdinals[0] ?? 0);
-  if (firstIntervalId === undefined) throw new Error("session fixture requires an interval");
+  if (firstIntervalId === undefined) throw new Error('session fixture requires an interval');
 
   const [rawRecord] = await service.db
     .insert(rawSessionRecords)
     .values({
       activityIntervalId: firstIntervalId,
       authorUserId: bundle.authorUserId,
-      bodyText: input.turns.map((turn) => JSON.stringify(turn.contentParts)).join("\n"),
+      bodyText: input.turns.map((turn) => JSON.stringify(turn.contentParts)).join('\n'),
       capturedAt: input.capturedAt,
       contentHash: `sha256:${input.harnessSessionId}`,
-      contentType: "jsonl",
+      contentType: 'jsonl',
       harness: input.harness,
       harnessSessionId: input.harnessSessionId,
       metadata: {
-        fixture: "session-recall",
+        fixture: 'session-recall',
       },
       sessionId: session.id,
       snapshotOrdinal: 0,
       sourceBindingId: bundle.sourceBindingId,
       sourceLocator: `/tmp/${input.harnessSessionId}.jsonl`,
-      status: "captured",
+      status: 'captured',
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (rawRecord === undefined) throw new Error("raw session record insert returned no row");
+  if (rawRecord === undefined) throw new Error('raw session record insert returned no row');
 
   const turnIds: Record<string, string> = {};
   const segmentIds: Record<string, string[]> = {};
@@ -889,7 +889,7 @@ async function insertSessionFixture(
 
   for (const [turnOrdinal, turnInput] of input.turns.entries()) {
     const intervalId = intervalIds.get(turnInput.intervalOrdinal);
-    if (intervalId === undefined) throw new Error("turn interval was not inserted");
+    if (intervalId === undefined) throw new Error('turn interval was not inserted');
 
     const [turn] = await service.db
       .insert(sessionTurns)
@@ -900,7 +900,7 @@ async function insertSessionFixture(
         contentParts: turnInput.contentParts,
         harnessTurnId: `${input.harnessSessionId}-${turnInput.key}`,
         metadata: {
-          fixture: "session-recall",
+          fixture: 'session-recall',
         },
         model: input.model,
         ordinal: turnOrdinal,
@@ -911,7 +911,7 @@ async function insertSessionFixture(
         workspaceId: bundle.workspaceId,
       })
       .returning();
-    if (turn === undefined) throw new Error("session turn insert returned no row");
+    if (turn === undefined) throw new Error('session turn insert returned no row');
     turnIds[turnInput.key] = turn.id;
     segmentIds[turnInput.key] = [];
 
@@ -921,19 +921,19 @@ async function insertSessionFixture(
         .values({
           activityIntervalId: intervalId,
           metadata: {
-            fixture: "session-recall",
+            fixture: 'session-recall',
           },
           ordinal: segmentOrdinal,
           rawSessionRecordId: rawRecord.id,
           searchText,
-          segmentKind: "turn",
+          segmentKind: 'turn',
           sessionId: session.id,
           snippet: searchText.slice(0, 160),
           turnId: turn.id,
           workspaceId: bundle.workspaceId,
         })
         .returning();
-      if (segment === undefined) throw new Error("session segment insert returned no row");
+      if (segment === undefined) throw new Error('session segment insert returned no row');
       segmentIds[turnInput.key]?.push(segment.id);
       segmentOrdinal += 1;
     }

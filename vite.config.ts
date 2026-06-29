@@ -1,18 +1,18 @@
-import { vitestNode } from "@dbtlr/tooling/vitest";
-import { defineConfig } from "vite-plus";
-import type { OxlintConfig } from "oxlint";
+import { vitestNode } from '@dbtlr/tooling/vitest';
+import { defineConfig } from 'vite-plus';
+import type { OxlintConfig } from 'oxlint';
 
-type Override = NonNullable<OxlintConfig["overrides"]>[number];
+type Override = NonNullable<OxlintConfig['overrides']>[number];
 
 const sagaPackage = (name: string): string[] => [`@saga/${name}`, `@saga/${name}/*`];
 const relativeLayer = (name: string): string[] => [`**/${name}`, `**/${name}/**`];
-const uiPackages = ["react", "react-dom", "@tanstack/*"];
+const uiPackages = ['react', 'react-dom', '@tanstack/*'];
 
 const forbid = (files: string[], imports: string[], message: string): Override => ({
   files,
   rules: {
-    "no-restricted-imports": [
-      "error",
+    'no-restricted-imports': [
+      'error',
       {
         patterns: [
           {
@@ -28,27 +28,28 @@ const forbid = (files: string[], imports: string[], message: string): Override =
 export default defineConfig({
   fmt: {
     ignorePatterns: [
-      "pnpm-lock.yaml",
-      "bun.lock",
-      "CHANGELOG.md",
-      "dist/**",
-      "build/**",
-      "node_modules/**",
-      "coverage/**",
-      ".turbo/**",
-      ".vite/**",
+      'pnpm-lock.yaml',
+      'bun.lock',
+      'CHANGELOG.md',
+      'dist/**',
+      'build/**',
+      'node_modules/**',
+      'coverage/**',
+      '.turbo/**',
+      '.vite/**',
       // saga-specific: generator owns the route tree / generated files' style
-      "**/*.generated.ts",
-      "**/*.gen.ts",
+      '**/*.generated.ts',
+      '**/*.gen.ts',
     ],
+    singleQuote: true,
   },
   lint: {
     ignorePatterns: [
-      "dist/**",
-      "coverage/**",
-      "node_modules/**",
-      "**/*.generated.ts",
-      "**/*.gen.ts",
+      'dist/**',
+      'coverage/**',
+      'node_modules/**',
+      '**/*.generated.ts',
+      '**/*.gen.ts',
     ],
     options: {
       typeAware: true,
@@ -58,55 +59,55 @@ export default defineConfig({
     },
     overrides: [
       forbid(
-        ["apps/cli/**"],
+        ['apps/cli/**'],
         [
-          ...sagaPackage("service"),
-          ...sagaPackage("control-plane"),
-          ...relativeLayer("service"),
-          ...relativeLayer("control-plane"),
+          ...sagaPackage('service'),
+          ...sagaPackage('control-plane'),
+          ...relativeLayer('service'),
+          ...relativeLayer('control-plane'),
         ],
-        "App boundary: CLI orchestrates service/control-plane processes; it must not import their app trees.",
+        'App boundary: CLI orchestrates service/control-plane processes; it must not import their app trees.',
       ),
       forbid(
-        ["apps/service/**"],
+        ['apps/service/**'],
         [
-          ...sagaPackage("cli"),
-          ...sagaPackage("control-plane"),
-          ...relativeLayer("cli"),
-          ...relativeLayer("control-plane"),
+          ...sagaPackage('cli'),
+          ...sagaPackage('control-plane'),
+          ...relativeLayer('cli'),
+          ...relativeLayer('control-plane'),
         ],
-        "App boundary: service owns runtime work and must not import CLI or control-plane app trees.",
+        'App boundary: service owns runtime work and must not import CLI or control-plane app trees.',
       ),
       forbid(
-        ["apps/control-plane/**"],
+        ['apps/control-plane/**'],
         [
-          ...sagaPackage("cli"),
-          ...sagaPackage("service"),
-          ...relativeLayer("cli"),
-          ...relativeLayer("service"),
+          ...sagaPackage('cli'),
+          ...sagaPackage('service'),
+          ...relativeLayer('cli'),
+          ...relativeLayer('service'),
         ],
-        "App boundary: control-plane may call shared packages, not CLI or service app trees.",
+        'App boundary: control-plane may call shared packages, not CLI or service app trees.',
       ),
       forbid(
-        ["packages/**"],
+        ['packages/**'],
         [
-          ...sagaPackage("cli"),
-          ...sagaPackage("service"),
-          ...sagaPackage("control-plane"),
-          ...relativeLayer("apps"),
+          ...sagaPackage('cli'),
+          ...sagaPackage('service'),
+          ...sagaPackage('control-plane'),
+          ...relativeLayer('apps'),
         ],
-        "Package boundary: shared packages must not import app trees.",
+        'Package boundary: shared packages must not import app trees.',
       ),
       forbid(
-        ["apps/cli/**", "apps/service/**", "packages/**"],
+        ['apps/cli/**', 'apps/service/**', 'packages/**'],
         uiPackages,
-        "UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.",
+        'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',
       ),
-      { files: ["**/*.test.ts", "**/*.test.tsx"], rules: { "no-restricted-imports": "off" } },
+      { files: ['**/*.test.ts', '**/*.test.tsx'], rules: { 'no-restricted-imports': 'off' } },
     ],
   },
   // Monorepo layout: members run under the centralized root config, so test
   // discovery globs must reach each package's src (the helper's package-relative
   // default would match nothing here).
-  ...vitestNode({ include: ["**/src/**/*.test.ts", "**/tests/**/*.test.ts"] }),
+  ...vitestNode({ include: ['**/src/**/*.test.ts', '**/tests/**/*.test.ts'] }),
 });

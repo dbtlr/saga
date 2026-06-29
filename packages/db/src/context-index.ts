@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { contextIndexEntries, sourceBindings, type ContextIndexEntry } from "./schema.js";
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
+import type { DatabaseError, DatabaseService } from './database.js';
+import { contextIndexEntries, sourceBindings, type ContextIndexEntry } from './schema.js';
 
-export type ContextIndexIncludePolicy = "always" | "when_relevant" | "never";
+export type ContextIndexIncludePolicy = 'always' | 'when_relevant' | 'never';
 
 export interface UpsertContextIndexEntryInput {
   description?: string | null | undefined;
@@ -54,24 +54,24 @@ export interface ResolvedSagaLink {
   };
 }
 
-export class ContextIndexError extends Data.TaggedError("ContextIndexError")<{
+export class ContextIndexError extends Data.TaggedError('ContextIndexError')<{
   readonly message: string;
 }> {}
 
-const INCLUDE_POLICIES = new Set<ContextIndexIncludePolicy>(["always", "when_relevant", "never"]);
+const INCLUDE_POLICIES = new Set<ContextIndexIncludePolicy>(['always', 'when_relevant', 'never']);
 
 export function makeSagaContextLink(key: string): string {
   return `saga:context/${encodeURIComponent(normalizeKey(key))}`;
 }
 
 export function parseSagaContextLink(link: string): { key: string } {
-  if (!link.startsWith("saga:context/")) {
+  if (!link.startsWith('saga:context/')) {
     throw new ContextIndexError({ message: `unsupported Saga Link: ${link}` });
   }
 
-  const encodedKey = link.slice("saga:context/".length);
-  if (encodedKey.trim() === "") {
-    throw new ContextIndexError({ message: "Saga Link is missing a context key" });
+  const encodedKey = link.slice('saga:context/'.length);
+  if (encodedKey.trim() === '') {
+    throw new ContextIndexError({ message: 'Saga Link is missing a context key' });
   }
 
   return { key: normalizeKey(decodeURIComponent(encodedKey)) };
@@ -89,11 +89,11 @@ export function upsertContextIndexEntry(
       const parsed = parseSagaContextLink(sagaLink);
       if (parsed.key !== key) {
         throw new ContextIndexError({
-          message: "Context Index entry key must match the Saga Link context key",
+          message: 'Context Index entry key must match the Saga Link context key',
         });
       }
 
-      const includePolicy = input.includePolicy ?? "when_relevant";
+      const includePolicy = input.includePolicy ?? 'when_relevant';
       if (!INCLUDE_POLICIES.has(includePolicy)) {
         throw new ContextIndexError({ message: `unsupported include policy: ${includePolicy}` });
       }
@@ -134,7 +134,7 @@ export function upsertContextIndexEntry(
         .returning();
 
       if (entry === undefined) {
-        throw new ContextIndexError({ message: "Context Index upsert returned no row" });
+        throw new ContextIndexError({ message: 'Context Index upsert returned no row' });
       }
 
       return entry;
@@ -198,7 +198,7 @@ export function listActiveContextIndexEntries(
   input: { limit?: number | undefined; workspaceId: string },
 ): Effect.Effect<ContextIndexEntryWithSource[], DatabaseError | ContextIndexError> {
   return listContextIndexEntries(service, {
-    includePolicies: ["always"],
+    includePolicies: ['always'],
     limit: input.limit ?? 6,
     workspaceId: input.workspaceId,
   });
@@ -266,8 +266,8 @@ export function resolveSagaLink(
 
 function normalizeKey(key: string): string {
   const normalized = key.trim();
-  if (normalized === "") {
-    throw new ContextIndexError({ message: "Context Index key is required" });
+  if (normalized === '') {
+    throw new ContextIndexError({ message: 'Context Index key is required' });
   }
   return normalized;
 }
@@ -289,7 +289,7 @@ async function assertSourceBindingInWorkspace(
 
   if (sourceBinding === undefined) {
     throw new ContextIndexError({
-      message: "Context Index source binding must belong to the same workspace",
+      message: 'Context Index source binding must belong to the same workspace',
     });
   }
 }

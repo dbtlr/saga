@@ -1,12 +1,12 @@
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
+import { Data, Effect } from 'effect';
+import type { DatabaseError, DatabaseService } from './database.js';
+import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
   redactAgentFacingSessionValue,
   redactAgentFacingSessionText,
-} from "./session-output-redaction.js";
+} from './session-output-redaction.js';
 
 const DEFAULT_RECENT_LIMIT = 20;
 const MAX_RECENT_LIMIT = 100;
@@ -17,7 +17,7 @@ const MAX_RAW_RECORDS = 50;
 const MAX_TURNS = 500;
 const MAX_SEGMENTS_PER_TURN = 25;
 const RAW_BODY_EXPOSURE_WARNING =
-  "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.";
+  'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.';
 
 type JsonRecord = Record<string, unknown>;
 type TimestampValue = Date | string | null;
@@ -162,8 +162,8 @@ export interface SessionRawSessionRecordMetadata {
 }
 
 export interface SessionRawBodyExposureMetadata {
-  mode: "raw_forensic";
-  requestedBy: "includeRawBody";
+  mode: 'raw_forensic';
+  requestedBy: 'includeRawBody';
   warning: string;
 }
 
@@ -188,7 +188,7 @@ export interface SessionSegmentMetadata {
   tokenStart: number | null;
 }
 
-export class SessionRecordQueryError extends Data.TaggedError("SessionRecordQueryError")<{
+export class SessionRecordQueryError extends Data.TaggedError('SessionRecordQueryError')<{
   readonly message: string;
 }> {}
 
@@ -314,7 +314,7 @@ export function listRecentSessionRecords(
       const harness = cleanOptional(input.harness);
       const limit = normalizePositiveInt(input.limit, {
         defaultValue: DEFAULT_RECENT_LIMIT,
-        label: "limit",
+        label: 'limit',
         max: MAX_RECENT_LIMIT,
       });
       const activeOnly = input.activeOnly === true;
@@ -432,23 +432,23 @@ export function getSessionDetail(
       const id = cleanOptional(input.id);
       if (id === undefined) {
         throw new SessionRecordQueryError({
-          message: "session or raw session record id is required",
+          message: 'session or raw session record id is required',
         });
       }
 
       const maxRawRecords = normalizePositiveInt(input.maxRawRecords, {
         defaultValue: DEFAULT_MAX_RAW_RECORDS,
-        label: "raw-records",
+        label: 'raw-records',
         max: MAX_RAW_RECORDS,
       });
       const maxTurns = normalizePositiveInt(input.maxTurns, {
         defaultValue: DEFAULT_MAX_TURNS,
-        label: "turns",
+        label: 'turns',
         max: MAX_TURNS,
       });
       const maxSegmentsPerTurn = normalizePositiveInt(input.maxSegmentsPerTurn, {
         defaultValue: DEFAULT_MAX_SEGMENTS_PER_TURN,
-        label: "segments",
+        label: 'segments',
         max: MAX_SEGMENTS_PER_TURN,
       });
       const includeRawBody = input.includeRawBody === true;
@@ -893,12 +893,12 @@ function groupActivityIntervals(
           skippedSegmentsByTurn.get(row.turn_id) ?? segments,
         ),
       ) as unknown[],
-      endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
+      endedAt: normalizeNullableTimestamp(row.turn_ended_at, 'turn.endedAt'),
       metadata: redactAgentFacingJsonRecord(row.turn_metadata),
       rawEventIds: row.turn_raw_event_ids,
       rawSpan: redactAgentFacingJsonRecord(row.turn_raw_span),
       segments,
-      startedAt: normalizeNullableTimestamp(row.turn_started_at, "turn.startedAt"),
+      startedAt: normalizeNullableTimestamp(row.turn_started_at, 'turn.startedAt'),
       turn: mapTurn(row),
     });
     turnsByInterval.set(row.activity_interval_id, existing);
@@ -912,20 +912,20 @@ function groupActivityIntervals(
 
 function mapSession(row: CommonSessionRow): SessionMetadata {
   return {
-    endedAt: normalizeNullableTimestamp(row.session_ended_at, "session.endedAt"),
+    endedAt: normalizeNullableTimestamp(row.session_ended_at, 'session.endedAt'),
     harness: row.session_harness,
     harnessSessionId: row.session_harness_session_id,
     id: row.session_id,
     lastActivityAt: normalizeNullableTimestamp(
       row.session_last_activity_at,
-      "session.lastActivityAt",
+      'session.lastActivityAt',
     ),
     metadata: redactAgentFacingJsonRecord(row.session_metadata),
     model: row.session_model,
     provenance: redactAgentFacingJsonRecord(row.session_provenance),
     sourceBindingId: row.session_source_binding_id,
     sourceLocator: redactAgentFacingSourceLocator(row.session_source_locator),
-    startedAt: normalizeNullableTimestamp(row.session_started_at, "session.startedAt"),
+    startedAt: normalizeNullableTimestamp(row.session_started_at, 'session.startedAt'),
     status: row.session_status,
     title: row.session_title,
     workspaceId: row.session_workspace_id,
@@ -956,19 +956,19 @@ function mapSourceBinding(row: CommonSessionRow): SessionSourceBindingMetadata {
 
 function mapActivityInterval(row: ActivityIntervalRow): SessionActivityIntervalMetadata {
   return {
-    endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, "activityInterval.endedAt"),
+    endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, 'activityInterval.endedAt'),
     id: row.activity_interval_id,
     metadata: redactAgentFacingJsonRecord(row.activity_interval_metadata),
     ordinal: row.activity_interval_ordinal,
     sessionId: row.activity_interval_session_id,
     settledAt: normalizeNullableTimestamp(
       row.activity_interval_settled_at,
-      "activityInterval.settledAt",
+      'activityInterval.settledAt',
     ),
     settlementReason: row.activity_interval_settlement_reason,
     startedAt: normalizeRequiredTimestamp(
       row.activity_interval_started_at,
-      "activityInterval.startedAt",
+      'activityInterval.startedAt',
     ),
     status: row.activity_interval_status,
   };
@@ -981,17 +981,17 @@ function mapRawSessionRecord(
   const includeRawBody =
     options.includeRawBody === true &&
     row.raw_record_is_active &&
-    (Object.hasOwn(row, "raw_record_body_json") || Object.hasOwn(row, "raw_record_body_text"));
+    (Object.hasOwn(row, 'raw_record_body_json') || Object.hasOwn(row, 'raw_record_body_text'));
   return {
-    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_json")
+    ...(includeRawBody && Object.hasOwn(row, 'raw_record_body_json')
       ? { bodyJson: row.raw_record_body_json }
       : {}),
-    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_text")
+    ...(includeRawBody && Object.hasOwn(row, 'raw_record_body_text')
       ? { bodyText: row.raw_record_body_text }
       : {}),
     capturedAt: normalizeRequiredTimestamp(
       row.raw_record_captured_at,
-      "rawSessionRecord.capturedAt",
+      'rawSessionRecord.capturedAt',
     ),
     contentBytes: row.raw_record_content_bytes,
     contentHash: row.raw_record_content_hash,
@@ -1009,8 +1009,8 @@ function mapRawSessionRecord(
     ...(includeRawBody
       ? {
           rawBodyExposure: {
-            mode: "raw_forensic",
-            requestedBy: "includeRawBody",
+            mode: 'raw_forensic',
+            requestedBy: 'includeRawBody',
             warning: RAW_BODY_EXPOSURE_WARNING,
           },
         }
@@ -1022,7 +1022,7 @@ function normalizeNullableTimestamp(value: TimestampValue, label: string): Date 
   if (value === null) return null;
   if (value instanceof Date) {
     if (!Number.isNaN(value.getTime())) return value;
-  } else if (typeof value === "string") {
+  } else if (typeof value === 'string') {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
@@ -1067,8 +1067,8 @@ function mapSegment(row: SegmentRow): SessionDetailSegment {
 
 function normalizeWorkspaceId(value: string): string {
   const workspaceId = value.trim();
-  if (workspaceId === "") {
-    throw new SessionRecordQueryError({ message: "workspaceId is required" });
+  if (workspaceId === '') {
+    throw new SessionRecordQueryError({ message: 'workspaceId is required' });
   }
   return workspaceId;
 }
@@ -1086,7 +1086,7 @@ function normalizePositiveInt(
 
 function cleanOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
 function errorMessage(cause: unknown): string {

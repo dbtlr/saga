@@ -1,14 +1,14 @@
-import { and, asc, eq } from "drizzle-orm";
-import type { DatabaseService } from "./database.js";
+import { and, asc, eq } from 'drizzle-orm';
+import type { DatabaseService } from './database.js';
 import {
   sessionSegments,
   sessionTurns,
   type NewSessionSegment,
   type SessionSegment,
   type SessionTurn,
-} from "./schema.js";
+} from './schema.js';
 
-const DERIVER = "session-segments-v1";
+const DERIVER = 'session-segments-v1';
 const MAX_UNSPLIT_TOKENS = 1_200;
 const TARGET_CHUNK_TOKENS = 1_000;
 const MIN_CHUNK_TOKENS = 800;
@@ -54,11 +54,11 @@ interface ToolGroupContext {
 
 interface ToolEvidence {
   callId: string;
-  partType: "tool_call" | "tool_result";
+  partType: 'tool_call' | 'tool_result';
 }
 
 export async function insertDerivedSessionSegments(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     rawSessionRecordId: string;
     sessionId: string;
@@ -72,7 +72,7 @@ export async function insertDerivedSessionSegments(
 }
 
 export async function sessionSegmentsAreCurrent(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     rawSessionRecordId: string;
     sessionId: string;
@@ -125,7 +125,7 @@ export function deriveSessionSegmentsFromTurns(turns: readonly SessionTurn[]): N
 }
 
 async function selectSegmentSourceTurns(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     rawSessionRecordId: string;
     sessionId: string;
@@ -147,12 +147,12 @@ async function selectSegmentSourceTurns(
 
 function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext): SegmentDraft[] {
   const extraction = extractGroupSearchText([turn]);
-  if (extraction.searchText === "") {
+  if (extraction.searchText === '') {
     if (extraction.skippedPartCount === 0 && extraction.contentPartTypes.length === 0) return [];
     return [buildSkippedDraft(turn, extraction, group)];
   }
 
-  const baseKind = group === undefined ? "turn" : toolGroupMemberKind(turn);
+  const baseKind = group === undefined ? 'turn' : toolGroupMemberKind(turn);
   const chunks = splitSearchText(extraction.searchText);
   return chunks.map((chunk, chunkIndex) => ({
     charEnd: chunk.charEnd,
@@ -185,8 +185,8 @@ function buildSkippedDraft(
     charEnd: null,
     charStart: null,
     metadata: buildSkippedSegmentMetadata(group?.turns ?? [turn], turn, extraction, group),
-    searchText: "",
-    segmentKind: group === undefined ? "turn_skipped" : "tool_group_skipped",
+    searchText: '',
+    segmentKind: group === undefined ? 'turn_skipped' : 'tool_group_skipped',
     snippet: null,
     tokenEnd: null,
     tokenStart: null,
@@ -196,9 +196,9 @@ function buildSkippedDraft(
 
 function toolGroupMemberKind(turn: SessionTurn): string {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
-  if (parts.some((part) => readString(part.type) === "tool_call")) return "tool_group_call";
-  if (parts.some((part) => readString(part.type) === "tool_result")) return "tool_group_result";
-  return "tool_group_member";
+  if (parts.some((part) => readString(part.type) === 'tool_call')) return 'tool_group_call';
+  if (parts.some((part) => readString(part.type) === 'tool_result')) return 'tool_group_result';
+  return 'tool_group_member';
 }
 
 function extractGroupSearchText(turns: readonly SessionTurn[]): TextExtraction {
@@ -212,7 +212,7 @@ function extractGroupSearchText(turns: readonly SessionTurn[]): TextExtraction {
     const parts = Array.isArray(turn.contentParts) ? turn.contentParts : [];
     for (const part of parts) {
       const partRecord = asRecord(part);
-      const partType = readString(partRecord.type) ?? "unknown";
+      const partType = readString(partRecord.type) ?? 'unknown';
       partTypes.push(partType);
 
       const rawText = partToSearchText(partRecord);
@@ -225,7 +225,7 @@ function extractGroupSearchText(turns: readonly SessionTurn[]): TextExtraction {
         });
       }
 
-      if (filtered.text === "") {
+      if (filtered.text === '') {
         skippedPartCount += 1;
       } else {
         texts.push(filtered.text);
@@ -237,14 +237,14 @@ function extractGroupSearchText(turns: readonly SessionTurn[]): TextExtraction {
   return {
     contentPartTypes: partTypes,
     filters,
-    searchText: normalizeSearchText(texts.join("\n")),
+    searchText: normalizeSearchText(texts.join('\n')),
     skippedPartCount,
   };
 }
 
 function partToSearchText(part: JsonRecord): string {
   const type = readString(part.type);
-  if (type === "tool_call") {
+  if (type === 'tool_call') {
     return [
       readString(part.name),
       stringifyForSearch(part.arguments ?? part.input ?? part.action),
@@ -252,11 +252,11 @@ function partToSearchText(part: JsonRecord): string {
       stringifyForSearch(part.status),
       stringifyForSearch(part.tools),
     ]
-      .filter((value) => value !== "")
-      .join(" ");
+      .filter((value) => value !== '')
+      .join(' ');
   }
 
-  if (type === "tool_result") {
+  if (type === 'tool_result') {
     return [
       readString(part.name),
       stringifyForSearch(part.output),
@@ -264,54 +264,54 @@ function partToSearchText(part: JsonRecord): string {
       stringifyForSearch(part.status),
       stringifyForSearch(part.tools),
     ]
-      .filter((value) => value !== "")
-      .join(" ");
+      .filter((value) => value !== '')
+      .join(' ');
   }
 
-  if (typeof part.text === "string") return part.text;
-  if (typeof part.output === "string") return part.output;
-  if (typeof part.arguments === "string") return part.arguments;
+  if (typeof part.text === 'string') return part.text;
+  if (typeof part.output === 'string') return part.output;
+  if (typeof part.arguments === 'string') return part.arguments;
   return stringifyForSearch(part);
 }
 
 function filterSearchText(rawText: string): { reason?: string | undefined; text: string } {
   const withoutAnsi = rawText.replaceAll(
-    new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "gu"),
-    "",
+    new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'gu'),
+    '',
   );
   const withoutBoilerplate = withoutAnsi
     .split(/\r?\n/u)
     .filter((line) => !/^(Exit code:|Wall time:|Output:)\b/u.test(line.trim()))
-    .join("\n");
+    .join('\n');
   const text = withoutBoilerplate.trim();
-  if (text === "") return { text: "" };
+  if (text === '') return { text: '' };
 
   const coarseReason = coarseFilterReason(text);
-  if (coarseReason !== undefined) return { reason: coarseReason, text: "" };
+  if (coarseReason !== undefined) return { reason: coarseReason, text: '' };
 
   const structuredRedaction = redactStructuredSecrets(text);
   const candidateLines = structuredRedaction.text.split(/\r?\n/u);
   const redactedLines = candidateLines.filter((line) => !containsObviousSecret(line));
   if (redactedLines.length !== candidateLines.length) {
     return {
-      reason: "secret",
-      text: normalizeSearchText(redactedLines.join("\n")),
+      reason: 'secret',
+      text: normalizeSearchText(redactedLines.join('\n')),
     };
   }
 
   const normalized = normalizeSearchText(structuredRedaction.text);
-  if (!/[A-Za-z0-9]/u.test(normalized)) return { text: "" };
+  if (!/[A-Za-z0-9]/u.test(normalized)) return { text: '' };
   return {
-    reason: structuredRedaction.redacted ? "secret" : undefined,
+    reason: structuredRedaction.redacted ? 'secret' : undefined,
     text: normalized,
   };
 }
 
 function coarseFilterReason(text: string): string | undefined {
-  if (hasBinaryShape(text) || hasLargeBase64Blob(text)) return "binary_or_base64";
-  if (isHugeRawLog(text)) return "huge_raw_log";
-  if (isUnboundedDiff(text)) return "unbounded_diff";
-  if (isRepeatedGeneratedFile(text)) return "repeated_generated_file";
+  if (hasBinaryShape(text) || hasLargeBase64Blob(text)) return 'binary_or_base64';
+  if (isHugeRawLog(text)) return 'huge_raw_log';
+  if (isUnboundedDiff(text)) return 'unbounded_diff';
+  if (isRepeatedGeneratedFile(text)) return 'repeated_generated_file';
   return undefined;
 }
 
@@ -328,7 +328,7 @@ function hasBinaryShape(text: string): boolean {
 }
 
 function hasLargeBase64Blob(text: string): boolean {
-  const compact = text.replaceAll(/\s+/gu, "");
+  const compact = text.replaceAll(/\s+/gu, '');
   const whitespaceRatio = (text.match(/\s/gu)?.length ?? 0) / Math.max(text.length, 1);
   if (compact.length > 300 && whitespaceRatio < 0.02 && /^[A-Za-z0-9+/=]+$/u.test(compact)) {
     return true;
@@ -366,7 +366,7 @@ function isRepeatedGeneratedFile(text: string): boolean {
   const lines = text
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => line !== "");
+    .filter((line) => line !== '');
   if (lines.length < 100) return false;
   return new Set(lines).size / lines.length < 0.25;
 }
@@ -385,7 +385,7 @@ function redactStructuredSecrets(text: string): { redacted: boolean; text: strin
   const keyPattern = String.raw`(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)`;
   const structuredKeyValue = new RegExp(
     String.raw`(["'])(${keyPattern})\1\s*:\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,\s}\]]+)`,
-    "giu",
+    'giu',
   );
   const redactedText = text.replace(structuredKeyValue, (_match, quote: string, key: string) => {
     redacted = true;
@@ -552,12 +552,12 @@ function buildSkippedSegmentMetadata(
     harnessTurnId: primaryTurn.harnessTurnId,
     normalizer: DERIVER,
     omittedSearchText: true,
-    omissionReason: "all_content_filtered_or_empty",
+    omissionReason: 'all_content_filtered_or_empty',
     role: primaryTurn.role,
     searchTextSpan: null,
     segmentRawSpan: null,
     segmentSourceRawSpan: primaryTurn.rawSpan,
-    segmentStatus: "skipped",
+    segmentStatus: 'skipped',
     segmentTurnId: primaryTurn.id,
     segmentTurnOrdinal: primaryTurn.ordinal,
     skippedPartCount: extraction.skippedPartCount,
@@ -590,7 +590,7 @@ function buildSkippedSegmentMetadata(
 
 function contentPartTypes(turn: SessionTurn): string[] {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts : [];
-  return parts.map((part) => readString(asRecord(part).type) ?? "unknown");
+  return parts.map((part) => readString(asRecord(part).type) ?? 'unknown');
 }
 
 function uniqueFilterReasons(filters: readonly FilterReason[]): string[] {
@@ -601,8 +601,8 @@ function segmentRawSpan(
   rawSpan: Record<string, unknown>,
   chunk: { charEnd: number; charStart: number; searchTextLength: number },
 ): JsonRecord | undefined {
-  const rawCharStart = typeof rawSpan.charStart === "number" ? rawSpan.charStart : undefined;
-  const rawCharEnd = typeof rawSpan.charEnd === "number" ? rawSpan.charEnd : undefined;
+  const rawCharStart = typeof rawSpan.charStart === 'number' ? rawSpan.charStart : undefined;
+  const rawCharEnd = typeof rawSpan.charEnd === 'number' ? rawSpan.charEnd : undefined;
   if (rawCharStart === undefined || rawCharEnd === undefined || rawCharEnd < rawCharStart) {
     return undefined;
   }
@@ -616,7 +616,7 @@ function segmentRawSpan(
     ...rawSpan,
     charEnd: Math.max(estimatedStart, estimatedEnd),
     charStart: estimatedStart,
-    estimate: "search_text_offset_within_turn_raw_span",
+    estimate: 'search_text_offset_within_turn_raw_span',
   };
 }
 
@@ -634,13 +634,13 @@ function buildToolGroupContexts(turns: readonly SessionTurn[]): Map<string, Tool
 
     for (const turn of toolStream) {
       const evidence = unambiguousToolEvidence(turn);
-      if (evidence?.partType === "tool_call") {
+      if (evidence?.partType === 'tool_call') {
         const entries = entriesByCallId.get(evidence.callId) ?? { calls: [], results: [] };
         entries.calls.push(turn);
         entriesByCallId.set(evidence.callId, entries);
       }
 
-      if (evidence?.partType === "tool_result") {
+      if (evidence?.partType === 'tool_result') {
         const entries = entriesByCallId.get(evidence.callId) ?? { calls: [], results: [] };
         entries.results.push(turn);
         entriesByCallId.set(evidence.callId, entries);
@@ -701,7 +701,7 @@ function isToolBearingTurn(turn: SessionTurn): boolean {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
   return parts.some((part) => {
     const type = readString(part.type);
-    return type === "tool_call" || type === "tool_result";
+    return type === 'tool_call' || type === 'tool_result';
   });
 }
 
@@ -709,7 +709,7 @@ function unambiguousToolEvidence(turn: SessionTurn): ToolEvidence | undefined {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
   const toolParts = parts.filter((entry) => {
     const type = readString(entry.type);
-    return type === "tool_call" || type === "tool_result";
+    return type === 'tool_call' || type === 'tool_result';
   });
   if (toolParts.length !== 1) return undefined;
 
@@ -717,7 +717,7 @@ function unambiguousToolEvidence(turn: SessionTurn): ToolEvidence | undefined {
   if (part === undefined) return undefined;
   const partType = readString(part.type);
   const callId = readString(part.callId);
-  if ((partType !== "tool_call" && partType !== "tool_result") || callId === undefined) {
+  if ((partType !== 'tool_call' && partType !== 'tool_result') || callId === undefined) {
     return undefined;
   }
   return { callId, partType };
@@ -752,7 +752,7 @@ function nullableEqual(left: unknown, right: unknown): boolean {
 }
 
 function buildSnippet(text: string): string {
-  const normalized = text.replaceAll(/\s+/gu, " ").trim();
+  const normalized = text.replaceAll(/\s+/gu, ' ').trim();
   return normalized.length <= SNIPPET_CHARS
     ? normalized
     : `${normalized.slice(0, SNIPPET_CHARS - 1)}...`;
@@ -760,29 +760,29 @@ function buildSnippet(text: string): string {
 
 function normalizeSearchText(text: string): string {
   return text
-    .replaceAll(/\r\n/gu, "\n")
-    .replaceAll(/[ \t]+/gu, " ")
-    .replaceAll(/\n{3,}/gu, "\n\n")
+    .replaceAll(/\r\n/gu, '\n')
+    .replaceAll(/[ \t]+/gu, ' ')
+    .replaceAll(/\n{3,}/gu, '\n\n')
     .trim();
 }
 
 function stringifyForSearch(value: unknown): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   try {
     return JSON.stringify(value);
   } catch {
-    return "";
+    return '';
   }
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as JsonRecord)
     : {};
 }
@@ -798,7 +798,7 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 function canonicalJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJson);
   if (value instanceof Date) return value.toISOString();
-  if (typeof value !== "object" || value === null) return value;
+  if (typeof value !== 'object' || value === null) return value;
   return Object.fromEntries(
     Object.entries(value as JsonRecord)
       .filter(([, entryValue]) => entryValue !== undefined)

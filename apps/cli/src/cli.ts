@@ -1,17 +1,17 @@
-import { runContextCommand } from "./context.js";
-import { runDoctor } from "./doctor.js";
-import { runHarnessCommand } from "./harness.js";
-import { runIngestCommand } from "./ingest.js";
-import { runInit } from "./init.js";
-import { runMcpCommand } from "./mcp.js";
-import { runRecallCommand } from "./recall.js";
-import { runServiceCommand } from "./service.js";
-import { runSessionsCommand } from "./sessions.js";
-import { runStartCommand } from "./start.js";
-import { errorLine, renderOptionsFromGlobals } from "./render.js";
+import { runContextCommand } from './context.js';
+import { runDoctor } from './doctor.js';
+import { runHarnessCommand } from './harness.js';
+import { runIngestCommand } from './ingest.js';
+import { runInit } from './init.js';
+import { runMcpCommand } from './mcp.js';
+import { runRecallCommand } from './recall.js';
+import { runServiceCommand } from './service.js';
+import { runSessionsCommand } from './sessions.js';
+import { runStartCommand } from './start.js';
+import { errorLine, renderOptionsFromGlobals } from './render.js';
 
-export type OutputFormat = "records" | "json" | "jsonl" | "ids";
-export type ColorMode = "auto" | "always" | "never";
+export type OutputFormat = 'records' | 'json' | 'jsonl' | 'ids';
+export type ColorMode = 'auto' | 'always' | 'never';
 
 export interface GlobalOptions {
   ascii: boolean;
@@ -33,56 +33,56 @@ export interface CommandDefinition {
 }
 
 export const COMMANDS = {
-  init: { description: "bind this project to a Saga Workspace" },
-  doctor: { description: "inspect local environment and Saga state" },
-  start: { description: "launch local Saga service and control plane" },
+  init: { description: 'bind this project to a Saga Workspace' },
+  doctor: { description: 'inspect local environment and Saga state' },
+  start: { description: 'launch local Saga service and control plane' },
   service: {
-    description: "run or manage the Saga runtime service",
-    subcommands: ["run", "install", "uninstall", "start", "stop", "restart", "status"],
+    description: 'run or manage the Saga runtime service',
+    subcommands: ['run', 'install', 'uninstall', 'start', 'stop', 'restart', 'status'],
   },
   harness: {
-    description: "install or inspect harness integrations",
-    subcommands: ["install", "uninstall", "status"],
+    description: 'install or inspect harness integrations',
+    subcommands: ['install', 'uninstall', 'status'],
   },
-  mcp: { description: "launch the stdio MCP adapter" },
-  context: { description: "preview compiled Active Context" },
+  mcp: { description: 'launch the stdio MCP adapter' },
+  context: { description: 'preview compiled Active Context' },
   ingest: {
-    description: "manually ingest source data for debugging",
-    subcommands: ["claude-hook", "codex-hook", "recent", "claims"],
+    description: 'manually ingest source data for debugging',
+    subcommands: ['claude-hook', 'codex-hook', 'recent', 'claims'],
   },
   recall: {
-    description: "search and expand captured session memory",
-    subcommands: ["search", "show"],
+    description: 'search and expand captured session memory',
+    subcommands: ['search', 'show'],
   },
   sessions: {
-    description: "import and inspect raw session records",
-    subcommands: ["delete", "import", "recent", "redact", "show"],
+    description: 'import and inspect raw session records',
+    subcommands: ['delete', 'import', 'recent', 'redact', 'show'],
   },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandName = keyof typeof COMMANDS;
 
-const OUTPUT_FORMATS = new Set<OutputFormat>(["records", "json", "jsonl", "ids"]);
-const COLOR_MODES = new Set<ColorMode>(["auto", "always", "never"]);
+const OUTPUT_FORMATS = new Set<OutputFormat>(['records', 'json', 'jsonl', 'ids']);
+const COLOR_MODES = new Set<ColorMode>(['auto', 'always', 'never']);
 
 const DEFAULT_OPTIONS: GlobalOptions = {
   ascii: false,
-  color: "auto",
-  format: "records",
+  color: 'auto',
+  format: 'records',
   help: false,
   version: false,
 };
 
 export class UsageError extends Error {
-  readonly code = "usage";
+  readonly code = 'usage';
 
   constructor(message: string) {
     super(message);
-    this.name = "UsageError";
+    this.name = 'UsageError';
   }
 }
 
-export const VERSION = "0.0.0";
+export const VERSION = '0.0.0';
 
 export interface CommandHandlers {
   doctor: typeof runDoctor;
@@ -112,7 +112,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
 
 const COMMAND_HELP = Object.entries(COMMANDS)
   .map(([name, command]) => `  ${name.padEnd(20)} ${command.description}`)
-  .join("\n");
+  .join('\n');
 
 export const HELP_TEXT = `saga — workspace memory for agentic work
 
@@ -147,11 +147,11 @@ export function validateCommand(parsed: ParsedCommand): void {
 
   const subcommand = parsed.args[0];
   if (subcommand === undefined) {
-    throw new UsageError(`${name}: missing subcommand (expected: ${subcommands.join(" | ")})`);
+    throw new UsageError(`${name}: missing subcommand (expected: ${subcommands.join(' | ')})`);
   }
   if (!subcommands.includes(subcommand)) {
     throw new UsageError(
-      `${name}: unknown subcommand ${subcommand} (expected: ${subcommands.join(" | ")})`,
+      `${name}: unknown subcommand ${subcommand} (expected: ${subcommands.join(' | ')})`,
     );
   }
 }
@@ -164,27 +164,27 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
     const arg = argv[index];
     if (arg === undefined) continue;
 
-    if (arg === "--") {
+    if (arg === '--') {
       positionals.push(...argv.slice(index + 1));
       break;
     }
 
-    if (arg === "-h" || arg === "--help") {
+    if (arg === '-h' || arg === '--help') {
       options.help = true;
       continue;
     }
 
-    if (arg === "--version") {
+    if (arg === '--version') {
       options.version = true;
       continue;
     }
 
-    if (arg === "--ascii") {
+    if (arg === '--ascii') {
       options.ascii = true;
       continue;
     }
 
-    if (arg === "-f" || arg === "--format") {
+    if (arg === '-f' || arg === '--format') {
       const value = argv[index + 1];
       if (value === undefined) throw new UsageError(`${arg} expects a value`);
       if (!OUTPUT_FORMATS.has(value as OutputFormat)) {
@@ -195,9 +195,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       continue;
     }
 
-    if (arg === "--color") {
+    if (arg === '--color') {
       const value = argv[index + 1];
-      if (value === undefined) throw new UsageError("--color expects a value");
+      if (value === undefined) throw new UsageError('--color expects a value');
       if (!COLOR_MODES.has(value as ColorMode)) {
         throw new UsageError(`unsupported color mode: ${value}`);
       }
@@ -206,7 +206,7 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       continue;
     }
 
-    if (arg.startsWith("-") && positionals.length === 0) {
+    if (arg.startsWith('-') && positionals.length === 0) {
       throw new UsageError(`unknown option: ${arg}`);
     }
 
@@ -240,44 +240,44 @@ export async function run(
 
     validateCommand(parsed);
     const renderOptions = renderOptionsFromGlobals(parsed.options);
-    if (parsed.command === "init") {
+    if (parsed.command === 'init') {
       write(await handlers.init(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "doctor") {
+    if (parsed.command === 'doctor') {
       write(await handlers.doctor(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "context") {
+    if (parsed.command === 'context') {
       write(await handlers.context(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "harness") {
+    if (parsed.command === 'harness') {
       write(await handlers.harness(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "ingest") {
+    if (parsed.command === 'ingest') {
       write(await handlers.ingest(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "mcp") {
+    if (parsed.command === 'mcp') {
       const output = await handlers.mcp(parsed.args, renderOptions, write);
-      if (output !== undefined && output !== "") write(output);
+      if (output !== undefined && output !== '') write(output);
       return 0;
     }
-    if (parsed.command === "recall") {
+    if (parsed.command === 'recall') {
       write(await handlers.recall(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "service") {
+    if (parsed.command === 'service') {
       write(await handlers.service(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "sessions") {
+    if (parsed.command === 'sessions') {
       write(await handlers.sessions(parsed.args, renderOptions));
       return 0;
     }
-    if (parsed.command === "start") {
+    if (parsed.command === 'start') {
       return handlers.start(parsed.args, renderOptions, write);
     }
 

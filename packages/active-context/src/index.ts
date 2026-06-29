@@ -1,4 +1,4 @@
-export const packageName = "@saga/active-context";
+export const packageName = '@saga/active-context';
 
 export interface ActiveContextClaimInput {
   claimKind: string;
@@ -62,7 +62,7 @@ export interface ActiveContextDocument {
 export function compileActiveContext(input: ActiveContextInput): ActiveContextDocument {
   const generatedAt = toIso(input.generatedAt ?? new Date());
   const claims = input.claims
-    .filter((claim) => claim.state !== "rejected" && claim.state !== "superseded")
+    .filter((claim) => claim.state !== 'rejected' && claim.state !== 'superseded')
     .slice()
     .sort(
       (left, right) =>
@@ -71,7 +71,7 @@ export function compileActiveContext(input: ActiveContextInput): ActiveContextDo
     .slice(0, 8);
   const recentEvents = input.recentEvents.slice(0, 5);
   const contextIndex = (input.contextIndex ?? [])
-    .filter((entry) => entry.includePolicy === "always")
+    .filter((entry) => entry.includePolicy === 'always')
     .slice()
     .sort(
       (left, right) => right.importance - left.importance || left.title.localeCompare(right.title),
@@ -83,54 +83,54 @@ export function compileActiveContext(input: ActiveContextInput): ActiveContextDo
     sections: [
       {
         lines: [
-          input.workspace.profile?.summary?.trim() === ""
-            ? "No workspace profile summary yet."
-            : (input.workspace.profile?.summary ?? "No workspace profile summary yet."),
+          input.workspace.profile?.summary?.trim() === ''
+            ? 'No workspace profile summary yet.'
+            : (input.workspace.profile?.summary ?? 'No workspace profile summary yet.'),
         ],
-        provenance: ["workspace_profile"],
-        title: "Workspace Profile",
+        provenance: ['workspace_profile'],
+        title: 'Workspace Profile',
       },
       {
         lines:
           claims.length === 0
-            ? ["No current claims projected yet."]
+            ? ['No current claims projected yet.']
             : claims.map(
                 (claim) =>
                   `${claimLabel(claim)} ${claim.claimText} (${Math.round(claim.confidence * 100).toString()}%)`,
               ),
         provenance: claims.map((claim) => `claim:${claim.claimKey}`),
-        title: "Current Claims",
+        title: 'Current Claims',
       },
       {
         lines:
           contextIndex.length === 0
-            ? ["No Context Index entries pinned yet."]
+            ? ['No Context Index entries pinned yet.']
             : contextIndex.map((entry) => {
                 const description =
                   entry.description === undefined || entry.description === null
-                    ? ""
+                    ? ''
                     : ` — ${entry.description}`;
                 return `${entry.title}: ${entry.sagaLink} (${entry.connector}:${entry.externalId})${description}`;
               }),
         provenance: contextIndex.map((entry) => `context_index:${entry.key}`),
-        title: "Context Index",
+        title: 'Context Index',
       },
       {
         lines:
           recentEvents.length === 0
-            ? ["No recent raw events captured yet."]
+            ? ['No recent raw events captured yet.']
             : recentEvents.map(
                 (event) =>
-                  `${toIso(event.occurredAt)} ${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, "")}${
+                  `${toIso(event.occurredAt)} ${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, '')}${
                     event.sessionId === undefined || event.sessionId === null
-                      ? ""
+                      ? ''
                       : ` session=${event.sessionId}`
                   }`,
               ),
         provenance: recentEvents.map(
           (event) => `raw_event:${event.eventType}:${toIso(event.occurredAt)}`,
         ),
-        title: "Recent Activity",
+        title: 'Recent Activity',
       },
     ],
     summary: `Active Context for ${input.workspace.handle}`,
@@ -144,24 +144,24 @@ export function compileActiveContext(input: ActiveContextInput): ActiveContextDo
 export function renderActiveContextMarkdown(document: ActiveContextDocument): string {
   return [
     `# ${document.summary}`,
-    "",
+    '',
     `Generated: ${document.generatedAt}`,
-    "",
+    '',
     ...document.sections.flatMap((section) => [
       `## ${section.title}`,
-      "",
+      '',
       ...section.lines.map((line) => `- ${line}`),
-      "",
+      '',
     ]),
   ]
-    .join("\n")
+    .join('\n')
     .trimEnd();
 }
 
 function claimLabel(claim: ActiveContextClaimInput): string {
-  if (claim.state === "supported") return "[supported]";
-  if (claim.state === "contradicted") return "[contradicted]";
-  if (claim.state === "decayed") return "[decayed]";
+  if (claim.state === 'supported') return '[supported]';
+  if (claim.state === 'contradicted') return '[contradicted]';
+  if (claim.state === 'decayed') return '[decayed]';
   return `[${claim.claimKind}]`;
 }
 

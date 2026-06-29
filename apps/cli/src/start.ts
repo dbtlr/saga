@@ -1,16 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { loadRuntimeConfig, type RuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { findProjectRoot } from "./init.js";
-import { formatCommandOutput } from "./output.js";
-import { recordBlock, type RenderOptions } from "./render.js";
-import { checkHealth } from "./service.js";
+import { spawn, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { loadRuntimeConfig, type RuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+import { findProjectRoot } from './init.js';
+import { formatCommandOutput } from './output.js';
+import { recordBlock, type RenderOptions } from './render.js';
+import { checkHealth } from './service.js';
 
 export interface SagaStartReport {
   controlPlaneUrl: string;
   healthUrl: string;
-  service: "already running" | "started";
+  service: 'already running' | 'started';
 }
 
 export interface StartDependencies {
@@ -32,7 +32,7 @@ export interface SpawnServiceInput {
   env: NodeJS.ProcessEnv;
 }
 
-const CONTROL_PLANE_HOST = "127.0.0.1";
+const CONTROL_PLANE_HOST = '127.0.0.1';
 const CONTROL_PLANE_PORT = 4767;
 const SERVICE_HEALTH_ATTEMPTS = 25;
 const SERVICE_HEALTH_INTERVAL_MS = 200;
@@ -40,7 +40,7 @@ const SERVICE_HEALTH_INTERVAL_MS = 200;
 export class StartInterrupted extends Error {
   constructor(readonly exitCode: number) {
     super(`start interrupted with exit code ${exitCode.toString()}`);
-    this.name = "StartInterrupted";
+    this.name = 'StartInterrupted';
   }
 }
 
@@ -51,7 +51,7 @@ export async function runStartCommand(
   dependencies: StartDependencies = {},
 ): Promise<number> {
   if (args.length > 0) {
-    throw new Error("start does not accept arguments yet");
+    throw new Error('start does not accept arguments yet');
   }
 
   const cwd = dependencies.cwd ?? process.cwd();
@@ -61,7 +61,7 @@ export async function runStartCommand(
   const healthUrl = `http://${config.service.host}:${config.service.port.toString()}/health`;
   const check = dependencies.checkHealth ?? checkHealth;
   const observedHealth = await check(healthUrl);
-  const serviceChild = observedHealth.startsWith("ok ")
+  const serviceChild = observedHealth.startsWith('ok ')
     ? undefined
     : (dependencies.spawnService ?? spawnServiceRun)({
         cwd: projectRoot,
@@ -82,7 +82,7 @@ export async function runStartCommand(
     const report: SagaStartReport = {
       controlPlaneUrl: `http://${CONTROL_PLANE_HOST}:${CONTROL_PLANE_PORT.toString()}`,
       healthUrl,
-      service: serviceChild === undefined ? "already running" : "started",
+      service: serviceChild === undefined ? 'already running' : 'started',
     };
 
     write(renderStartReport(report, options));
@@ -102,13 +102,13 @@ export async function runStartCommand(
 export function renderStartReport(report: SagaStartReport, options: RenderOptions): string {
   return formatCommandOutput(
     {
-      id: "start",
+      id: 'start',
       records: recordBlock(
-        "Saga start",
+        'Saga start',
         [
-          { label: "service", value: report.service },
-          { label: "health", value: report.healthUrl },
-          { label: "control", value: report.controlPlaneUrl },
+          { label: 'service', value: report.service },
+          { label: 'health', value: report.healthUrl },
+          { label: 'control', value: report.controlPlaneUrl },
         ],
         options,
       ),
@@ -123,7 +123,7 @@ export function spawnControlPlaneDev(input: SpawnControlPlaneInput): Promise<num
   const child = spawn(command.command, command.args, {
     cwd: input.cwd,
     env: input.env,
-    stdio: "inherit",
+    stdio: 'inherit',
   });
 
   return waitForForegroundChild(child, input.cleanupChildren ?? []);
@@ -134,34 +134,34 @@ export function spawnServiceRun(input: SpawnServiceInput): ChildProcess {
   return spawn(command.command, command.args, {
     cwd: input.cwd,
     env: input.env,
-    stdio: "ignore",
+    stdio: 'ignore',
   });
 }
 
 export function controlPlaneCommand(env: NodeJS.ProcessEnv): { args: string[]; command: string } {
   const command = pnpmCommand(env);
   return {
-    args: [...command.args, "--filter", "@saga/control-plane", "dev"],
+    args: [...command.args, '--filter', '@saga/control-plane', 'dev'],
     command: command.command,
   };
 }
 
 export function cliServiceCommand(): { args: string[]; command: string } {
-  const tsxCli = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
-  const main = fileURLToPath(new URL("./main.ts", import.meta.url));
+  const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
+  const main = fileURLToPath(new URL('./main.ts', import.meta.url));
   return {
-    args: [tsxCli, main, "service", "run"],
+    args: [tsxCli, main, 'service', 'run'],
     command: process.execPath,
   };
 }
 
 function pnpmCommand(env: NodeJS.ProcessEnv): { args: string[]; command: string } {
   const npmExecPath = env.npm_execpath;
-  if (npmExecPath === undefined || npmExecPath.trim() === "") {
-    return { args: [], command: "pnpm" };
+  if (npmExecPath === undefined || npmExecPath.trim() === '') {
+    return { args: [], command: 'pnpm' };
   }
 
-  if (npmExecPath.endsWith(".cjs") || npmExecPath.endsWith(".js")) {
+  if (npmExecPath.endsWith('.cjs') || npmExecPath.endsWith('.js')) {
     return { args: [npmExecPath], command: process.execPath };
   }
 
@@ -179,13 +179,13 @@ export function installSignalCleanup(children: readonly ChildProcess[]): {
       signalChild(child, signal);
     }
   };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   return {
     getInterruptedSignal: () => interruptedSignal,
     remove: () => {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
     },
   };
 }
@@ -225,7 +225,7 @@ async function pollServiceHealth(input: {
     }
 
     if (input.child.exitCode !== null || input.child.signalCode !== null) {
-      if (input.child.signalCode === "SIGINT" || input.child.signalCode === "SIGTERM") {
+      if (input.child.signalCode === 'SIGINT' || input.child.signalCode === 'SIGTERM') {
         throw new StartInterrupted(exitCodeForSignal(input.child.signalCode));
       }
       throw new Error(
@@ -234,7 +234,7 @@ async function pollServiceHealth(input: {
     }
 
     const health = await input.checkHealth(input.healthUrl);
-    if (health.startsWith("ok ")) return;
+    if (health.startsWith('ok ')) return;
     await delay(SERVICE_HEALTH_INTERVAL_MS);
   }
 
@@ -249,8 +249,8 @@ export function waitForForegroundChild(
     let settled = false;
     const children = [foreground, ...cleanupChildren];
     const removeSignalHandlers = () => {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
     };
     const settle = (code: number) => {
       if (settled) return;
@@ -268,14 +268,14 @@ export function waitForForegroundChild(
       for (const child of children) {
         signalChild(child, signal);
       }
-      void waitForChildExit(foreground).then(() => settle(signal === "SIGINT" ? 130 : 143));
+      void waitForChildExit(foreground).then(() => settle(signal === 'SIGINT' ? 130 : 143));
     };
 
-    process.once("SIGINT", onSignal);
-    process.once("SIGTERM", onSignal);
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
 
-    foreground.once("error", fail);
-    foreground.once("exit", (code, signal) => {
+    foreground.once('error', fail);
+    foreground.once('exit', (code, signal) => {
       if (signal !== null) {
         settle(exitCodeForSignal(signal));
         return;
@@ -292,10 +292,10 @@ function waitForChildExit(child: ChildProcess): Promise<void> {
 
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
-      signalChild(child, "SIGKILL");
+      signalChild(child, 'SIGKILL');
       resolve();
     }, 1_000);
-    child.once("exit", () => {
+    child.once('exit', () => {
       clearTimeout(timeout);
       resolve();
     });
@@ -309,14 +309,14 @@ function terminateChild(child: ChildProcess): Promise<void> {
 
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
-      signalChild(child, "SIGKILL");
+      signalChild(child, 'SIGKILL');
       resolve();
     }, 1_000);
-    child.once("exit", () => {
+    child.once('exit', () => {
       clearTimeout(timeout);
       resolve();
     });
-    signalChild(child, "SIGTERM");
+    signalChild(child, 'SIGTERM');
   });
 }
 
@@ -326,8 +326,8 @@ function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 function exitCodeForSignal(signal: NodeJS.Signals): number {
-  if (signal === "SIGINT") return 130;
-  if (signal === "SIGTERM") return 143;
+  if (signal === 'SIGINT') return 130;
+  if (signal === 'SIGTERM') return 143;
   return 128;
 }
 

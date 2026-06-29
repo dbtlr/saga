@@ -1,21 +1,21 @@
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   makeDatabase,
   registerWorkspace,
   runMigrationsSafely,
   type RegisterWorkspaceResult,
-} from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { formatCommandOutput } from "./output.js";
-import { recordBlock, type RenderOptions } from "./render.js";
+} from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+import { formatCommandOutput } from './output.js';
+import { recordBlock, type RenderOptions } from './render.js';
 
-export const BINDING_FILE_NAME = ".saga.local.json";
+export const BINDING_FILE_NAME = '.saga.local.json';
 
 export interface InitResult {
   bindingPath: string;
@@ -23,16 +23,16 @@ export interface InitResult {
   registration: RegisterWorkspaceResult;
 }
 
-type WorkspaceHarnessTarget = "codex" | "claude";
+type WorkspaceHarnessTarget = 'codex' | 'claude';
 type WorkspaceHarnessSourceUri =
-  | "claude://local"
-  | "codex://local"
+  | 'claude://local'
+  | 'codex://local'
   | `claude://host/${string}`
   | `codex://host/${string}`;
 
 interface WorkspaceHarnessBinding {
   hookCommand: string;
-  hookTrust: "requires-review";
+  hookTrust: 'requires-review';
   hooksPath: string;
   installedAt: string;
   sourceBindingId: string;
@@ -53,7 +53,7 @@ export interface WorkspaceBindingFile {
   };
   schemaVersion: 1;
   service: {
-    databaseUrl: "env:DATABASE_URL";
+    databaseUrl: 'env:DATABASE_URL';
   };
   sourceBinding: {
     id: string;
@@ -65,18 +65,18 @@ export interface WorkspaceBindingFile {
 }
 
 export type WorkspaceBindingFileWithHost = WorkspaceBindingFile & {
-  host: NonNullable<WorkspaceBindingFile["host"]>;
+  host: NonNullable<WorkspaceBindingFile['host']>;
 };
 
 export async function runInit(args: readonly string[], options: RenderOptions): Promise<string> {
   const result = await initProject({ handle: args[0] });
   const records = recordBlock(
-    "Workspace bound",
+    'Workspace bound',
     [
-      { label: "workspace", value: result.registration.workspace.handle },
-      { label: "workspace id", value: result.registration.workspace.id },
-      { label: "source", value: result.registration.sourceBinding.sourceUri },
-      { label: "binding", value: result.bindingPath },
+      { label: 'workspace', value: result.registration.workspace.handle },
+      { label: 'workspace id', value: result.registration.workspace.id },
+      { label: 'source', value: result.registration.sourceBinding.sourceUri },
+      { label: 'binding', value: result.bindingPath },
     ],
     options,
   );
@@ -119,7 +119,7 @@ export async function initProject(input: {
             path: projectRoot,
           },
           displayName: basename(projectRoot),
-          type: "git",
+          type: 'git',
           uri: sourceUri,
         },
       }),
@@ -132,7 +132,7 @@ export async function initProject(input: {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: "env:DATABASE_URL",
+        databaseUrl: 'env:DATABASE_URL',
       },
       sourceBinding: {
         id: registration.sourceBinding.id,
@@ -155,10 +155,10 @@ export async function initProject(input: {
 
 export function findProjectRoot(cwd: string): string {
   try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
     return resolve(cwd);
@@ -167,12 +167,12 @@ export function findProjectRoot(cwd: string): string {
 
 export function readGitRemote(projectRoot: string): string | undefined {
   try {
-    const remote = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+    const remote = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
       cwd: projectRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    return remote === "" ? undefined : remote;
+    return remote === '' ? undefined : remote;
   } catch {
     return undefined;
   }
@@ -182,12 +182,12 @@ export function normalizeHandle(value: string): string {
   const normalized = value
     .trim()
     .toLowerCase()
-    .replaceAll(/[^a-z0-9-]+/g, "-")
-    .replaceAll(/^-+|-+$/g, "");
-  return normalized === "" ? "workspace" : normalized;
+    .replaceAll(/[^a-z0-9-]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '');
+  return normalized === '' ? 'workspace' : normalized;
 }
 
-export function createLocalHostBinding(): WorkspaceBindingFileWithHost["host"] {
+export function createLocalHostBinding(): WorkspaceBindingFileWithHost['host'] {
   return {
     generatedAt: new Date().toISOString(),
     id: randomUUID(),
@@ -200,8 +200,8 @@ export function ensureLocalHostBinding(
 ): WorkspaceBindingFileWithHost {
   if (
     binding.host !== undefined &&
-    typeof binding.host.id === "string" &&
-    binding.host.id.trim() !== ""
+    typeof binding.host.id === 'string' &&
+    binding.host.id.trim() !== ''
   ) {
     return binding as WorkspaceBindingFileWithHost;
   }
@@ -225,5 +225,5 @@ export function bindingPathFor(projectRoot: string): string {
 export function readBindingFile(projectRoot: string): WorkspaceBindingFile | undefined {
   const bindingPath = bindingPathFor(projectRoot);
   if (!existsSync(bindingPath)) return undefined;
-  return JSON.parse(readFileSync(bindingPath, "utf8")) as WorkspaceBindingFile;
+  return JSON.parse(readFileSync(bindingPath, 'utf8')) as WorkspaceBindingFile;
 }

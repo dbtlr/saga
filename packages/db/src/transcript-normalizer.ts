@@ -1,5 +1,5 @@
-export type NormalizedTurnRole = "assistant" | "subagent" | "system" | "tool" | "user";
-export type NormalizedActorKind = "agent" | "harness" | "host_user" | "subagent" | "tool";
+export type NormalizedTurnRole = 'assistant' | 'subagent' | 'system' | 'tool' | 'user';
+export type NormalizedActorKind = 'agent' | 'harness' | 'host_user' | 'subagent' | 'tool';
 
 export interface TranscriptImportHints {
   cwd?: string | undefined;
@@ -13,7 +13,7 @@ export interface TranscriptNormalization {
     endedAt?: Date | undefined;
     metadata: Record<string, unknown>;
     startedAt?: Date | undefined;
-    status?: "active" | "settled" | undefined;
+    status?: 'active' | 'settled' | undefined;
   };
   metadata: Record<string, unknown>;
   session: {
@@ -22,7 +22,7 @@ export interface TranscriptNormalization {
     metadata: Record<string, unknown>;
     model?: string | undefined;
     startedAt?: Date | undefined;
-    status?: "active" | "completed" | undefined;
+    status?: 'active' | 'completed' | undefined;
     title?: string | undefined;
   };
   turns: NormalizedTranscriptTurn[];

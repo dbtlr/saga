@@ -1,19 +1,19 @@
-import { describe, expect, test } from "vitest";
-import { scoreClaimConfidence } from "./claim.js";
+import { describe, expect, test } from 'vitest';
+import { scoreClaimConfidence } from './claim.js';
 
-describe("scoreClaimConfidence", () => {
-  test("raises confidence for repeated, recent, explicit trusted human support", () => {
+describe('scoreClaimConfidence', () => {
+  test('raises confidence for repeated, recent, explicit trusted human support', () => {
     const result = scoreClaimConfidence({
-      actorId: "control-plane",
+      actorId: 'control-plane',
       baseConfidence: 0.72,
-      claimKind: "decision",
-      eventType: "supported",
-      now: "2026-06-20T00:00:00.000Z",
-      occurredAt: "2026-06-19T20:00:00.000Z",
+      claimKind: 'decision',
+      eventType: 'supported',
+      now: '2026-06-20T00:00:00.000Z',
+      occurredAt: '2026-06-19T20:00:00.000Z',
       priorContradictions: 0,
       priorEvents: 2,
-      sourceType: "saga",
-      trustLevel: "trusted",
+      sourceType: 'saga',
+      trustLevel: 'trusted',
     });
 
     expect(result.score).toBe(1);
@@ -28,18 +28,18 @@ describe("scoreClaimConfidence", () => {
     });
   });
 
-  test("lowers confidence for contradicted old claims with prior contradictions", () => {
+  test('lowers confidence for contradicted old claims with prior contradictions', () => {
     const result = scoreClaimConfidence({
-      actorId: "codex",
+      actorId: 'codex',
       baseConfidence: 0.72,
-      claimKind: "decision",
-      eventType: "contradicted",
-      now: "2026-06-20T00:00:00.000Z",
-      occurredAt: "2025-12-01T00:00:00.000Z",
+      claimKind: 'decision',
+      eventType: 'contradicted',
+      now: '2026-06-20T00:00:00.000Z',
+      occurredAt: '2025-12-01T00:00:00.000Z',
       priorContradictions: 2,
       priorEvents: 3,
-      sourceType: "codex",
-      trustLevel: "raw",
+      sourceType: 'codex',
+      trustLevel: 'raw',
     });
 
     expect(result.score).toBe(0.4);

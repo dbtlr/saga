@@ -1,13 +1,13 @@
-import type { EmbeddingProviderBoundary } from "@saga/runtime";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
+import type { EmbeddingProviderBoundary } from '@saga/runtime';
+import { Data, Effect } from 'effect';
+import type { DatabaseError, DatabaseService } from './database.js';
+import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
   redactAgentFacingSessionValue,
   redactAgentFacingSessionText,
-} from "./session-output-redaction.js";
+} from './session-output-redaction.js';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -210,7 +210,7 @@ export interface RecallSegmentPointer {
   tokenStart: number | null;
 }
 
-export class RecallSearchError extends Data.TaggedError("RecallSearchError")<{
+export class RecallSearchError extends Data.TaggedError('RecallSearchError')<{
   readonly message: string;
 }> {}
 
@@ -968,7 +968,7 @@ export function expandRecallContext(
       `;
 
       if (rows.length === 0) {
-        throw new RecallSearchError({ message: "recall segment was not found in workspace" });
+        throw new RecallSearchError({ message: 'recall segment was not found in workspace' });
       }
 
       return mapContextRows(rows, {
@@ -1035,7 +1035,7 @@ function mapContextRows(
 ): RecallContextExpansion {
   const first = rows[0];
   if (first === undefined) {
-    throw new RecallSearchError({ message: "recall segment was not found in workspace" });
+    throw new RecallSearchError({ message: 'recall segment was not found in workspace' });
   }
 
   const turns = new Map<string, RecallExpandedTurn>();
@@ -1068,8 +1068,8 @@ function mapContextRows(
         id: row.expanded_segment_id,
         metadata: redactAgentFacingJsonRecord(row.expanded_segment_metadata ?? {}),
         ordinal: row.expanded_segment_ordinal,
-        searchText: redactAgentFacingSessionText(row.expanded_segment_search_text ?? ""),
-        segmentKind: row.expanded_segment_kind ?? "turn",
+        searchText: redactAgentFacingSessionText(row.expanded_segment_search_text ?? ''),
+        segmentKind: row.expanded_segment_kind ?? 'turn',
         snippet:
           row.expanded_segment_snippet === null
             ? null
@@ -1127,7 +1127,7 @@ function mapSearchRowToMatch(row: RecallSearchRow): RecallSegmentMatch {
           },
     segment: mapSegment(row),
     session: mapSession(row),
-    snippet: redactAgentFacingSessionText(row.match_snippet ?? row.segment_snippet ?? ""),
+    snippet: redactAgentFacingSessionText(row.match_snippet ?? row.segment_snippet ?? ''),
     sourceBinding: mapSourceBinding(row),
     turn: mapTurn(row),
   };
@@ -1230,8 +1230,8 @@ function mapSegment(row: RecallSearchRow): RecallSegmentPointer {
 
 function normalizeQuery(query: string): string {
   const normalized = query.trim();
-  if (normalized === "") {
-    throw new RecallSearchError({ message: "recall query is required" });
+  if (normalized === '') {
+    throw new RecallSearchError({ message: 'recall query is required' });
   }
   return normalized;
 }
@@ -1239,7 +1239,7 @@ function normalizeQuery(query: string): string {
 function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
-    throw new RecallSearchError({ message: "recall limit must be a positive integer" });
+    throw new RecallSearchError({ message: 'recall limit must be a positive integer' });
   }
   return Math.min(limit, MAX_LIMIT);
 }
@@ -1250,9 +1250,9 @@ function normalizeContextWindow(input: RecallContextExpansionInput): {
   windowTurns: number;
 } {
   const baseWindow =
-    normalizeWindowTurns(input.windowTurns, "window") ?? DEFAULT_CONTEXT_WINDOW_TURNS;
-  const beforeTurns = normalizeWindowTurns(input.beforeTurns, "before") ?? baseWindow;
-  const afterTurns = normalizeWindowTurns(input.afterTurns, "after") ?? baseWindow;
+    normalizeWindowTurns(input.windowTurns, 'window') ?? DEFAULT_CONTEXT_WINDOW_TURNS;
+  const beforeTurns = normalizeWindowTurns(input.beforeTurns, 'before') ?? baseWindow;
+  const afterTurns = normalizeWindowTurns(input.afterTurns, 'after') ?? baseWindow;
   return {
     afterTurns,
     beforeTurns,
@@ -1302,7 +1302,7 @@ async function resolveRecallQueryEmbedding(
 function normalizeTrigramScore(score: number | undefined): number {
   if (score === undefined) return DEFAULT_TRIGRAM_THRESHOLD;
   if (!Number.isFinite(score) || score < 0 || score > 1) {
-    throw new RecallSearchError({ message: "minimum trigram score must be between 0 and 1" });
+    throw new RecallSearchError({ message: 'minimum trigram score must be between 0 and 1' });
   }
   return score;
 }
@@ -1310,7 +1310,7 @@ function normalizeTrigramScore(score: number | undefined): number {
 function normalizeVectorCandidateLimit(limit: number | undefined, searchLimit: number): number {
   if (limit === undefined) return Math.min(Math.max(searchLimit * 5, searchLimit), 500);
   if (!Number.isInteger(limit) || limit < 1) {
-    throw new RecallSearchError({ message: "vector candidate limit must be a positive integer" });
+    throw new RecallSearchError({ message: 'vector candidate limit must be a positive integer' });
   }
   return Math.min(limit, 1_000);
 }
@@ -1318,7 +1318,7 @@ function normalizeVectorCandidateLimit(limit: number | undefined, searchLimit: n
 function validateRecallEmbeddingVector(vector: readonly number[], dimensions: number): void {
   if (!Number.isInteger(dimensions) || dimensions < 1) {
     throw new RecallSearchError({
-      message: "query embedding dimensions must be a positive integer",
+      message: 'query embedding dimensions must be a positive integer',
     });
   }
   if (vector.length !== dimensions) {
@@ -1327,16 +1327,16 @@ function validateRecallEmbeddingVector(vector: readonly number[], dimensions: nu
     });
   }
   if (!vector.every(Number.isFinite)) {
-    throw new RecallSearchError({ message: "query embedding contains a non-finite value" });
+    throw new RecallSearchError({ message: 'query embedding contains a non-finite value' });
   }
 }
 
 function toVectorLiteral(vector: readonly number[]): string {
-  return `[${vector.map((value) => value.toString()).join(",")}]`;
+  return `[${vector.map((value) => value.toString()).join(',')}]`;
 }
 
 function toNumber(value: number | string): number {
-  return typeof value === "number" ? value : Number(value);
+  return typeof value === 'number' ? value : Number(value);
 }
 
 function errorMessage(cause: unknown): string {

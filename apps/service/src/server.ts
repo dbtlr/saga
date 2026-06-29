@@ -1,8 +1,8 @@
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { assertMigrationsCurrent, makeDatabase } from "@saga/db";
-import type { RuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
+import type { RuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
 
 export interface SagaServiceHandle {
   close: () => Promise<void>;
@@ -13,7 +13,7 @@ export interface SagaServiceHandle {
 
 export interface HealthPayload {
   ok: true;
-  service: "saga";
+  service: 'saga';
   uptimeSeconds: number;
 }
 
@@ -28,19 +28,19 @@ export async function startSagaService(
   await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
   const server = createServer((request, response) => {
-    if (request.url === "/health") {
+    if (request.url === '/health') {
       const payload: HealthPayload = {
         ok: true,
-        service: "saga",
+        service: 'saga',
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
       };
-      response.writeHead(200, { "content-type": "application/json" });
+      response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
       return;
     }
 
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: "not found" }));
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
   });
 
   await listen(server, config.service.port, config.service.host);
@@ -68,9 +68,9 @@ export async function validateDatabaseReady(config: RuntimeConfig): Promise<void
 
 function listen(server: Server, port: number, host: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.once("error", reject);
+    server.once('error', reject);
     server.listen(port, host, () => {
-      server.off("error", reject);
+      server.off('error', reject);
       resolve();
     });
   });

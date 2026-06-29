@@ -1,15 +1,15 @@
-export const packageName = "@saga/mcp";
+export const packageName = '@saga/mcp';
 
 export interface JsonRpcRequest {
   id?: number | string | null | undefined;
-  jsonrpc: "2.0";
+  jsonrpc: '2.0';
   method: string;
   params?: unknown;
 }
 
 export interface JsonRpcResponse {
   id: number | string | null;
-  jsonrpc: "2.0";
+  jsonrpc: '2.0';
   error?: {
     code: number;
     message: string;
@@ -98,127 +98,127 @@ export interface SagaMcpHandlers {
 
 export const SAGA_MCP_TOOLS = [
   {
-    description: "Return the compiled Saga Active Context for the current workspace.",
+    description: 'Return the compiled Saga Active Context for the current workspace.',
     inputSchema: {
       additionalProperties: false,
       properties: {},
-      type: "object",
+      type: 'object',
     },
-    name: "get_active_context",
+    name: 'get_active_context',
   },
   {
     description:
-      "Search projected Saga memory, recent activity, and compiled Active Context for the current workspace.",
+      'Search projected Saga memory, recent activity, and compiled Active Context for the current workspace.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         limit: {
           minimum: 1,
-          type: "number",
+          type: 'number',
         },
         query: {
-          type: "string",
+          type: 'string',
         },
       },
-      required: ["query"],
-      type: "object",
+      required: ['query'],
+      type: 'object',
     },
-    name: "search_memory",
+    name: 'search_memory',
   },
   {
-    description: "Resolve a Saga Link into the configured connector target and provenance.",
+    description: 'Resolve a Saga Link into the configured connector target and provenance.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         link: {
-          type: "string",
+          type: 'string',
         },
       },
-      required: ["link"],
-      type: "object",
+      required: ['link'],
+      type: 'object',
     },
-    name: "resolve_saga_link",
+    name: 'resolve_saga_link',
   },
   {
     description:
-      "List recent captured Saga sessions for the current workspace with session, raw-record, host-user, harness, model, and provenance metadata.",
+      'List recent captured Saga sessions for the current workspace with session, raw-record, host-user, harness, model, and provenance metadata.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         activeOnly: {
-          type: "boolean",
+          type: 'boolean',
         },
         harness: {
-          type: "string",
+          type: 'string',
         },
         limit: {
           minimum: 1,
-          type: "number",
+          type: 'number',
         },
       },
-      type: "object",
+      type: 'object',
     },
-    name: "list_recent_sessions",
+    name: 'list_recent_sessions',
   },
   {
     description:
-      "Search captured Saga session segments for the current workspace using lexical recall and return snippets, scores, pointers, and provenance.",
+      'Search captured Saga session segments for the current workspace using lexical recall and return snippets, scores, pointers, and provenance.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         activityIntervalId: {
-          type: "string",
+          type: 'string',
         },
         limit: {
           minimum: 1,
-          type: "number",
+          type: 'number',
         },
         minTrigramScore: {
           maximum: 1,
           minimum: 0,
-          type: "number",
+          type: 'number',
         },
         query: {
-          type: "string",
+          type: 'string',
         },
         rawSessionRecordId: {
-          type: "string",
+          type: 'string',
         },
         sessionId: {
-          type: "string",
+          type: 'string',
         },
       },
-      required: ["query"],
-      type: "object",
+      required: ['query'],
+      type: 'object',
     },
-    name: "search_sessions",
+    name: 'search_sessions',
   },
   {
     description:
-      "Expand session context around a recalled segment for the current workspace, including surrounding turns, segment text, pointers, and provenance.",
+      'Expand session context around a recalled segment for the current workspace, including surrounding turns, segment text, pointers, and provenance.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         afterTurns: {
           minimum: 0,
-          type: "number",
+          type: 'number',
         },
         beforeTurns: {
           minimum: 0,
-          type: "number",
+          type: 'number',
         },
         segmentId: {
-          type: "string",
+          type: 'string',
         },
         windowTurns: {
           minimum: 0,
-          type: "number",
+          type: 'number',
         },
       },
-      required: ["segmentId"],
-      type: "object",
+      required: ['segmentId'],
+      type: 'object',
     },
-    name: "get_session_context",
+    name: 'get_session_context',
   },
 ] as const;
 
@@ -236,26 +236,26 @@ export async function handleSagaMcpRequest(
   if (request.id === undefined) return undefined;
 
   try {
-    if (request.method === "initialize") {
+    if (request.method === 'initialize') {
       return response(request.id, {
         capabilities: {
           tools: {},
         },
-        protocolVersion: "2025-06-18",
+        protocolVersion: '2025-06-18',
         serverInfo: {
-          name: "saga",
-          version: "0.0.0",
+          name: 'saga',
+          version: '0.0.0',
         },
       });
     }
 
-    if (request.method === "tools/list") {
+    if (request.method === 'tools/list') {
       return response(request.id, {
         tools: SAGA_MCP_TOOLS,
       });
     }
 
-    if (request.method === "tools/call") {
+    if (request.method === 'tools/call') {
       return response(
         request.id,
         await callSagaMcpTool(handlers, parseToolCallParams(request.params)),
@@ -279,32 +279,32 @@ export async function callSagaMcpTool(
     name: string;
   },
 ) {
-  if (input.name === "get_active_context") {
+  if (input.name === 'get_active_context') {
     const result = await handlers.getActiveContext();
     return toolResult(result.markdown, result.document);
   }
 
-  if (input.name === "search_memory") {
+  if (input.name === 'search_memory') {
     const result = await handlers.searchMemory(parseSearchMemoryInput(input.arguments));
     return toolResult(result.markdown, { matches: result.matches });
   }
 
-  if (input.name === "resolve_saga_link") {
+  if (input.name === 'resolve_saga_link') {
     const result = await handlers.resolveSagaLink(parseResolveSagaLinkInput(input.arguments));
     return toolResult(result.markdown, result.resolved);
   }
 
-  if (input.name === "list_recent_sessions") {
+  if (input.name === 'list_recent_sessions') {
     const result = await handlers.listRecentSessions(parseListRecentSessionsInput(input.arguments));
     return toolResult(result.markdown, { sessions: result.sessions });
   }
 
-  if (input.name === "search_sessions") {
+  if (input.name === 'search_sessions') {
     const result = await handlers.searchSessions(parseSearchSessionsInput(input.arguments));
     return toolResult(result.markdown, result.recall);
   }
 
-  if (input.name === "get_session_context") {
+  if (input.name === 'get_session_context') {
     const result = await handlers.getSessionContext(parseGetSessionContextInput(input.arguments));
     return toolResult(result.markdown, result.context);
   }
@@ -317,7 +317,7 @@ function toolResult(text: string, structuredContent: unknown) {
     content: [
       {
         text,
-        type: "text",
+        type: 'text',
       },
     ],
     structuredContent,
@@ -328,8 +328,8 @@ function parseToolCallParams(params: unknown): {
   arguments?: Record<string, unknown> | undefined;
   name: string;
 } {
-  if (!isRecord(params) || typeof params.name !== "string") {
-    throw new Error("tools/call params must include a tool name");
+  if (!isRecord(params) || typeof params.name !== 'string') {
+    throw new Error('tools/call params must include a tool name');
   }
   return {
     arguments: isRecord(params.arguments) ? params.arguments : undefined,
@@ -339,13 +339,13 @@ function parseToolCallParams(params: unknown): {
 
 function parseSearchMemoryInput(input: Record<string, unknown> | undefined): SearchMemoryInput {
   const query = input?.query;
-  if (typeof query !== "string" || query.trim() === "") {
-    throw new Error("search_memory requires a non-empty query");
+  if (typeof query !== 'string' || query.trim() === '') {
+    throw new Error('search_memory requires a non-empty query');
   }
 
   const limit = input?.limit;
-  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1)) {
-    throw new Error("search_memory limit must be a positive integer");
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) {
+    throw new Error('search_memory limit must be a positive integer');
   }
 
   return {
@@ -358,8 +358,8 @@ function parseResolveSagaLinkInput(
   input: Record<string, unknown> | undefined,
 ): ResolveSagaLinkInput {
   const link = input?.link;
-  if (typeof link !== "string" || link.trim() === "") {
-    throw new Error("resolve_saga_link requires a non-empty link");
+  if (typeof link !== 'string' || link.trim() === '') {
+    throw new Error('resolve_saga_link requires a non-empty link');
   }
 
   return { link };
@@ -368,11 +368,11 @@ function parseResolveSagaLinkInput(
 function parseListRecentSessionsInput(
   input: Record<string, unknown> | undefined,
 ): ListRecentSessionsInput {
-  const limit = parseOptionalPositiveInteger(input?.limit, "list_recent_sessions limit");
-  const harness = parseOptionalString(input?.harness, "list_recent_sessions harness");
+  const limit = parseOptionalPositiveInteger(input?.limit, 'list_recent_sessions limit');
+  const harness = parseOptionalString(input?.harness, 'list_recent_sessions harness');
   const activeOnly = input?.activeOnly;
-  if (activeOnly !== undefined && typeof activeOnly !== "boolean") {
-    throw new Error("list_recent_sessions activeOnly must be a boolean");
+  if (activeOnly !== undefined && typeof activeOnly !== 'boolean') {
+    throw new Error('list_recent_sessions activeOnly must be a boolean');
   }
 
   return {
@@ -384,34 +384,34 @@ function parseListRecentSessionsInput(
 
 function parseSearchSessionsInput(input: Record<string, unknown> | undefined): SearchSessionsInput {
   const query = input?.query;
-  if (typeof query !== "string" || query.trim() === "") {
-    throw new Error("search_sessions requires a non-empty query");
+  if (typeof query !== 'string' || query.trim() === '') {
+    throw new Error('search_sessions requires a non-empty query');
   }
 
   const minTrigramScore = input?.minTrigramScore;
   if (
     minTrigramScore !== undefined &&
-    (typeof minTrigramScore !== "number" ||
+    (typeof minTrigramScore !== 'number' ||
       !Number.isFinite(minTrigramScore) ||
       minTrigramScore < 0 ||
       minTrigramScore > 1)
   ) {
-    throw new Error("search_sessions minTrigramScore must be between 0 and 1");
+    throw new Error('search_sessions minTrigramScore must be between 0 and 1');
   }
 
   return {
     activityIntervalId: parseOptionalString(
       input?.activityIntervalId,
-      "search_sessions activityIntervalId",
+      'search_sessions activityIntervalId',
     ),
-    limit: parseOptionalPositiveInteger(input?.limit, "search_sessions limit"),
+    limit: parseOptionalPositiveInteger(input?.limit, 'search_sessions limit'),
     minTrigramScore,
     query,
     rawSessionRecordId: parseOptionalString(
       input?.rawSessionRecordId,
-      "search_sessions rawSessionRecordId",
+      'search_sessions rawSessionRecordId',
     ),
-    sessionId: parseOptionalString(input?.sessionId, "search_sessions sessionId"),
+    sessionId: parseOptionalString(input?.sessionId, 'search_sessions sessionId'),
   };
 }
 
@@ -419,30 +419,30 @@ function parseGetSessionContextInput(
   input: Record<string, unknown> | undefined,
 ): GetSessionContextInput {
   const segmentId = input?.segmentId;
-  if (typeof segmentId !== "string" || segmentId.trim() === "") {
-    throw new Error("get_session_context requires a non-empty segmentId");
+  if (typeof segmentId !== 'string' || segmentId.trim() === '') {
+    throw new Error('get_session_context requires a non-empty segmentId');
   }
 
   return {
     afterTurns: parseOptionalNonNegativeInteger(
       input?.afterTurns,
-      "get_session_context afterTurns",
+      'get_session_context afterTurns',
     ),
     beforeTurns: parseOptionalNonNegativeInteger(
       input?.beforeTurns,
-      "get_session_context beforeTurns",
+      'get_session_context beforeTurns',
     ),
     segmentId,
     windowTurns: parseOptionalNonNegativeInteger(
       input?.windowTurns,
-      "get_session_context windowTurns",
+      'get_session_context windowTurns',
     ),
   };
 }
 
 function parseOptionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
@@ -450,7 +450,7 @@ function parseOptionalString(value: unknown, label: string): string | undefined 
 
 function parseOptionalPositiveInteger(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive integer`);
   }
   return value;
@@ -458,7 +458,7 @@ function parseOptionalPositiveInteger(value: unknown, label: string): number | u
 
 function parseOptionalNonNegativeInteger(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`);
   }
   return value;
@@ -467,7 +467,7 @@ function parseOptionalNonNegativeInteger(value: unknown, label: string): number 
 function response(id: number | string | null, result: unknown): JsonRpcResponse {
   return {
     id,
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
     result,
   };
 }
@@ -479,10 +479,10 @@ function errorResponse(id: number | string | null, code: number, message: string
       message,
     },
     id,
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
   };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

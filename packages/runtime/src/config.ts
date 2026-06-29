@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { parse as parseDotenv } from "dotenv";
-import { Context, Data, Effect, Layer } from "effect";
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parse as parseDotenv } from 'dotenv';
+import { Context, Data, Effect, Layer } from 'effect';
 
-export type SagaEnvironment = "development" | "test" | "production";
-export type LogLevel = "debug" | "info" | "warn" | "error";
+export type SagaEnvironment = 'development' | 'test' | 'production';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface RuntimeConfig {
   databaseUrl: string | undefined;
@@ -37,7 +37,7 @@ export interface ConfigIssue {
   message: string;
 }
 
-export class ConfigError extends Data.TaggedError("ConfigError")<{
+export class ConfigError extends Data.TaggedError('ConfigError')<{
   readonly issues: readonly ConfigIssue[];
 }> {}
 
@@ -47,7 +47,7 @@ export interface LoadRuntimeConfigOptions {
   envFiles?: readonly string[];
 }
 
-export const RuntimeConfigTag = Context.GenericTag<RuntimeConfig>("@saga/runtime/RuntimeConfig");
+export const RuntimeConfigTag = Context.GenericTag<RuntimeConfig>('@saga/runtime/RuntimeConfig');
 
 export function RuntimeConfigLive(
   options: LoadRuntimeConfigOptions = {},
@@ -55,12 +55,12 @@ export function RuntimeConfigLive(
   return Layer.effect(RuntimeConfigTag, loadRuntimeConfig(options));
 }
 
-const DEFAULT_ENV_FILES = [".env", ".env.local"] as const;
-const DEFAULT_ENVIRONMENT: SagaEnvironment = "development";
-const DEFAULT_LOG_LEVEL: LogLevel = "info";
-const DEFAULT_SERVICE_HOST = "127.0.0.1";
+const DEFAULT_ENV_FILES = ['.env', '.env.local'] as const;
+const DEFAULT_ENVIRONMENT: SagaEnvironment = 'development';
+const DEFAULT_LOG_LEVEL: LogLevel = 'info';
+const DEFAULT_SERVICE_HOST = '127.0.0.1';
 const DEFAULT_SERVICE_PORT = 4766;
-const REDACTED = "<redacted>";
+const REDACTED = '<redacted>';
 
 export function loadLocalEnv(
   cwd = process.cwd(),
@@ -99,29 +99,29 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
   const issues: ConfigIssue[] = [];
   const environment = parseEnum(
     env.SAGA_ENV,
-    ["development", "test", "production"],
+    ['development', 'test', 'production'],
     DEFAULT_ENVIRONMENT,
-    "SAGA_ENV",
+    'SAGA_ENV',
     issues,
   );
   const logLevel = parseEnum(
     env.SAGA_LOG_LEVEL,
-    ["debug", "info", "warn", "error"],
+    ['debug', 'info', 'warn', 'error'],
     DEFAULT_LOG_LEVEL,
-    "SAGA_LOG_LEVEL",
+    'SAGA_LOG_LEVEL',
     issues,
   );
 
   const config: RuntimeConfig = {
-    databaseUrl: readSecretValue(env, "DATABASE_URL", issues),
+    databaseUrl: readSecretValue(env, 'DATABASE_URL', issues),
     environment,
     logLevel,
     service: {
       host: optionalString(env.SAGA_SERVICE_HOST) ?? DEFAULT_SERVICE_HOST,
-      port: parsePort(env.SAGA_SERVICE_PORT, "SAGA_SERVICE_PORT", issues),
+      port: parsePort(env.SAGA_SERVICE_PORT, 'SAGA_SERVICE_PORT', issues),
     },
     secrets: {
-      openaiApiKey: readSecretValue(env, "OPENAI_API_KEY", issues),
+      openaiApiKey: readSecretValue(env, 'OPENAI_API_KEY', issues),
     },
   };
 
@@ -149,12 +149,12 @@ function mergeEnv(
 
 function optionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed === "" ? undefined : trimmed;
+  return trimmed === '' ? undefined : trimmed;
 }
 
 function readSecretValue(
   env: NodeJS.ProcessEnv,
-  key: "DATABASE_URL" | "OPENAI_API_KEY",
+  key: 'DATABASE_URL' | 'OPENAI_API_KEY',
   issues: ConfigIssue[],
 ): string | undefined {
   const directValue = optionalString(env[key]);
@@ -164,7 +164,7 @@ function readSecretValue(
   if (filePath === undefined) return undefined;
 
   try {
-    const value = optionalString(readFileSync(filePath, "utf8"));
+    const value = optionalString(readFileSync(filePath, 'utf8'));
     if (value !== undefined) return value;
     issues.push({
       key: `${key}_FILE`,
@@ -195,7 +195,7 @@ function parseEnum<const Value extends string>(
 
   issues.push({
     key,
-    message: `expected one of ${allowed.join(", ")}`,
+    message: `expected one of ${allowed.join(', ')}`,
   });
   return fallback;
 }
@@ -211,7 +211,7 @@ function parsePort(value: string | undefined, key: string, issues: ConfigIssue[]
 
   issues.push({
     key,
-    message: "expected an integer from 1 to 65535",
+    message: 'expected an integer from 1 to 65535',
   });
   return DEFAULT_SERVICE_PORT;
 }

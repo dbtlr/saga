@@ -4,7 +4,7 @@ import type {
   NormalizedTurnRole,
   TranscriptImportHints,
   TranscriptNormalization,
-} from "./transcript-normalizer.js";
+} from './transcript-normalizer.js';
 
 interface ParsedJsonRecord {
   byteEnd: number;
@@ -45,7 +45,7 @@ export type ClaudeTranscriptImportHints = TranscriptImportHints;
 export type ClaudeTranscriptNormalization = TranscriptNormalization;
 
 export function extractClaudeTranscriptImportHints(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   fallbackHarnessSessionId?: string | undefined;
   rawContent: string;
   sourceLocator?: string | undefined;
@@ -73,7 +73,7 @@ export function extractClaudeTranscriptImportHints(input: {
 }
 
 export function normalizeClaudeTranscript(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   fallbackHarnessSessionId?: string | undefined;
   fallbackModel?: string | undefined;
   rawContent: string;
@@ -114,7 +114,7 @@ export function normalizeClaudeTranscript(input: {
     ...turn,
     metadata: compactRecord({
       ...turn.metadata,
-      normalizer: "claude-transcript-v1",
+      normalizer: 'claude-transcript-v1',
     }),
   }));
 
@@ -128,7 +128,7 @@ export function normalizeClaudeTranscript(input: {
       metadata: compactRecord({
         cwd: state.cwd,
         lifecycleEvents: state.lifecycleEvents,
-        normalizer: "claude-transcript-v1",
+        normalizer: 'claude-transcript-v1',
         parseErrors: state.parseErrors,
       }),
       startedAt,
@@ -137,7 +137,7 @@ export function normalizeClaudeTranscript(input: {
       cwd: state.cwd,
       detectedHarnessSessionId: state.sessionId,
       lifecycleEvents: state.lifecycleEvents,
-      normalizer: "claude-transcript-v1",
+      normalizer: 'claude-transcript-v1',
       parentHarnessSessionId: isSubagentTranscript ? sourceHarnessSessionId : undefined,
       parseErrors: state.parseErrors,
       sourceLocator: input.sourceLocator,
@@ -150,11 +150,11 @@ export function normalizeClaudeTranscript(input: {
       metadata: compactRecord({
         cwd: state.cwd,
         detectedHarnessSessionId: state.sessionId,
-        normalizer: "claude-transcript-v1",
+        normalizer: 'claude-transcript-v1',
         parentHarnessSessionId: isSubagentTranscript ? sourceHarnessSessionId : undefined,
         subagentEvidence,
         turnCount: sortedTurns.length,
-        version: firstString(records, "version"),
+        version: firstString(records, 'version'),
       }),
       model: state.model,
       startedAt,
@@ -172,7 +172,7 @@ function recordToTurns(
   const type = readString(value.type);
   state.cwd = readString(value.cwd) ?? state.cwd;
 
-  if (type === "ai-title") {
+  if (type === 'ai-title') {
     state.title = readString(value.aiTitle) ?? state.title;
     state.lifecycleEvents.push(lifecycleEvent(record));
     return [];
@@ -183,18 +183,18 @@ function recordToTurns(
     return [];
   }
 
-  if (type === "system") {
+  if (type === 'system') {
     const text = readString(value.content);
     if (text === undefined) return [];
     return [
       {
-        actorKind: "harness",
-        actorLabel: readString(value.subtype) ?? "claude",
-        contentParts: [{ text, type: "text" }],
-        harnessTurnId: stableHarnessTurnId(record, "system"),
+        actorKind: 'harness',
+        actorLabel: readString(value.subtype) ?? 'claude',
+        contentParts: [{ text, type: 'text' }],
+        harnessTurnId: stableHarnessTurnId(record, 'system'),
         metadata: baseTurnMetadata(record),
         rawSpan: rawSpan(record),
-        role: "system",
+        role: 'system',
         searchText: text,
         startedAt: parseOptionalDate(readString(value.timestamp)),
       },
@@ -214,7 +214,7 @@ function recordToTurns(
 
   const timestamp = parseOptionalDate(readString(value.timestamp));
   const metadata = baseTurnMetadata(record);
-  if (role === "user" && contentParts.some((part) => part.type === "tool_result")) {
+  if (role === 'user' && contentParts.some((part) => part.type === 'tool_result')) {
     return contentParts.map((part, index) => {
       const callId = readString(part.callId);
       const name = callId === undefined ? undefined : state.toolUseIdToName.get(callId);
@@ -223,52 +223,52 @@ function recordToTurns(
         name,
       });
       return {
-        actorKind: "tool",
+        actorKind: 'tool',
         actorLabel: name,
         contentParts: [contentPart],
         harnessTurnId:
-          callId === undefined ? stableHarnessTurnId(record, "tool", index) : `${callId}:result`,
+          callId === undefined ? stableHarnessTurnId(record, 'tool', index) : `${callId}:result`,
         metadata,
         rawSpan: rawSpan(record),
-        role: "tool",
+        role: 'tool',
         searchText: contentPartsToSearchText([contentPart]),
         startedAt: timestamp,
       };
     });
   }
 
-  if (role === "assistant") {
+  if (role === 'assistant') {
     const assistantTurns: NormalizedTranscriptTurn[] = [];
-    const nonToolParts = contentParts.filter((part) => part.type !== "tool_call");
+    const nonToolParts = contentParts.filter((part) => part.type !== 'tool_call');
     if (nonToolParts.length > 0) {
       assistantTurns.push({
-        actorKind: "agent",
-        actorLabel: "claude",
+        actorKind: 'agent',
+        actorLabel: 'claude',
         contentParts: nonToolParts,
-        harnessTurnId: stableHarnessTurnId(record, "assistant"),
+        harnessTurnId: stableHarnessTurnId(record, 'assistant'),
         metadata,
         model: messageModel ?? state.model,
         rawSpan: rawSpan(record),
-        role: "assistant",
+        role: 'assistant',
         searchText: contentPartsToSearchText(nonToolParts),
         startedAt: timestamp,
       });
     }
 
     for (const [partIndex, part] of contentParts.entries()) {
-      if (part.type !== "tool_call") continue;
+      if (part.type !== 'tool_call') continue;
       const callId = readString(part.callId);
-      const name = readString(part.name) ?? "tool";
+      const name = readString(part.name) ?? 'tool';
       if (callId !== undefined) state.toolUseIdToName.set(callId, name);
       assistantTurns.push({
         actorKind: actorKindForToolCall(name),
         actorLabel: name,
         contentParts: [part],
-        harnessTurnId: callId ?? stableHarnessTurnId(record, "tool", partIndex),
+        harnessTurnId: callId ?? stableHarnessTurnId(record, 'tool', partIndex),
         metadata,
         model: messageModel ?? state.model,
         rawSpan: rawSpan(record),
-        role: actorKindForToolCall(name) === "subagent" ? "subagent" : "tool",
+        role: actorKindForToolCall(name) === 'subagent' ? 'subagent' : 'tool',
         searchText: contentPartsToSearchText([part]),
         startedAt: timestamp,
       });
@@ -277,7 +277,7 @@ function recordToTurns(
   }
 
   const searchText = contentPartsToSearchText(contentParts);
-  if (searchText === "") return [];
+  if (searchText === '') return [];
   return [
     {
       actorKind: actorKindForRole(role),
@@ -304,7 +304,7 @@ function legacyTopLevelTurn(
   return [
     {
       actorKind: actorKindForRole(role),
-      contentParts: [{ text, type: "text" }],
+      contentParts: [{ text, type: 'text' }],
       harnessTurnId: stableHarnessTurnId(record, role),
       metadata: baseTurnMetadata(record),
       rawSpan: rawSpan(record),
@@ -316,16 +316,16 @@ function legacyTopLevelTurn(
 }
 
 function parseClaudeJsonRecords(input: {
-  contentType: "json" | "jsonl" | "text";
+  contentType: 'json' | 'jsonl' | 'text';
   rawContent: string;
 }): ParsedJsonRecords {
-  if (input.contentType === "json") {
+  if (input.contentType === 'json') {
     const parsed = tryParseJson(input.rawContent);
     if (!parsed.ok) {
       return {
         parseErrors: [
           compactRecord({
-            byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+            byteEnd: Buffer.byteLength(input.rawContent, 'utf8'),
             byteStart: 0,
             charEnd: input.rawContent.length,
             charStart: 0,
@@ -345,7 +345,7 @@ function parseClaudeJsonRecords(input: {
           ? []
           : [
               {
-                byteEnd: Buffer.byteLength(input.rawContent, "utf8"),
+                byteEnd: Buffer.byteLength(input.rawContent, 'utf8'),
                 byteStart: 0,
                 charEnd: input.rawContent.length,
                 charStart: 0,
@@ -359,7 +359,7 @@ function parseClaudeJsonRecords(input: {
     };
   }
 
-  if (input.contentType !== "jsonl") return { parseErrors: [], records: [] };
+  if (input.contentType !== 'jsonl') return { parseErrors: [], records: [] };
 
   const records: ParsedJsonRecord[] = [];
   const parseErrors: Record<string, unknown>[] = [];
@@ -367,13 +367,13 @@ function parseClaudeJsonRecords(input: {
   let charOffset = 0;
   let lineNumber = 0;
   while (charOffset < input.rawContent.length) {
-    const newlineIndex = input.rawContent.indexOf("\n", charOffset);
+    const newlineIndex = input.rawContent.indexOf('\n', charOffset);
     const lineEndWithNewline = newlineIndex === -1 ? input.rawContent.length : newlineIndex + 1;
     const rawLineWithNewline = input.rawContent.slice(charOffset, lineEndWithNewline);
-    const rawLine = rawLineWithNewline.replace(/\r?\n$/u, "");
+    const rawLine = rawLineWithNewline.replace(/\r?\n$/u, '');
     const trimmed = rawLine.trim();
-    if (trimmed !== "") {
-      const byteLength = Buffer.byteLength(rawLine, "utf8");
+    if (trimmed !== '') {
+      const byteLength = Buffer.byteLength(rawLine, 'utf8');
       const parsed = tryParseJson(trimmed);
       if (!parsed.ok) {
         parseErrors.push(
@@ -403,7 +403,7 @@ function parseClaudeJsonRecords(input: {
         }
       }
     }
-    byteOffset += Buffer.byteLength(rawLineWithNewline, "utf8");
+    byteOffset += Buffer.byteLength(rawLineWithNewline, 'utf8');
     charOffset = lineEndWithNewline;
     lineNumber += 1;
   }
@@ -412,25 +412,25 @@ function parseClaudeJsonRecords(input: {
 }
 
 function normalizeMessageContent(value: unknown): Record<string, unknown>[] {
-  if (typeof value === "string") return [{ text: value, type: "text" }];
+  if (typeof value === 'string') return [{ text: value, type: 'text' }];
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => normalizeContentPart(entry));
 }
 
 function normalizeContentPart(entry: unknown): Record<string, unknown>[] {
-  if (typeof entry === "string") return [{ text: entry, type: "text" }];
+  if (typeof entry === 'string') return [{ text: entry, type: 'text' }];
   const record = asRecord(entry);
   if (record === undefined) return [];
   const type = readString(record.type);
-  if (type === "text") {
+  if (type === 'text') {
     const text = readString(record.text);
-    return text === undefined ? [] : [{ text, type: "text" }];
+    return text === undefined ? [] : [{ text, type: 'text' }];
   }
-  if (type === "thinking") {
+  if (type === 'thinking') {
     const text = readString(record.thinking);
-    return text === undefined ? [] : [{ text, type: "thinking" }];
+    return text === undefined ? [] : [{ text, type: 'thinking' }];
   }
-  if (type === "tool_use") {
+  if (type === 'tool_use') {
     return [
       compactRecord({
         attributionMcpServer: readString(record.attributionMcpServer),
@@ -441,29 +441,29 @@ function normalizeContentPart(entry: unknown): Record<string, unknown>[] {
         name: readString(record.name),
         toolUseID: readString(record.toolUseID),
         toolUseResult: record.toolUseResult,
-        type: "tool_call",
+        type: 'tool_call',
       }),
     ];
   }
-  if (type === "tool_result") {
+  if (type === 'tool_result') {
     return [
       compactRecord({
         attributionMcpServer: readString(record.attributionMcpServer),
         attributionMcpTool: readString(record.attributionMcpTool),
         callId: readString(record.tool_use_id),
-        isError: typeof record.is_error === "boolean" ? record.is_error : undefined,
+        isError: typeof record.is_error === 'boolean' ? record.is_error : undefined,
         output: normalizeToolResultContent(record.content),
         toolUseID: readString(record.toolUseID),
         toolUseResult: record.toolUseResult,
-        type: "tool_result",
+        type: 'tool_result',
       }),
     ];
   }
-  return [compactRecord({ ...record, type: type ?? "unknown" })];
+  return [compactRecord({ ...record, type: type ?? 'unknown' })];
 }
 
 function normalizeToolResultContent(value: unknown): unknown {
-  if (typeof value === "string") return value;
+  if (typeof value === 'string') return value;
   if (!Array.isArray(value)) return value;
   return value.map((entry) => {
     const record = asRecord(entry);
@@ -478,41 +478,41 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
   return parts
     .map((part) => {
       const type = readString(part.type);
-      if (type === "tool_call") {
-        return [readString(part.name), stringifyForSearch(part.input)].filter(Boolean).join(" ");
+      if (type === 'tool_call') {
+        return [readString(part.name), stringifyForSearch(part.input)].filter(Boolean).join(' ');
       }
-      if (type === "tool_result") {
-        return [readString(part.name), stringifyForSearch(part.output)].filter(Boolean).join(" ");
+      if (type === 'tool_result') {
+        return [readString(part.name), stringifyForSearch(part.output)].filter(Boolean).join(' ');
       }
-      if (typeof part.text === "string") return part.text;
-      if (typeof part.output === "string") return part.output;
+      if (typeof part.text === 'string') return part.text;
+      if (typeof part.output === 'string') return part.output;
       return stringifyForSearch(part);
     })
-    .filter((part) => part.trim() !== "")
-    .join("\n")
+    .filter((part) => part.trim() !== '')
+    .join('\n')
     .trim();
 }
 
 function isLifecycleRecord(value: Record<string, unknown>): boolean {
   const type = readString(value.type);
   if (
-    type === "ai-title" ||
-    type === "attachment" ||
-    type === "bridge-session" ||
-    type === "file-history-snapshot" ||
-    type === "last-prompt" ||
-    type === "mode" ||
-    type === "permission-mode" ||
-    type === "pr-link" ||
-    type === "system-stop-hook" ||
-    type === "worktree-state" ||
-    type === "queue-operation"
+    type === 'ai-title' ||
+    type === 'attachment' ||
+    type === 'bridge-session' ||
+    type === 'file-history-snapshot' ||
+    type === 'last-prompt' ||
+    type === 'mode' ||
+    type === 'permission-mode' ||
+    type === 'pr-link' ||
+    type === 'system-stop-hook' ||
+    type === 'worktree-state' ||
+    type === 'queue-operation'
   ) {
     return true;
   }
 
-  if (type === "system" && readString(value.content) !== undefined) return false;
-  if (type === "system") return true;
+  if (type === 'system' && readString(value.content) !== undefined) return false;
+  if (type === 'system') return true;
   if (asRecord(value.message) !== undefined) return false;
   if (readString(value.text) !== undefined || readString(value.content) !== undefined) return false;
   return type !== undefined && normalizeRole(type) === undefined;
@@ -531,8 +531,8 @@ function collectSubagentEvidence(
   sourceLocator: string | undefined,
 ): Record<string, unknown>[] {
   const evidence: Record<string, unknown>[] = [];
-  if (sourceLocator?.includes("/subagents/") === true) {
-    evidence.push({ sourceLocatorKind: "claude-subagent-transcript", sourceLocator });
+  if (sourceLocator?.includes('/subagents/') === true) {
+    evidence.push({ sourceLocatorKind: 'claude-subagent-transcript', sourceLocator });
   }
 
   for (const record of records) {
@@ -541,7 +541,7 @@ function collectSubagentEvidence(
     const content = Array.isArray(message?.content) ? message.content : [];
     const agentTool = content.find((part) => {
       const partRecord = asRecord(part);
-      return partRecord?.type === "tool_use" && partRecord.name === "Agent";
+      return partRecord?.type === 'tool_use' && partRecord.name === 'Agent';
     });
     const hasEvidence =
       value.isSidechain === true ||
@@ -617,7 +617,7 @@ function stableHarnessTurnId(record: ParsedJsonRecord, role: string, partIndex?:
     readString(asRecord(record.value.message)?.id) ??
     readString(record.value.promptId) ??
     `record:${record.lineNumber.toString()}`;
-  return [stableId, role, partIndex?.toString()].filter(Boolean).join(":");
+  return [stableId, role, partIndex?.toString()].filter(Boolean).join(':');
 }
 
 function readSessionId(value: Record<string, unknown> | undefined): string | undefined {
@@ -651,7 +651,7 @@ function deriveClaudeHarnessSessionId(
   const sourceSessionId = deriveSourceHarnessSessionId(records, fallbackHarnessSessionId);
   if (!isClaudeSubagentTranscript(records, sourceLocator)) return sourceSessionId;
 
-  const agentId = firstString(records, "agentId");
+  const agentId = firstString(records, 'agentId');
   if (sourceSessionId !== undefined && agentId !== undefined) {
     return `${sourceSessionId}:subagent:${agentId}`;
   }
@@ -667,29 +667,29 @@ function isClaudeSubagentTranscript(
   records: readonly ParsedJsonRecord[],
   sourceLocator?: string,
 ): boolean {
-  if (sourceLocator?.replaceAll(/\\/g, "/").includes("/subagents/") === true) return true;
+  if (sourceLocator?.replaceAll(/\\/g, '/').includes('/subagents/') === true) return true;
   return records.some(
     (record) => record.value.isSidechain === true || readString(record.value.agentId) !== undefined,
   );
 }
 
 function normalizeRole(value: string | undefined): NormalizedTurnRole | undefined {
-  if (value === "assistant" || value === "tool" || value === "user") return value;
-  if (value === "developer" || value === "system") return "system";
-  if (value === "subagent") return "subagent";
+  if (value === 'assistant' || value === 'tool' || value === 'user') return value;
+  if (value === 'developer' || value === 'system') return 'system';
+  if (value === 'subagent') return 'subagent';
   return undefined;
 }
 
 function actorKindForRole(role: NormalizedTurnRole): NormalizedActorKind {
-  if (role === "assistant") return "agent";
-  if (role === "subagent") return "subagent";
-  if (role === "tool") return "tool";
-  if (role === "user") return "host_user";
-  return "harness";
+  if (role === 'assistant') return 'agent';
+  if (role === 'subagent') return 'subagent';
+  if (role === 'tool') return 'tool';
+  if (role === 'user') return 'host_user';
+  return 'harness';
 }
 
-function actorKindForToolCall(name: string): "subagent" | "tool" {
-  return name === "Agent" ? "subagent" : "tool";
+function actorKindForToolCall(name: string): 'subagent' | 'tool' {
+  return name === 'Agent' ? 'subagent' : 'tool';
 }
 
 function parseOptionalDate(value: string | undefined): Date | undefined {
@@ -713,8 +713,8 @@ function isDate(value: Date | undefined): value is Date {
 }
 
 function stringifyForSearch(value: unknown): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
   return JSON.stringify(value);
 }
 
@@ -733,11 +733,11 @@ function errorMessage(cause: unknown): string {
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }

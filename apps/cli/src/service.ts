@@ -1,37 +1,37 @@
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { promisify } from "node:util";
-import { startSagaService } from "@saga/service";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { findProjectRoot } from "./init.js";
-import { formatCommandOutput } from "./output.js";
-import { recordBlock, type RenderOptions } from "./render.js";
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+import { startSagaService } from '@saga/service';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+import { findProjectRoot } from './init.js';
+import { formatCommandOutput } from './output.js';
+import { recordBlock, type RenderOptions } from './render.js';
 
 const execFileAsync = promisify(execFile);
-const LAUNCHD_LABEL = "com.saga.service";
+const LAUNCHD_LABEL = 'com.saga.service';
 
 export type ServiceSupervisorState =
-  | "installed"
-  | "not installed"
-  | "running"
-  | "stopped"
-  | "unavailable";
+  | 'installed'
+  | 'not installed'
+  | 'running'
+  | 'stopped'
+  | 'unavailable';
 
 export interface ServiceStatusReport {
   config: string;
   health: string;
   healthUrl: string;
   logs: string;
-  process: "running" | "not running";
+  process: 'running' | 'not running';
   supervisor: ServiceSupervisorState;
   supervisorDetail: string;
 }
 
 export interface ServiceLifecycleReport {
-  action: "install" | "restart" | "start" | "stop" | "uninstall";
+  action: 'install' | 'restart' | 'start' | 'stop' | 'uninstall';
   detail: string;
   label: string;
   plistPath: string;
@@ -41,7 +41,7 @@ export interface ServiceLifecycleReport {
 export interface ServiceSupervisorInspection {
   detail: string;
   logs: string;
-  process: "not running" | "running";
+  process: 'not running' | 'running';
   state: ServiceSupervisorState;
 }
 
@@ -71,45 +71,45 @@ export async function runServiceCommand(
   dependencies: ServiceCommandDependencies = {},
 ): Promise<string> {
   const subcommand = args[0];
-  if (subcommand === "run") {
+  if (subcommand === 'run') {
     return runService(options);
   }
-  if (subcommand === "status") {
+  if (subcommand === 'status') {
     return serviceStatus(options, dependencies);
   }
   if (
-    subcommand === "install" ||
-    subcommand === "uninstall" ||
-    subcommand === "start" ||
-    subcommand === "stop" ||
-    subcommand === "restart"
+    subcommand === 'install' ||
+    subcommand === 'uninstall' ||
+    subcommand === 'start' ||
+    subcommand === 'stop' ||
+    subcommand === 'restart'
   ) {
     return runServiceLifecycle(subcommand, options, dependencies);
   }
 
-  throw new Error(`service ${subcommand ?? ""} is not implemented yet`.trim());
+  throw new Error(`service ${subcommand ?? ''} is not implemented yet`.trim());
 }
 
 export async function runService(options: RenderOptions): Promise<string> {
   const config = await Effect.runPromise(loadRuntimeConfig());
   const service = await startSagaService(config);
-  process.once("SIGINT", () => void service.close().then(() => process.exit(0)));
-  process.once("SIGTERM", () => void service.close().then(() => process.exit(0)));
+  process.once('SIGINT', () => void service.close().then(() => process.exit(0)));
+  process.once('SIGTERM', () => void service.close().then(() => process.exit(0)));
 
   return formatCommandOutput(
     {
-      id: "service",
+      id: 'service',
       records: recordBlock(
-        "Saga service",
+        'Saga service',
         [
-          { label: "health", value: `${service.url}/health` },
-          { label: "mode", value: "foreground" },
+          { label: 'health', value: `${service.url}/health` },
+          { label: 'mode', value: 'foreground' },
         ],
         options,
       ),
       value: {
         healthUrl: `${service.url}/health`,
-        mode: "foreground",
+        mode: 'foreground',
       },
     },
     options.format,
@@ -124,7 +124,7 @@ export async function serviceStatus(
 
   return formatCommandOutput(
     {
-      id: "service",
+      id: 'service',
       records: renderServiceStatus(report, options),
       value: report,
     },
@@ -145,7 +145,7 @@ export async function inspectServiceStatus(
     healthUrl,
     logs: supervisor.logs,
     process:
-      supervisor.process === "running" || health.startsWith("ok ") ? "running" : "not running",
+      supervisor.process === 'running' || health.startsWith('ok ') ? 'running' : 'not running',
     supervisor: supervisor.state,
     supervisorDetail: supervisor.detail,
   };
@@ -153,21 +153,21 @@ export async function inspectServiceStatus(
 
 export function renderServiceStatus(report: ServiceStatusReport, options: RenderOptions): string {
   return recordBlock(
-    "Saga service status",
+    'Saga service status',
     [
-      { label: "process", value: report.process },
-      { label: "config", value: report.config },
-      { label: "logs", value: report.logs },
-      { label: "health", value: report.health },
-      { label: "supervisor", value: report.supervisor },
-      { label: "detail", value: report.supervisorDetail },
+      { label: 'process', value: report.process },
+      { label: 'config', value: report.config },
+      { label: 'logs', value: report.logs },
+      { label: 'health', value: report.health },
+      { label: 'supervisor', value: report.supervisor },
+      { label: 'detail', value: report.supervisorDetail },
     ],
     options,
   );
 }
 
 async function runServiceLifecycle(
-  action: ServiceLifecycleReport["action"],
+  action: ServiceLifecycleReport['action'],
   options: RenderOptions,
   dependencies: ServiceCommandDependencies,
 ): Promise<string> {
@@ -176,7 +176,7 @@ async function runServiceLifecycle(
   const report = await observeLifecycleHealth(supervisorReport, dependencies);
   return formatCommandOutput(
     {
-      id: "service",
+      id: 'service',
       records: renderServiceLifecycle(report, options),
       value: report,
     },
@@ -198,25 +198,25 @@ async function observeLifecycleHealth(
     dependencies.healthProbe,
   );
 
-  if (health.startsWith("ok ")) {
+  if (health.startsWith('ok ')) {
     return {
       ...report,
       detail: `${report.detail}; health ${health}`,
-      state: "running",
+      state: 'running',
     };
   }
 
   return {
     ...report,
     detail: `${report.detail}; health check failed: ${health}`,
-    state: "stopped",
+    state: 'stopped',
   };
 }
 
 function shouldVerifyHealth(report: ServiceLifecycleReport): boolean {
   return (
-    (report.action === "install" || report.action === "restart" || report.action === "start") &&
-    (report.state === "installed" || report.state === "running")
+    (report.action === 'install' || report.action === 'restart' || report.action === 'start') &&
+    (report.state === 'installed' || report.state === 'running')
   );
 }
 
@@ -227,10 +227,10 @@ export function renderServiceLifecycle(
   return recordBlock(
     `Saga service ${report.action}`,
     [
-      { label: "state", value: report.state },
-      { label: "label", value: report.label },
-      { label: "plist", value: report.plistPath },
-      { label: "detail", value: report.detail },
+      { label: 'state', value: report.state },
+      { label: 'label', value: report.label },
+      { label: 'plist', value: report.plistPath },
+      { label: 'detail', value: report.detail },
     ],
     options,
   );
@@ -239,80 +239,80 @@ export function renderServiceLifecycle(
 export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSupervisor {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const paths = launchdPaths();
-  const unavailable = (action: ServiceLifecycleReport["action"]) =>
+  const unavailable = (action: ServiceLifecycleReport['action']) =>
     launchdUnavailableReport(paths, action);
   const launchctl = async (args: readonly string[]) => {
-    await execFileAsync("launchctl", [...args]);
+    await execFileAsync('launchctl', [...args]);
   };
   const inspect = async () => inspectLaunchd(paths);
   return {
     inspect,
     install: async () => {
-      if (process.platform !== "darwin") return unavailable("install");
+      if (process.platform !== 'darwin') return unavailable('install');
       ensureLaunchdDirectories(paths);
       writeFileSync(paths.plistPath, renderLaunchdPlist({ paths, projectRoot }), {
         mode: 0o600,
       });
-      await launchctl(["bootstrap", `gui/${String(process.getuid?.() ?? "")}`, paths.plistPath]);
+      await launchctl(['bootstrap', `gui/${String(process.getuid?.() ?? '')}`, paths.plistPath]);
       return {
-        action: "install",
-        detail: "installed and bootstrapped launchd agent",
+        action: 'install',
+        detail: 'installed and bootstrapped launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
-        state: "installed",
+        state: 'installed',
       };
     },
     restart: async () => {
-      if (process.platform !== "darwin") return unavailable("restart");
+      if (process.platform !== 'darwin') return unavailable('restart');
       await launchctl([
-        "kickstart",
-        "-k",
-        `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`,
+        'kickstart',
+        '-k',
+        `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`,
       ]);
       return {
-        action: "restart",
-        detail: "restarted launchd agent",
+        action: 'restart',
+        detail: 'restarted launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
-        state: "running",
+        state: 'running',
       };
     },
     start: async () => {
-      if (process.platform !== "darwin") return unavailable("start");
-      await launchctl(["kickstart", `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`]);
+      if (process.platform !== 'darwin') return unavailable('start');
+      await launchctl(['kickstart', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
       return {
-        action: "start",
-        detail: "started launchd agent",
+        action: 'start',
+        detail: 'started launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
-        state: "running",
+        state: 'running',
       };
     },
     stop: async () => {
-      if (process.platform !== "darwin") return unavailable("stop");
-      await launchctl(["kill", "TERM", `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`]);
+      if (process.platform !== 'darwin') return unavailable('stop');
+      await launchctl(['kill', 'TERM', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
       return {
-        action: "stop",
-        detail: "sent TERM to launchd agent",
+        action: 'stop',
+        detail: 'sent TERM to launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
-        state: "stopped",
+        state: 'stopped',
       };
     },
     uninstall: async () => {
-      if (process.platform !== "darwin") return unavailable("uninstall");
+      if (process.platform !== 'darwin') return unavailable('uninstall');
       await launchctl([
-        "bootout",
-        `gui/${String(process.getuid?.() ?? "")}`,
+        'bootout',
+        `gui/${String(process.getuid?.() ?? '')}`,
         paths.plistPath,
       ]).catch(() => undefined);
       rmSync(paths.plistPath, { force: true });
       return {
-        action: "uninstall",
-        detail: "removed launchd agent",
+        action: 'uninstall',
+        detail: 'removed launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
-        state: "not installed",
+        state: 'not installed',
       };
     },
   };
@@ -331,8 +331,8 @@ export function renderLaunchdPlist(input: {
   <key>ProgramArguments</key>
   <array>
     <string>${escapePlist(process.execPath)}</string>
-    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "node_modules", "tsx", "dist", "cli.mjs"))}</string>
-    <string>${escapePlist(join(input.projectRoot, "apps", "cli", "src", "main.ts"))}</string>
+    <string>${escapePlist(join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'))}</string>
+    <string>${escapePlist(join(input.projectRoot, 'apps', 'cli', 'src', 'main.ts'))}</string>
     <string>service</string>
     <string>run</string>
   </array>
@@ -353,23 +353,23 @@ export function renderLaunchdPlist(input: {
 
 function launchdUnavailableReport(
   paths: ReturnType<typeof launchdPaths>,
-  action: ServiceLifecycleReport["action"],
+  action: ServiceLifecycleReport['action'],
 ): ServiceLifecycleReport {
   return {
     action,
-    detail: "launchd is only available on macOS",
+    detail: 'launchd is only available on macOS',
     label: LAUNCHD_LABEL,
     plistPath: paths.plistPath,
-    state: "unavailable",
+    state: 'unavailable',
   };
 }
 
 function launchdPaths() {
   const home = homedir();
   return {
-    plistPath: join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`),
-    stderrPath: join(home, "Library", "Logs", "saga", "service.err.log"),
-    stdoutPath: join(home, "Library", "Logs", "saga", "service.out.log"),
+    plistPath: join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
+    stderrPath: join(home, 'Library', 'Logs', 'saga', 'service.err.log'),
+    stdoutPath: join(home, 'Library', 'Logs', 'saga', 'service.out.log'),
   };
 }
 
@@ -382,74 +382,74 @@ async function inspectLaunchd(
   paths: ReturnType<typeof launchdPaths>,
 ): Promise<ServiceSupervisorInspection> {
   const logs = launchdLogStatus(paths);
-  if (process.platform !== "darwin") {
+  if (process.platform !== 'darwin') {
     return {
-      detail: "launchd is only available on macOS",
+      detail: 'launchd is only available on macOS',
       logs,
-      process: "not running",
-      state: "unavailable",
+      process: 'not running',
+      state: 'unavailable',
     };
   }
   if (!existsSync(paths.plistPath)) {
     return {
-      detail: "launchd agent is not installed",
+      detail: 'launchd agent is not installed',
       logs,
-      process: "not running",
-      state: "not installed",
+      process: 'not running',
+      state: 'not installed',
     };
   }
   try {
-    const plist = readFileSync(paths.plistPath, "utf8");
+    const plist = readFileSync(paths.plistPath, 'utf8');
     if (!plist.includes(`<string>${LAUNCHD_LABEL}</string>`)) {
       return {
-        detail: "launchd plist label does not match Saga service",
+        detail: 'launchd plist label does not match Saga service',
         logs,
-        process: "not running",
-        state: "stopped",
+        process: 'not running',
+        state: 'stopped',
       };
     }
-    const { stdout } = await execFileAsync("launchctl", [
-      "print",
-      `gui/${String(process.getuid?.() ?? "")}/${LAUNCHD_LABEL}`,
+    const { stdout } = await execFileAsync('launchctl', [
+      'print',
+      `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`,
     ]);
     const serviceProcess = launchdPrintProcess(stdout);
     return {
       detail:
-        serviceProcess === "running"
-          ? "launchd agent is loaded and running"
-          : "launchd agent is loaded but process is not running",
+        serviceProcess === 'running'
+          ? 'launchd agent is loaded and running'
+          : 'launchd agent is loaded but process is not running',
       logs,
       process: serviceProcess,
-      state: serviceProcess === "running" ? "running" : "stopped",
+      state: serviceProcess === 'running' ? 'running' : 'stopped',
     };
   } catch {
     return {
-      detail: "launchd agent is installed but not loaded",
+      detail: 'launchd agent is installed but not loaded',
       logs,
-      process: "not running",
-      state: "stopped",
+      process: 'not running',
+      state: 'stopped',
     };
   }
 }
 
-export function launchdPrintProcess(output: string): "not running" | "running" {
-  return /^\s*pid\s*=\s*[1-9][0-9]*\s*$/mu.test(output) ? "running" : "not running";
+export function launchdPrintProcess(output: string): 'not running' | 'running' {
+  return /^\s*pid\s*=\s*[1-9][0-9]*\s*$/mu.test(output) ? 'running' : 'not running';
 }
 
 function launchdLogStatus(paths: ReturnType<typeof launchdPaths>): string {
   return [
-    `stdout=${paths.stdoutPath} (${existsSync(paths.stdoutPath) ? "present" : "missing"})`,
-    `stderr=${paths.stderrPath} (${existsSync(paths.stderrPath) ? "present" : "missing"})`,
-  ].join("; ");
+    `stdout=${paths.stdoutPath} (${existsSync(paths.stdoutPath) ? 'present' : 'missing'})`,
+    `stderr=${paths.stderrPath} (${existsSync(paths.stderrPath) ? 'present' : 'missing'})`,
+  ].join('; ');
 }
 
 function escapePlist(value: string): string {
   return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
 }
 
 export async function checkHealth(url: string): Promise<string> {
@@ -471,11 +471,11 @@ export async function waitForServiceHealth(
 ): Promise<string> {
   const attempts = options.attempts ?? 20;
   const intervalMs = options.intervalMs ?? 250;
-  let last = "unreachable";
+  let last = 'unreachable';
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     last = await healthCheck(url);
-    if (last.startsWith("ok ")) return last;
+    if (last.startsWith('ok ')) return last;
     if (attempt < attempts - 1) {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }

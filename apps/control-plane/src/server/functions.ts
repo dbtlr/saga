@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from '@tanstack/react-start';
 import {
   readControlPlaneSnapshot,
   updateClaimReview,
@@ -7,27 +7,27 @@ import {
   type UpdateClaimReviewInput,
   type UpdateSourceBindingInput,
   type UpdateWorkspaceProfileInput,
-} from "./control-plane.js";
+} from './control-plane.js';
 
-export const getControlPlaneSnapshot = createServerFn({ method: "GET" }).handler(() =>
+export const getControlPlaneSnapshot = createServerFn({ method: 'GET' }).handler(() =>
   readControlPlaneSnapshot(),
 );
 
-export const saveWorkspaceProfile = createServerFn({ method: "POST" })
+export const saveWorkspaceProfile = createServerFn({ method: 'POST' })
   .validator(validateWorkspaceProfileInput)
   .handler(async ({ data }) => {
     await updateWorkspaceProfile(data);
     return { ok: true };
   });
 
-export const saveSourceBinding = createServerFn({ method: "POST" })
+export const saveSourceBinding = createServerFn({ method: 'POST' })
   .validator(validateSourceBindingInput)
   .handler(async ({ data }) => {
     await updateSourceBinding(data);
     return { ok: true };
   });
 
-export const reviewClaim = createServerFn({ method: "POST" })
+export const reviewClaim = createServerFn({ method: 'POST' })
   .validator(validateClaimReviewInput)
   .handler(async ({ data }) => {
     await updateClaimReview(data);
@@ -37,43 +37,43 @@ export const reviewClaim = createServerFn({ method: "POST" })
 export function validateWorkspaceProfileInput(data: unknown): UpdateWorkspaceProfileInput {
   const record = requireRecord(data);
   return {
-    displayName: requireString(record.displayName, "displayName"),
-    summary: requireString(record.summary, "summary"),
+    displayName: requireString(record.displayName, 'displayName'),
+    summary: requireString(record.summary, 'summary'),
   };
 }
 
 export function validateSourceBindingInput(data: unknown): UpdateSourceBindingInput {
   const record = requireRecord(data);
   return {
-    displayName: requireString(record.displayName, "displayName"),
-    enabled: requireBoolean(record.enabled, "enabled"),
-    id: requireString(record.id, "id"),
+    displayName: requireString(record.displayName, 'displayName'),
+    enabled: requireBoolean(record.enabled, 'enabled'),
+    id: requireString(record.id, 'id'),
   };
 }
 
 export function validateClaimReviewInput(data: unknown): UpdateClaimReviewInput {
   const record = requireRecord(data);
-  const action = requireString(record.action, "action");
+  const action = requireString(record.action, 'action');
   if (!isClaimReviewAction(action)) {
-    throw new Error("action must be a supported claim review action");
+    throw new Error('action must be a supported claim review action');
   }
 
   return {
     action,
-    claimKey: requireString(record.claimKey, "claimKey"),
+    claimKey: requireString(record.claimKey, 'claimKey'),
   };
 }
 
 function requireRecord(data: unknown): Record<string, unknown> {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) {
-    throw new Error("payload must be an object");
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('payload must be an object');
   }
 
   return data as Record<string, unknown>;
 }
 
 function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string") {
+  if (typeof value !== 'string') {
     throw new Error(`${field} must be a string`);
   }
 
@@ -81,21 +81,21 @@ function requireString(value: unknown, field: string): string {
 }
 
 function requireBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
+  if (typeof value !== 'boolean') {
     throw new Error(`${field} must be a boolean`);
   }
 
   return value;
 }
 
-function isClaimReviewAction(value: string): value is UpdateClaimReviewInput["action"] {
+function isClaimReviewAction(value: string): value is UpdateClaimReviewInput['action'] {
   return (
-    value === "accept" ||
-    value === "pin" ||
-    value === "promote" ||
-    value === "reject" ||
-    value === "unpin" ||
-    value === "unwatch" ||
-    value === "watch"
+    value === 'accept' ||
+    value === 'pin' ||
+    value === 'promote' ||
+    value === 'reject' ||
+    value === 'unpin' ||
+    value === 'unwatch' ||
+    value === 'watch'
   );
 }

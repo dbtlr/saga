@@ -1,4 +1,4 @@
-import type { OutputFormat } from "./cli.js";
+import type { OutputFormat } from './cli.js';
 
 export interface CommandOutput {
   id?: string | undefined;
@@ -7,8 +7,8 @@ export interface CommandOutput {
 }
 
 export function formatCommandOutput(output: CommandOutput, format: OutputFormat): string {
-  if (format === "records") return output.records;
-  if (format === "json") return JSON.stringify(output.value, null, 2);
-  if (format === "jsonl") return `${JSON.stringify(output.value)}\n`;
-  return output.id ?? "";
+  if (format === 'records') return output.records;
+  if (format === 'json') return JSON.stringify(output.value, null, 2);
+  if (format === 'jsonl') return `${JSON.stringify(output.value)}\n`;
+  return output.id ?? '';
 }
