@@ -181,19 +181,22 @@ export function assertMigrationsCurrent(
   migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service, migrationsFolder).pipe(
-    Effect.flatMap((status) =>
-      status.applied > status.expected
-        ? Effect.fail(newerMigrationError(status))
-        : !status.compatible
-          ? Effect.fail(incompatibleMigrationError(status))
-          : status.applied < status.expected
-            ? Effect.fail(
-                new DatabaseError({
-                  message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
-                }),
-              )
-            : Effect.succeed(status),
-    ),
+    Effect.flatMap((status) => {
+      if (status.applied > status.expected) {
+        return Effect.fail(newerMigrationError(status));
+      }
+      if (!status.compatible) {
+        return Effect.fail(incompatibleMigrationError(status));
+      }
+      if (status.applied < status.expected) {
+        return Effect.fail(
+          new DatabaseError({
+            message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
+          }),
+        );
+      }
+      return Effect.succeed(status);
+    }),
   );
 }
 

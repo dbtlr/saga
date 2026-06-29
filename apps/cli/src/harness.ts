@@ -1246,6 +1246,13 @@ function uninstallSagaHooks(
   return { ...file, hooks };
 }
 
+function hooksCoverageLevel(installedEventCount: number): HookCoverage {
+  if (installedEventCount === HARNESS_HOOK_EVENTS.length) {
+    return 'complete';
+  }
+  return installedEventCount > 0 ? 'partial' : 'none';
+}
+
 function inspectSagaHookCoverage(
   file: HooksSettingsFile,
   input: {
@@ -1272,13 +1279,10 @@ function inspectSagaHookCoverage(
     legacyCommands,
   });
 
+  const hooksCoverage = hooksCoverageLevel(installedEvents.length);
+
   return {
-    hooksCoverage:
-      installedEvents.length === HARNESS_HOOK_EVENTS.length
-        ? 'complete'
-        : installedEvents.length > 0
-          ? 'partial'
-          : 'none',
+    hooksCoverage,
     sessionStartCoverage: sessionStartCoverage.coverage,
     sessionStartDetail: sessionStartCoverage.detail,
   };

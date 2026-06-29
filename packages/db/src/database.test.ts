@@ -33,14 +33,15 @@ function serviceWithMigrationCount(
           return [{ table_name: tableExists ? 'drizzle.__drizzle_migrations' : null }];
         }
 
-        return Array.from({ length: count }, (_, index) => ({
-          hash:
-            options.wrongHashAt === index
-              ? 'wrong-hash'
-              : index < expectedHashes.length
-                ? expectedHashes[index]
-                : `newer-hash-${String(index)}`,
-        }));
+        return Array.from({ length: count }, (_, index) => {
+          if (options.wrongHashAt === index) {
+            return { hash: 'wrong-hash' };
+          }
+          return {
+            hash:
+              index < expectedHashes.length ? expectedHashes[index] : `newer-hash-${String(index)}`,
+          };
+        });
       },
     } as never,
   };

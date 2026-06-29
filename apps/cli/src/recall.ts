@@ -110,11 +110,12 @@ async function searchRecallCommand(
     workspaceId,
   };
 
-  const queryEmbedding = parsed.booleans.has('no-embeddings')
-    ? undefined
-    : dependencies.resolveQueryEmbedding !== undefined || dependencies.searchRecall === undefined
-      ? await resolveQueryEmbedding(query, dependencies)
-      : undefined;
+  const shouldResolveEmbedding =
+    !parsed.booleans.has('no-embeddings') &&
+    (dependencies.resolveQueryEmbedding !== undefined || dependencies.searchRecall === undefined);
+  const queryEmbedding = shouldResolveEmbedding
+    ? await resolveQueryEmbedding(query, dependencies)
+    : undefined;
   const input: RecallSearchInput =
     queryEmbedding === undefined ? baseInput : { ...baseInput, queryEmbedding };
 
