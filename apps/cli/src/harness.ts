@@ -95,12 +95,12 @@ type HarnessSourceUri = `codex://host/${string}` | `claude://host/${string}`;
 export type HarnessAdapter = {
   displayName: string;
   gitignoreEntries: readonly string[];
-  hooksPath(projectRoot: string): string;
+  hooksPath: (projectRoot: string) => string;
   ingestCommand: 'codex-hook' | 'claude-hook';
   settingsLabel: string;
   shimScriptName: string;
-  shimPath(projectRoot: string): string;
-  sourceUri(hostId: string): HarnessSourceUri;
+  shimPath: (projectRoot: string) => string;
+  sourceUri: (hostId: string) => HarnessSourceUri;
   sourceType: HarnessTarget;
   target: HarnessTarget;
 };
