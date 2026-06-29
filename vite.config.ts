@@ -27,7 +27,20 @@ const forbid = (files: string[], imports: string[], message: string): Override =
 
 export default defineConfig({
   fmt: {
-    ignorePatterns: ["dist/**", "coverage/**", "**/*.generated.ts", "**/*.gen.ts"],
+    ignorePatterns: [
+      "pnpm-lock.yaml",
+      "bun.lock",
+      "CHANGELOG.md",
+      "dist/**",
+      "build/**",
+      "node_modules/**",
+      "coverage/**",
+      ".turbo/**",
+      ".vite/**",
+      // saga-specific: generator owns the route tree / generated files' style
+      "**/*.generated.ts",
+      "**/*.gen.ts",
+    ],
   },
   lint: {
     ignorePatterns: [
