@@ -68,7 +68,6 @@ const config = {
         'promise/prefer-await-to-callbacks': 'off',
         'promise/prefer-await-to-then': 'off',
         'promise/param-names': 'off',
-        'unicorn/consistent-function-scoping': 'off',
         'unicorn/custom-error-definition': 'off',
       },
       overrides: [

@@ -28,6 +28,24 @@ import type { RecentSessionRecord, SessionDetail } from './session-records.js';
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  reject: (reason?: unknown) => void;
+  resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describePostgres('raw session import', () => {
   const databaseName = `saga_raw_session_import_${Date.now().toString(36)}`;
   const adminSql = postgres(databaseUrl ?? '', { max: 1 });
@@ -135,24 +153,6 @@ describePostgres('raw session import', () => {
     }
 
     throw new Error(`timed out waiting for ${expectedWaiters} blocked transaction locks`);
-  }
-
-  function deferred<T>(): {
-    promise: Promise<T>;
-    reject: (reason?: unknown) => void;
-    resolve: (value: T | PromiseLike<T>) => void;
-  } {
-    let resolve!: (value: T | PromiseLike<T>) => void;
-    let reject!: (reason?: unknown) => void;
-    const promise = new Promise<T>((promiseResolve, promiseReject) => {
-      resolve = promiseResolve;
-      reject = promiseReject;
-    });
-    return { promise, reject, resolve };
-  }
-
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async function seedSourceBindingAndRawEvent(input: {
@@ -3692,6 +3692,9 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.sessionId, parent.session.id))
       .orderBy(asc(sessionTurns.ordinal));
+    // Closes over the local `typeof parentTurns` row type; hoisting would force
+    // re-declaring that query-derived type at module scope.
+    // oxlint-disable-next-line unicorn/consistent-function-scoping
     const matchesCodexTurn = (turn: (typeof parentTurns)[number], turnId: string) =>
       turn.harnessTurnId === turnId || turn.metadata.codexTurnId === turnId;
     const firstParentTurn = parentTurns.find((turn) =>

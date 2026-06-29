@@ -288,6 +288,20 @@ describe('runRecallCommand', () => {
   });
 });
 
+function recordingFetch(): { calls: number; impl: typeof fetch } {
+  const state = { calls: 0 };
+  const impl = (async () => {
+    state.calls += 1;
+    return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }, { status: 200 });
+  }) as unknown as typeof fetch;
+  return {
+    get calls() {
+      return state.calls;
+    },
+    impl,
+  };
+}
+
 describe('resolveQueryEmbedding', () => {
   const availableAuthOptions = {
     env: {},
@@ -304,20 +318,6 @@ describe('resolveQueryEmbedding', () => {
     homeDir: '/tmp/saga-recall-enabled-home',
     readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
   };
-
-  function recordingFetch(): { calls: number; impl: typeof fetch } {
-    const state = { calls: 0 };
-    const impl = (async () => {
-      state.calls += 1;
-      return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }, { status: 200 });
-    }) as unknown as typeof fetch;
-    return {
-      get calls() {
-        return state.calls;
-      },
-      impl,
-    };
-  }
 
   test('never calls the remote provider when remote embeddings are disabled by policy', async () => {
     const fetchSpy = recordingFetch();
