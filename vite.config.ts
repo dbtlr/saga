@@ -142,7 +142,7 @@ const config = {
   // discovery globs must reach each package's src (the helper's package-relative
   // default would match nothing here). toolingConfig omits the test block in
   // scoped/monorepo mode, so add it explicitly.
-  ...vitestNode({ include: ['**/src/**/*.test.ts', '**/tests/**/*.test.ts'] }),
+  ...vitestNode({ include: ['**/src/**/*.test.{ts,tsx}', '**/tests/**/*.test.{ts,tsx}'] }),
 };
 
 export default config;
