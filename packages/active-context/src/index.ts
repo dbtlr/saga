@@ -61,18 +61,16 @@ export type ActiveContextDocument = {
 
 export function compileActiveContext(input: ActiveContextInput): ActiveContextDocument {
   const generatedAt = toIso(input.generatedAt ?? new Date());
-  const claims = [
-    ...input.claims.filter((claim) => claim.state !== 'rejected' && claim.state !== 'superseded'),
-  ]
+  const claims = input.claims
+    .filter((claim) => claim.state !== 'rejected' && claim.state !== 'superseded')
     .toSorted(
       (left, right) =>
         right.confidence - left.confidence || left.claimText.localeCompare(right.claimText),
     )
     .slice(0, 8);
   const recentEvents = input.recentEvents.slice(0, 5);
-  const contextIndex = [
-    ...(input.contextIndex ?? []).filter((entry) => entry.includePolicy === 'always'),
-  ]
+  const contextIndex = (input.contextIndex ?? [])
+    .filter((entry) => entry.includePolicy === 'always')
     .toSorted(
       (left, right) => right.importance - left.importance || left.title.localeCompare(right.title),
     )

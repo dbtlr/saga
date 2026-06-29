@@ -71,7 +71,6 @@ export default {
         'no-nested-ternary': 'off',
         'unicorn/no-nested-ternary': 'off',
         'unicorn/consistent-function-scoping': 'off',
-        'unicorn/no-useless-spread': 'off',
         'unicorn/custom-error-definition': 'off',
         'unicorn/prefer-structured-clone': 'off',
         'unicorn/prefer-response-static-json': 'off',

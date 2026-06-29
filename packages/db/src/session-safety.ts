@@ -827,7 +827,7 @@ function compileRedactionRegex(pattern: NormalizedSessionRedactionPattern, index
 }
 
 function redactionRegexFlags(value: string | undefined): string {
-  const flags = new Set([...(value ?? '')]);
+  const flags = new Set(value);
   flags.add('g');
   return [...flags].join('');
 }
