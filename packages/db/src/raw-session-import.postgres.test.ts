@@ -7197,6 +7197,9 @@ function expectRecentSessionRecordTimestampsCanRender(row: RecentSessionRecord |
     row.activityInterval?.endedAt?.toISOString() ?? 'none',
     row.activityInterval?.settledAt?.toISOString() ?? 'none',
   ];
+  // JSON round-trip normalizes to serialized form (Date->ISO, drops undefined);
+  // structuredClone would preserve those and change the match. Not a plain clone.
+  // oxlint-disable-next-line unicorn/prefer-structured-clone
   expect(JSON.parse(JSON.stringify({ records: eagerRecordsOutput, value: row }))).toMatchObject({
     records: eagerRecordsOutput,
   });
@@ -7242,6 +7245,9 @@ function expectSessionDetailTimestampsCanRender(detail: SessionDetail): void {
     }
   }
 
+  // JSON round-trip normalizes to serialized form (Date->ISO, drops undefined);
+  // structuredClone would preserve those and change the match. Not a plain clone.
+  // oxlint-disable-next-line unicorn/prefer-structured-clone
   expect(JSON.parse(JSON.stringify({ records: eagerRecordsOutput, value: detail }))).toMatchObject({
     records: eagerRecordsOutput,
   });
