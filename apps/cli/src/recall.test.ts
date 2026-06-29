@@ -309,10 +309,7 @@ describe('resolveQueryEmbedding', () => {
     const state = { calls: 0 };
     const impl = (async () => {
       state.calls += 1;
-      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }), {
-        headers: { 'content-type': 'application/json' },
-        status: 200,
-      });
+      return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }, { status: 200 });
     }) as unknown as typeof fetch;
     return {
       get calls() {
