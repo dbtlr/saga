@@ -979,7 +979,7 @@ function tokenize(query: string): string[] {
 async function* readJsonLines(stdin: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
   let buffer = '';
   for await (const chunk of stdin) {
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? '';
     for (const line of lines) {

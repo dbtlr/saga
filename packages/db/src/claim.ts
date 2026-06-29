@@ -782,8 +782,8 @@ async function readClaimConfidenceStats(
     );
 
   return {
-    priorContradictions: Number(stats?.priorContradictions ?? 0),
-    priorEvents: Number(stats?.priorEvents ?? 0),
+    priorContradictions: stats?.priorContradictions ?? 0,
+    priorEvents: stats?.priorEvents ?? 0,
   };
 }
 
