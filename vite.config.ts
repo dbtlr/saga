@@ -22,7 +22,7 @@ const forbid = (files: string[], imports: string[], message: string): LintOverri
   },
 });
 
-export default {
+const config = {
   ...toolingConfig({
     // node: builtins are allowed only on these globs (apps, shared packages, and
     // the smoke scripts all run on Node). control-plane is isomorphic, so it is
@@ -79,7 +79,6 @@ export default {
         'no-underscore-dangle': 'off',
         'func-names': 'off',
         'no-new': 'off',
-        'import/no-anonymous-default-export': 'off',
       },
       overrides: [
         forbid(
@@ -153,3 +152,5 @@ export default {
   // scoped/monorepo mode, so add it explicitly.
   ...vitestNode({ include: ['**/src/**/*.test.ts', '**/tests/**/*.test.ts'] }),
 };
+
+export default config;
