@@ -65,7 +65,6 @@ const config = {
         // idiomatic describe-scope `const sql = postgres(...)` shared-connection
         // pattern in DB-gated integration tests (unverifiable here, no DB).
         'vitest/require-hook': 'off',
-        'typescript/parameter-properties': 'off',
         'promise/prefer-await-to-callbacks': 'off',
         'promise/prefer-await-to-then': 'off',
         'promise/param-names': 'off',

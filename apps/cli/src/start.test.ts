@@ -177,9 +177,11 @@ class FakeChildProcess extends EventEmitter {
   killed = false;
   signalCode: NodeJS.Signals | null = null;
   readonly signals: NodeJS.Signals[] = [];
+  private readonly options: { autoExitOnKill: boolean };
 
-  constructor(private readonly options: { autoExitOnKill: boolean } = { autoExitOnKill: true }) {
+  constructor(options: { autoExitOnKill: boolean } = { autoExitOnKill: true }) {
     super();
+    this.options = options;
   }
 
   exit(code: number | null, signal: NodeJS.Signals | null): void {

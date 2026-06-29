@@ -43,9 +43,12 @@ const SERVICE_HEALTH_ATTEMPTS = 25;
 const SERVICE_HEALTH_INTERVAL_MS = 200;
 
 export class StartInterrupted extends Error {
-  constructor(readonly exitCode: number) {
+  readonly exitCode: number;
+
+  constructor(exitCode: number) {
     super(`start interrupted with exit code ${exitCode.toString()}`);
     this.name = 'StartInterrupted';
+    this.exitCode = exitCode;
   }
 }
 
