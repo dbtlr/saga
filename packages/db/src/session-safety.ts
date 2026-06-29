@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+
 import { sql as drizzleSql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
+
 import type { DatabaseError, DatabaseService } from './database.js';
 import {
   importRawSessionRecordInTransaction,

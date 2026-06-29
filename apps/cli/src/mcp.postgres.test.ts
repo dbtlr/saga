@@ -1,11 +1,13 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import postgres from 'postgres';
+
 import { insertRawEvent, makeDatabase } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
+import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { ingestClaims, inspectRecentRawEvents } from './ingest.js';
 import { initProject } from './init.js';
 import { createProjectMcpServer } from './mcp.js';

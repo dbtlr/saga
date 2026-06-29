@@ -2,12 +2,10 @@ import { eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import { importRawSessionRecord } from './raw-session-import.js';
-import { expandRecallContext, searchSessionRecall } from './session-recall.js';
-import { getSessionDetail, listRecentSessionRecords } from './session-records.js';
-import { deleteSessionSafety, redactSessionSafety } from './session-safety.js';
 import {
   rawEvents,
   rawSessionRecords,
@@ -16,6 +14,9 @@ import {
   sessions,
   workspaces,
 } from './schema.js';
+import { expandRecallContext, searchSessionRecall } from './session-recall.js';
+import { getSessionDetail, listRecentSessionRecords } from './session-records.js';
+import { deleteSessionSafety, redactSessionSafety } from './session-safety.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;

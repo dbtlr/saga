@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, test } from 'vitest';
+
 import { resolveEmbeddingPolicy } from './embedding-policy.js';
 
 function tempHome(): string {

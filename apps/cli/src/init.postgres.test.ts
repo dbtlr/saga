@@ -2,8 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { BINDING_FILE_NAME, initProject } from './init.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL;

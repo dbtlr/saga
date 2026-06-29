@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import {
   assertMigrationsCurrent,
   listHarnessActivationRawEvents,
@@ -18,8 +19,7 @@ import {
 } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
-import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+
 import {
   ensureLocalHostBinding,
   findProjectRoot,
@@ -27,6 +27,8 @@ import {
   writeBindingFile,
   type WorkspaceBindingFile,
 } from './init.js';
+import { formatCommandOutput } from './output.js';
+import { recordBlock, type RenderOptions } from './render.js';
 
 export type HarnessTarget = 'codex' | 'claude';
 export type HookCoverage = 'complete' | 'partial' | 'none';

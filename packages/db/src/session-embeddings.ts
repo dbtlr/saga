@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+
 import {
   DEFAULT_OPENAI_EMBEDDING_PROVIDER,
   inspectEmbeddingWorkflow,
@@ -9,6 +10,7 @@ import {
 } from '@saga/runtime';
 import { sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
+
 import type { DatabaseError, DatabaseService } from './database.js';
 import { sessionSegmentEmbeddings } from './schema.js';
 

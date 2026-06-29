@@ -1,7 +1,9 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, test } from 'vitest';
+
 import { captureHook, ingestCodexHook, ingestHook, runIngestCommand } from './ingest.js';
 import { writeBindingFile } from './init.js';
 

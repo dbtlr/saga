@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from '@saga/db';
 import {
   inspectEmbeddingWorkflow,
@@ -10,6 +11,7 @@ import {
   type EmbeddingWorkflowBoundary,
 } from '@saga/runtime';
 import { Effect } from 'effect';
+
 import {
   inspectHarnessesWithActivation,
   type HarnessActivationState,

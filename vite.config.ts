@@ -1,6 +1,6 @@
 import { vitestNode } from '@dbtlr/tooling/vitest';
-import { defineConfig } from 'vite-plus';
 import type { OxlintConfig } from 'oxlint';
+import { defineConfig } from 'vite-plus';
 
 type Override = NonNullable<OxlintConfig['overrides']>[number];
 
@@ -42,6 +42,7 @@ export default defineConfig({
       '**/*.gen.ts',
     ],
     singleQuote: true,
+    sortImports: { ignoreCase: true },
   },
   lint: {
     ignorePatterns: [

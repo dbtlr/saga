@@ -1,6 +1,7 @@
 import type { RawEventEnvelope } from '@saga/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
+
 import type { DatabaseError, DatabaseService } from './database.js';
 import { rawEvents, sourceBindings, type RawEvent } from './schema.js';
 

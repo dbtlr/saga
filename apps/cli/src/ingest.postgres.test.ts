@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { and, eq } from 'drizzle-orm';
+
 import {
   activityIntervals,
   makeDatabase,
@@ -16,9 +16,11 @@ import {
   sourceBindings,
   type DatabaseService,
 } from '@saga/db';
+import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { installHarness } from './harness.js';
 import { captureHook } from './ingest.js';
 import { initProject, readBindingFile } from './init.js';

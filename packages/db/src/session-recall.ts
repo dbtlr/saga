@@ -1,5 +1,6 @@
 import type { EmbeddingProviderBoundary } from '@saga/runtime';
 import { Data, Effect } from 'effect';
+
 import type { DatabaseError, DatabaseService } from './database.js';
 import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
 import {

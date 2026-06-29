@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { deriveSessionSegmentsFromTurns } from './session-segments.js';
+
 import type { SessionTurn } from './schema.js';
+import { deriveSessionSegmentsFromTurns } from './session-segments.js';
 
 describe('deriveSessionSegmentsFromTurns', () => {
   test('keeps duplicate same-call tool call parts and matching result standalone', () => {

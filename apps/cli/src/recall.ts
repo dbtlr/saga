@@ -21,6 +21,7 @@ import {
   type EmbeddingPolicyResolutionOptions,
 } from '@saga/runtime';
 import { Effect } from 'effect';
+
 import { type WorkspaceBindingFile, findProjectRoot, readBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock, separator, type RenderOptions } from './render.js';

@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, test } from 'vitest';
+
 import {
   createLaunchdSupervisor,
   renderLaunchdPlist,

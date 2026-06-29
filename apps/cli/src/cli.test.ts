@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import type { CommandHandlers } from './cli.js';
 import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from './cli.js';
 

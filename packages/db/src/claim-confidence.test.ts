@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import { scoreClaimConfidence } from './claim.js';
 
 describe('scoreClaimConfidence', () => {

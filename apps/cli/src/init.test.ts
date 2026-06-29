@@ -1,7 +1,9 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, test } from 'vitest';
+
 import { BINDING_FILE_NAME, normalizeHandle, readBindingFile, writeBindingFile } from './init.js';
 
 describe('normalizeHandle', () => {

@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import {
   insertClaimEventAndProject,
   insertClaimMaintenanceEventAndProject,
@@ -13,6 +15,13 @@ import {
   listActiveContextClaims,
   listCurrentClaims,
 } from './claim.js';
+import {
+  listActiveContextIndexEntries,
+  listContextIndexEntries,
+  makeSagaContextLink,
+  resolveSagaLink,
+  upsertContextIndexEntry,
+} from './context-index.js';
 import {
   DEFAULT_MIGRATIONS_FOLDER,
   makeDatabase,
@@ -25,13 +34,6 @@ import {
   listHarnessActivationRawEvents,
   listRecentRawEvents,
 } from './raw-event.js';
-import {
-  listActiveContextIndexEntries,
-  listContextIndexEntries,
-  makeSagaContextLink,
-  resolveSagaLink,
-  upsertContextIndexEntry,
-} from './context-index.js';
 import {
   activityIntervals,
   claimEvents,

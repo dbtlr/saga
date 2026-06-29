@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+
 import { SessionSafetyError } from '@saga/db';
 import type {
   DeleteSessionSafetyResult,
@@ -12,6 +12,8 @@ import type {
   SessionDetail,
   SessionRawSessionRecordMetadata,
 } from '@saga/db';
+import { describe, expect, test } from 'vitest';
+
 import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
 import { runSessionsCommand } from './sessions.js';
 

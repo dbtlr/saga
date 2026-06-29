@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+
 import type { RawEventEnvelope } from '@saga/contracts';
 
 export const packageName = '@saga/collectors';

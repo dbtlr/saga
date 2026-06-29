@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import { compileActiveContext, renderActiveContextMarkdown } from './index.js';
 
 describe('compileActiveContext', () => {

@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'vitest';
 import { getTableName } from 'drizzle-orm';
 import { getTableColumns } from 'drizzle-orm/utils';
+import { describe, expect, test } from 'vitest';
+
 import {
   activityIntervals,
   claimEvents,

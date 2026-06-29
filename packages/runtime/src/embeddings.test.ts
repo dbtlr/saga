@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, test } from 'vitest';
+
 import type { CodexAuthStatus } from './codex-auth.js';
 import type { EmbeddingPolicy } from './embedding-policy.js';
 import { composeEmbeddingWorkflow, inspectEmbeddingWorkflow } from './embeddings.js';

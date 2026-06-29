@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import { createOpenAiSessionEmbeddingGenerator } from './session-embeddings.js';
 
 const testProvider = {

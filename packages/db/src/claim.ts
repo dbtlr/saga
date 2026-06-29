@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+
 import {
   candidateClaimKey,
   detectClaimContradiction,
@@ -8,6 +9,7 @@ import {
 } from '@saga/claims';
 import { and, desc, eq, notInArray, sql, type SQL } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
+
 import type { DatabaseError, DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import {

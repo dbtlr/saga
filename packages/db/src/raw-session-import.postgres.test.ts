@@ -2,18 +2,12 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { normalizeClaudeTranscript } from './claude-transcript-normalizer.js';
 import { normalizeCodexTranscript } from './codex-transcript-normalizer.js';
 import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import { importLifecycleBoundaryEvent, importRawSessionRecord } from './raw-session-import.js';
-import {
-  getSessionDetail,
-  listRecentSessionRecords,
-  type RecentSessionRecord,
-  type SessionDetail,
-} from './session-records.js';
-import { expandRecallContext, searchSessionRecall } from './session-recall.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -26,6 +20,13 @@ import {
   users,
   workspaces,
 } from './schema.js';
+import { expandRecallContext, searchSessionRecall } from './session-recall.js';
+import {
+  getSessionDetail,
+  listRecentSessionRecords,
+  type RecentSessionRecord,
+  type SessionDetail,
+} from './session-records.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;

@@ -1,13 +1,15 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+
 import type {
   RecallContextExpansion,
   RecallContextExpansionInput,
   RecallSearchInput,
   RecallSearchResult,
 } from '@saga/db';
+import { describe, expect, test } from 'vitest';
+
 import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
 import { resolveQueryEmbedding, runRecallCommand } from './recall.js';
 

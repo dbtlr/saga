@@ -1,5 +1,6 @@
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
+
 import { startSagaService } from './server.js';
 
 const config = await Effect.runPromise(loadRuntimeConfig());

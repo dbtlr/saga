@@ -3,9 +3,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { startSagaService } from '@saga/service';
+
 import { loadRuntimeConfig } from '@saga/runtime';
+import { startSagaService } from '@saga/service';
 import { Effect } from 'effect';
+
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock, type RenderOptions } from './render.js';

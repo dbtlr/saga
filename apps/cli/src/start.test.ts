@@ -1,6 +1,8 @@
-import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+
 import { describe, expect, test } from 'vitest';
+
 import {
   cliServiceCommand,
   controlPlaneCommand,

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { extname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
 import { extractCandidateClaimsFromRawEvents } from '@saga/claims';
 import {
   rawEventFromClaudeHook,
@@ -27,6 +28,7 @@ import {
 } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
+
 import { findProjectRoot, readBindingFile, type WorkspaceBindingFileWithHost } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock, type RenderOptions } from './render.js';

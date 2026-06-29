@@ -2,13 +2,14 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useRouter } from '@tanstack/react-router';
 import { useServerFn } from '@tanstack/react-start';
 import { useState, useTransition, type FormEvent } from 'react';
+
+import type { ControlPlaneSnapshot } from '../server/control-plane.js';
 import {
   getControlPlaneSnapshot,
   reviewClaim,
   saveSourceBinding,
   saveWorkspaceProfile,
 } from '../server/functions.js';
-import type { ControlPlaneSnapshot } from '../server/control-plane.js';
 
 export const Route = createFileRoute('/')({
   component: ControlPlaneHome,

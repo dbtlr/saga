@@ -1,4 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
+
 import type { DatabaseService } from './database.js';
 import {
   sessionSegments,

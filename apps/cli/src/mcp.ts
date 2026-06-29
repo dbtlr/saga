@@ -7,14 +7,6 @@ import {
   type SagaLinkIndexReference,
 } from '@saga/connectors';
 import {
-  createSagaMcpServer,
-  type GetSessionContextInput,
-  type JsonRpcRequest,
-  type ListRecentSessionsInput,
-  type SearchMemoryInput,
-  type SearchSessionsInput,
-} from '@saga/mcp';
-import {
   expandRecallContext,
   listActiveContextClaims,
   listContextIndexEntries,
@@ -31,8 +23,17 @@ import {
   type RecallSegmentMatch,
   type RecentSessionRecord,
 } from '@saga/db';
+import {
+  createSagaMcpServer,
+  type GetSessionContextInput,
+  type JsonRpcRequest,
+  type ListRecentSessionsInput,
+  type SearchMemoryInput,
+  type SearchSessionsInput,
+} from '@saga/mcp';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
+
 import { compileActiveContextFromDatabase, compileProjectActiveContext } from './context.js';
 import { findProjectRoot, readBindingFile } from './init.js';
 import { type RenderOptions } from './render.js';

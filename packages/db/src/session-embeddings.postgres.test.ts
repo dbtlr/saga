@@ -2,12 +2,8 @@ import { eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
-import {
-  indexSessionSegmentEmbeddings,
-  sessionSegmentEmbeddingInputHash,
-  type SessionEmbeddingGenerator,
-} from './session-embeddings.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -19,6 +15,11 @@ import {
   users,
   workspaces,
 } from './schema.js';
+import {
+  indexSessionSegmentEmbeddings,
+  sessionSegmentEmbeddingInputHash,
+  type SessionEmbeddingGenerator,
+} from './session-embeddings.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;

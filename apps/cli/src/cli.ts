@@ -5,10 +5,10 @@ import { runIngestCommand } from './ingest.js';
 import { runInit } from './init.js';
 import { runMcpCommand } from './mcp.js';
 import { runRecallCommand } from './recall.js';
+import { errorLine, renderOptionsFromGlobals } from './render.js';
 import { runServiceCommand } from './service.js';
 import { runSessionsCommand } from './sessions.js';
 import { runStartCommand } from './start.js';
-import { errorLine, renderOptionsFromGlobals } from './render.js';
 
 export type OutputFormat = 'records' | 'json' | 'jsonl' | 'ids';
 export type ColorMode = 'auto' | 'always' | 'never';

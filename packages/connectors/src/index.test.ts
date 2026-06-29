@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+
 import { resolveConnector, rewriteConnectorReferencesToSagaLinks } from './index.js';
 
 describe('resolveConnector', () => {

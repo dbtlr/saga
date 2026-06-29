@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
+
 import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
-import {
-  extractCodexTranscriptImportHints,
-  normalizeCodexTranscript,
-} from './codex-transcript-normalizer.js';
+
 import {
   extractClaudeTranscriptImportHints,
   normalizeClaudeTranscript,
 } from './claude-transcript-normalizer.js';
+import {
+  extractCodexTranscriptImportHints,
+  normalizeCodexTranscript,
+} from './codex-transcript-normalizer.js';
 import type { DatabaseError, DatabaseService } from './database.js';
-import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from './session-segments.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -28,6 +29,7 @@ import {
   type SourceBinding,
   type User,
 } from './schema.js';
+import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from './session-segments.js';
 import type {
   NormalizedTranscriptTurn,
   TranscriptImportHints,
