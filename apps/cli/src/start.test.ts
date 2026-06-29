@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   cliServiceCommand,
@@ -19,7 +19,7 @@ const renderOptions = {
 };
 
 describe('renderStartReport', () => {
-  test('renders service and control-plane endpoints', () => {
+  it('renders service and control-plane endpoints', () => {
     expect(
       renderStartReport(
         {
@@ -34,7 +34,7 @@ describe('renderStartReport', () => {
 });
 
 describe('runStartCommand', () => {
-  test('launches the control-plane dev server when the service is already running', async () => {
+  it('launches the control-plane dev server when the service is already running', async () => {
     const output: string[] = [];
     const exitCode = await runStartCommand([], renderOptions, (text) => output.push(text), {
       checkHealth: async () => 'ok (http://127.0.0.1:4766/health)',
@@ -50,7 +50,7 @@ describe('runStartCommand', () => {
     expect(output[0]).toContain('service  already running');
   });
 
-  test('starts an embedded service when health is unreachable', async () => {
+  it('starts an embedded service when health is unreachable', async () => {
     const output: string[] = [];
     const serviceChild = new FakeChildProcess();
     let healthChecks = 0;
@@ -72,7 +72,7 @@ describe('runStartCommand', () => {
     expect(serviceChild.signals).toContain('SIGTERM');
   });
 
-  test('cleans up the service child when startup health checks fail', async () => {
+  it('cleans up the service child when startup health checks fail', async () => {
     const serviceChild = new FakeChildProcess();
     let healthChecks = 0;
 
@@ -95,7 +95,7 @@ describe('runStartCommand', () => {
     expect(serviceChild.signals).toContain('SIGTERM');
   });
 
-  test('returns a signal exit code when interrupted during service startup', async () => {
+  it('returns a signal exit code when interrupted during service startup', async () => {
     const serviceChild = new FakeChildProcess();
     let healthChecks = 0;
 
@@ -120,14 +120,14 @@ describe('runStartCommand', () => {
 });
 
 describe('process command builders', () => {
-  test('builds the control-plane dev command through pnpm', () => {
+  it('builds the control-plane dev command through pnpm', () => {
     expect(controlPlaneCommand({})).toStrictEqual({
       args: ['--filter', '@saga/control-plane', 'dev'],
       command: 'pnpm',
     });
   });
 
-  test('builds the service command as a CLI process', () => {
+  it('builds the service command as a CLI process', () => {
     const command = cliServiceCommand();
 
     expect(command.command).toBe(process.execPath);
@@ -137,7 +137,7 @@ describe('process command builders', () => {
 });
 
 describe('waitForForegroundChild', () => {
-  test('waits for foreground exit after forwarding a signal', async () => {
+  it('waits for foreground exit after forwarding a signal', async () => {
     const foreground = new FakeChildProcess({ autoExitOnKill: false });
     const service = new FakeChildProcess({ autoExitOnKill: false });
     let resolved = false;
@@ -165,7 +165,7 @@ describe('waitForForegroundChild', () => {
     expect(resolved).toBe(true);
   });
 
-  test('maps foreground SIGTERM exits to 143', async () => {
+  it('maps foreground SIGTERM exits to 143', async () => {
     const foreground = new FakeChildProcess();
 
     const result = waitForForegroundChild(foreground as unknown as ChildProcess, []);

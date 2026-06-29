@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { compileActiveContext, renderActiveContextMarkdown } from './index.js';
 
 describe('compileActiveContext', () => {
-  test('compiles profile, current claims, and recent activity', () => {
+  it('compiles profile, current claims, and recent activity', () => {
     const document = compileActiveContext({
       claims: [
         {
@@ -97,7 +97,7 @@ describe('compileActiveContext', () => {
     expect(document.sections[3]?.lines[0]).toContain('codex.UserPromptSubmit');
   });
 
-  test('renders markdown', () => {
+  it('renders markdown', () => {
     const markdown = renderActiveContextMarkdown(
       compileActiveContext({
         claims: [],

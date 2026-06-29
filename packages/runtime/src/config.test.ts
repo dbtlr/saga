@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Effect, Exit } from 'effect';
-import { assert, describe, expect, test } from 'vitest';
+import { assert, describe, expect, it, test } from 'vitest';
 
 import {
   ConfigError,
@@ -16,7 +16,7 @@ import {
 } from './config.js';
 
 describe('parseRuntimeConfig', () => {
-  test('applies defaults and reads known environment values', () => {
+  it('applies defaults and reads known environment values', () => {
     const { config, issues } = parseRuntimeConfig({
       DATABASE_URL: 'postgres://localhost/saga',
       OPENAI_API_KEY: 'sk-test',
@@ -39,7 +39,7 @@ describe('parseRuntimeConfig', () => {
     });
   });
 
-  test('parses service host and port', () => {
+  it('parses service host and port', () => {
     const { config, issues } = parseRuntimeConfig({
       SAGA_SERVICE_HOST: '0.0.0.0',
       SAGA_SERVICE_PORT: '5000',
@@ -52,7 +52,7 @@ describe('parseRuntimeConfig', () => {
     });
   });
 
-  test('loads secret-bearing values from file indirection', () => {
+  it('loads secret-bearing values from file indirection', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const databaseUrlFile = join(cwd, 'database-url');
     const openAiKeyFile = join(cwd, 'openai-key');
@@ -69,7 +69,7 @@ describe('parseRuntimeConfig', () => {
     expect(config.secrets.openaiApiKey).toBe('sk-file');
   });
 
-  test('prefers direct secret-bearing env values over file indirection', () => {
+  it('prefers direct secret-bearing env values over file indirection', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const databaseUrlFile = join(cwd, 'database-url');
     writeFileSync(databaseUrlFile, 'postgres://file/saga\n');
@@ -83,7 +83,7 @@ describe('parseRuntimeConfig', () => {
     expect(config.databaseUrl).toBe('postgres://direct/saga');
   });
 
-  test('returns validation issues for unreadable secret files', () => {
+  it('returns validation issues for unreadable secret files', () => {
     const { config, issues } = parseRuntimeConfig({
       OPENAI_API_KEY_FILE: '/tmp/saga-missing-secret-file',
     });
@@ -96,7 +96,7 @@ describe('parseRuntimeConfig', () => {
     ]);
   });
 
-  test('returns validation issues for blank secret files', () => {
+  it('returns validation issues for blank secret files', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const openAiKeyFile = join(cwd, 'openai-key');
     writeFileSync(openAiKeyFile, '\n');
@@ -114,7 +114,7 @@ describe('parseRuntimeConfig', () => {
     ]);
   });
 
-  test('returns validation issues for invalid enum values', () => {
+  it('returns validation issues for invalid enum values', () => {
     const { config, issues } = parseRuntimeConfig({
       SAGA_ENV: 'local',
       SAGA_LOG_LEVEL: 'trace',
@@ -132,7 +132,7 @@ describe('parseRuntimeConfig', () => {
 });
 
 describe('redactRuntimeConfig', () => {
-  test('redacts secret-bearing values', () => {
+  it('redacts secret-bearing values', () => {
     const { config } = parseRuntimeConfig({
       DATABASE_URL: 'postgres://localhost/saga',
       OPENAI_API_KEY: 'sk-test',
@@ -154,7 +154,7 @@ describe('redactRuntimeConfig', () => {
 });
 
 describe('loadLocalEnv', () => {
-  test('loads configured env files in order', () => {
+  it('loads configured env files in order', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\nDATABASE_URL=postgres://env\n');
     writeFileSync(join(cwd, '.env.local'), 'SAGA_LOG_LEVEL=warn\nOPENAI_API_KEY=local\n');
@@ -168,7 +168,7 @@ describe('loadLocalEnv', () => {
 });
 
 describe('loadRuntimeConfig', () => {
-  test('exposes validation failures as Effect errors', async () => {
+  it('exposes validation failures as Effect errors', async () => {
     const result = await Effect.runPromiseExit(
       loadRuntimeConfig({
         env: { SAGA_ENV: 'bad' },
@@ -180,7 +180,7 @@ describe('loadRuntimeConfig', () => {
     expect(result.cause.toString()).toContain('ConfigError');
   });
 
-  test('loads explicit env over local env files', async () => {
+  it('loads explicit env over local env files', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\n');
 
@@ -196,7 +196,7 @@ describe('loadRuntimeConfig', () => {
 });
 
 describe('runtimeConfigLive', () => {
-  test('provides runtime config through an Effect layer', async () => {
+  it('provides runtime config through an Effect layer', async () => {
     const program = Effect.gen(function* program() {
       return yield* RuntimeConfigTag;
     }).pipe(

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   checkNodeVersion,
@@ -37,7 +37,7 @@ const fixtureChecks: DoctorCheck[] = [
 ];
 
 describe('renderDoctor', () => {
-  test('renders unicode status tokens', () => {
+  it('renders unicode status tokens', () => {
     expect(
       renderDoctor(fixtureChecks, {
         ascii: false,
@@ -48,13 +48,13 @@ describe('renderDoctor', () => {
     ).toContain('postgres    ⚠ DATABASE_URL is not set');
   });
 
-  test('renders ascii status tokens', () => {
+  it('renders ascii status tokens', () => {
     expect(
       renderDoctor(fixtureChecks, { ascii: true, color: 'never', format: 'records', isTty: false }),
     ).toContain('migrations  [fail] connection refused');
   });
 
-  test('renders newer migration compatibility failures', () => {
+  it('renders newer migration compatibility failures', () => {
     expect(
       renderDoctor(
         [
@@ -72,7 +72,7 @@ describe('renderDoctor', () => {
 });
 
 describe('runDoctor', () => {
-  test('renders json output', async () => {
+  it('renders json output', async () => {
     const output = await runDoctor([], {
       ascii: true,
       color: 'never',
@@ -85,7 +85,7 @@ describe('runDoctor', () => {
 });
 
 describe('doctorProject', () => {
-  test('reports Node and pnpm engine requirements', async () => {
+  it('reports Node and pnpm engine requirements', async () => {
     const checks = await doctorProject({ cwd: workspaceRoot });
 
     expect(checks).toContainEqual(
@@ -104,7 +104,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('reports available embedding provider without exposing the cached API key', async () => {
+  it('reports available embedding provider without exposing the cached API key', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
     mkdirSync(join(homeDir, '.codex'), { recursive: true });
@@ -137,7 +137,7 @@ describe('doctorProject', () => {
     expect(JSON.stringify(checks)).not.toContain('sk-do-not-print');
   });
 
-  test('warns when embeddings are skipped and lexical recall remains available', async () => {
+  it('warns when embeddings are skipped and lexical recall remains available', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
     mkdirSync(join(homeDir, '.codex'), { recursive: true });
@@ -174,7 +174,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('does not expose malformed auth parser text or source excerpts in embeddings output', async () => {
+  it('does not expose malformed auth parser text or source excerpts in embeddings output', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const codexHome = join(cwd, 'codex-home');
     mkdirSync(codexHome, { recursive: true });
@@ -219,7 +219,7 @@ describe('doctorProject', () => {
     expect(publicStatus).not.toContain('JSON');
   });
 
-  test('reports lexical-only by policy when remote embeddings are disabled, even with valid auth', async () => {
+  it('reports lexical-only by policy when remote embeddings are disabled, even with valid auth', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
     mkdirSync(join(homeDir, '.codex'), { recursive: true });
@@ -252,7 +252,7 @@ describe('doctorProject', () => {
     expect(JSON.stringify(checks)).not.toContain('sk-policy-doctor-secret');
   });
 
-  test('reports harness target states', async () => {
+  it('reports harness target states', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
 
     const checks = await doctorProject({ cwd });
@@ -275,7 +275,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('fails active harness hooks without local binding', async () => {
+  it('fails active harness hooks without local binding', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     mkdirSync(join(cwd, '.codex'));
     writeFileSync(
@@ -299,7 +299,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('warns when Codex hooks are installed but trust is pending', async () => {
+  it('warns when Codex hooks are installed but trust is pending', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const hostId = 'host-id';
     const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
@@ -365,7 +365,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('passes Codex harness when activation evidence proves trusted hooks are executing', async () => {
+  it('passes Codex harness when activation evidence proves trusted hooks are executing', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const hostId = 'host-id';
     const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
@@ -431,7 +431,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('fails stale Codex harness state even when activation evidence is active', async () => {
+  it('fails stale Codex harness state even when activation evidence is active', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
     const hooksPath = join(cwd, '.codex', 'hooks.json');
@@ -492,7 +492,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('fails Codex harness when SessionStart matcher misses continuation sources', async () => {
+  it('fails Codex harness when SessionStart matcher misses continuation sources', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const hostId = 'host-id';
     const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
@@ -563,7 +563,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('fails malformed harness binding even when hooks are active', async () => {
+  it('fails malformed harness binding even when hooks are active', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     mkdirSync(join(cwd, '.codex'));
     writeFileSync(
@@ -622,7 +622,7 @@ describe('doctorProject', () => {
     );
   });
 
-  test('reports invalid binding files as binding failures', async () => {
+  it('reports invalid binding files as binding failures', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     writeFileSync(join(cwd, '.saga.local.json'), 'not json');
 
@@ -644,7 +644,7 @@ describe('doctorProject', () => {
 });
 
 describe('engine checks', () => {
-  test('evaluates the root Node engine range', () => {
+  it('evaluates the root Node engine range', () => {
     expect(checkNodeVersion(workspaceRoot, '23.9.0')).toMatchObject({
       label: 'node',
       status: 'fail',
@@ -659,14 +659,14 @@ describe('engine checks', () => {
     });
   });
 
-  test('evaluates caret engine ranges', () => {
+  it('evaluates caret engine ranges', () => {
     expect(satisfiesEngineRange('11.8.0', '^11.0.0')).toBe(true);
     expect(satisfiesEngineRange('12.0.0', '^11.0.0')).toBe(false);
   });
 });
 
 describe('serviceDoctorStatus', () => {
-  test('requires both a running process and healthy service response', () => {
+  it('requires both a running process and healthy service response', () => {
     expect(
       serviceDoctorStatus({
         health: 'unreachable (connection refused)',

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createOpenAiSessionEmbeddingGenerator } from './session-embeddings.js';
 
@@ -96,7 +96,7 @@ const malformedOpenAiPayloadCases = [
 ] satisfies readonly MalformedOpenAiPayloadCase[];
 
 describe('createOpenAiSessionEmbeddingGenerator', () => {
-  test('maps out-of-order OpenAI embedding data by response index', async () => {
+  it('maps out-of-order OpenAI embedding data by response index', async () => {
     const requests: RequestInit[] = [];
     const fetchImpl: typeof fetch = async (_url, init) => {
       requests.push(init ?? {});
@@ -146,7 +146,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     });
   });
 
-  test.each(openAiHttpFailureCases)(
+  it.each(openAiHttpFailureCases)(
     'rejects OpenAI HTTP/API failures without leaking provider detail: $name',
     async ({ body, expectedMessage, leakedDetails, status }) => {
       const fetchImpl: typeof fetch = async () => jsonResponse(body, { status });
@@ -165,7 +165,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     },
   );
 
-  test('categorizes generic OpenAI client failures without reading provider detail', async () => {
+  it('categorizes generic OpenAI client failures without reading provider detail', async () => {
     const fetchImpl: typeof fetch = async () =>
       jsonResponse(
         {
@@ -190,7 +190,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     expect(message).not.toContain('untrusted_error_type');
   });
 
-  test.each(malformedOpenAiPayloadCases)(
+  it.each(malformedOpenAiPayloadCases)(
     'rejects malformed OpenAI embedding payloads: $name',
     async ({ body, message }) => {
       const generator = createOpenAiSessionEmbeddingGenerator({
@@ -203,7 +203,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     },
   );
 
-  test('rejects invalid JSON OpenAI embedding payloads', async () => {
+  it('rejects invalid JSON OpenAI embedding payloads', async () => {
     const generator = createOpenAiSessionEmbeddingGenerator({
       apiKey: 'sk-test',
       fetch: async () =>
@@ -221,7 +221,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     );
   });
 
-  test('rejects duplicate response indexes', async () => {
+  it('rejects duplicate response indexes', async () => {
     const generator = createOpenAiSessionEmbeddingGenerator({
       apiKey: 'sk-test',
       fetch: async () =>
@@ -239,7 +239,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     );
   });
 
-  test('rejects out-of-range response indexes', async () => {
+  it('rejects out-of-range response indexes', async () => {
     const generator = createOpenAiSessionEmbeddingGenerator({
       apiKey: 'sk-test',
       fetch: async () =>

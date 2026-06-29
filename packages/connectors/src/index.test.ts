@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveConnector, rewriteConnectorReferencesToSagaLinks } from './index.js';
 
 describe('resolveConnector', () => {
-  test('retrieves GitHub pull requests through a configured repository', async () => {
+  it('retrieves GitHub pull requests through a configured repository', async () => {
     const result = await resolveConnector(
       {
         externalId: 'pr:12',
@@ -50,7 +50,7 @@ describe('resolveConnector', () => {
     });
   });
 
-  test('retrieves Mimir and Norn sources without owning their domains', async () => {
+  it('retrieves Mimir and Norn sources without owning their domains', async () => {
     await expect(
       resolveConnector({
         externalId: 'SGA-72',
@@ -93,7 +93,7 @@ describe('resolveConnector', () => {
     });
   });
 
-  test('retrieves generic document-store sources', async () => {
+  it('retrieves generic document-store sources', async () => {
     await expect(
       resolveConnector({
         externalId: 'ENG-CI-CD-QUALITY-GATES',
@@ -135,7 +135,7 @@ describe('resolveConnector', () => {
     });
   });
 
-  test('rejects invalid GitHub repositories and external ids', async () => {
+  it('rejects invalid GitHub repositories and external ids', async () => {
     await expect(
       resolveConnector({
         externalId: 'pr:../../settings',
@@ -162,7 +162,7 @@ describe('resolveConnector', () => {
     ).rejects.toThrow('invalid GitHub repository');
   });
 
-  test('rejects unsupported source types', async () => {
+  it('rejects unsupported source types', async () => {
     await expect(
       resolveConnector({
         externalId: 'x',
@@ -177,7 +177,7 @@ describe('resolveConnector', () => {
 });
 
 describe('rewriteConnectorReferencesToSagaLinks', () => {
-  test('rewrites matching connector references to Saga Links', () => {
+  it('rewrites matching connector references to Saga Links', () => {
     const rewritten = rewriteConnectorReferencesToSagaLinks(
       [
         {
@@ -217,7 +217,7 @@ describe('rewriteConnectorReferencesToSagaLinks', () => {
     });
   });
 
-  test('does not rewrite a matching connector and external id from a different source binding', () => {
+  it('does not rewrite a matching connector and external id from a different source binding', () => {
     const rewritten = rewriteConnectorReferencesToSagaLinks(
       [
         {

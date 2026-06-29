@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   redactMcpStructuredOutput,
@@ -15,7 +15,7 @@ async function* chunks(text: string) {
 }
 
 describe('runMcpCommand', () => {
-  test('responds to newline-delimited JSON-RPC requests', async () => {
+  it('responds to newline-delimited JSON-RPC requests', async () => {
     const output: string[] = [];
 
     await runMcpCommand(
@@ -34,7 +34,7 @@ describe('runMcpCommand', () => {
     expect(output[0]).toContain('get_session_context');
   });
 
-  test('streams a response before stdin closes', async () => {
+  it('streams a response before stdin closes', async () => {
     const output: string[] = [];
     let release: (() => void) | undefined;
     async function* openStream() {
@@ -57,7 +57,7 @@ describe('runMcpCommand', () => {
     await running;
   });
 
-  test('returns JSON-RPC parse errors for malformed frames', async () => {
+  it('returns JSON-RPC parse errors for malformed frames', async () => {
     const output: string[] = [];
 
     await runMcpCommand(
@@ -76,7 +76,7 @@ describe('runMcpCommand', () => {
     });
   });
 
-  test('returns JSON-RPC invalid request errors for invalid ids', async () => {
+  it('returns JSON-RPC invalid request errors for invalid ids', async () => {
     const output: string[] = [];
 
     await runMcpCommand(
@@ -98,7 +98,7 @@ describe('runMcpCommand', () => {
 });
 
 describe('rewriteResolvedSagaLinkReferences', () => {
-  test('rewrites resolved connector references through workspace Context Index entries', async () => {
+  it('rewrites resolved connector references through workspace Context Index entries', async () => {
     const rewritten = await rewriteResolvedSagaLinkReferences(
       {
         externalId: 'notes/architecture.md',
@@ -151,7 +151,7 @@ describe('rewriteResolvedSagaLinkReferences', () => {
     });
   });
 
-  test('uses metadata-only retrieval by default for MCP link resolution', async () => {
+  it('uses metadata-only retrieval by default for MCP link resolution', async () => {
     const rewritten = await rewriteResolvedSagaLinkReferences(
       {
         externalId: 'pr:12',
@@ -184,7 +184,7 @@ describe('rewriteResolvedSagaLinkReferences', () => {
     expect(JSON.stringify(rewritten)).not.toContain('secret-token');
   });
 
-  test('caps metadata content returned through MCP link resolution', async () => {
+  it('caps metadata content returned through MCP link resolution', async () => {
     const rewritten = await rewriteResolvedSagaLinkReferences(
       {
         externalId: 'notes/large.md',
@@ -212,7 +212,7 @@ describe('rewriteResolvedSagaLinkReferences', () => {
 });
 
 describe('redactResolvedSagaLink', () => {
-  test('omits source binding config from MCP structured results', () => {
+  it('omits source binding config from MCP structured results', () => {
     const redacted = redactResolvedSagaLink({
       entry: {
         externalId: 'pr:12',
@@ -248,7 +248,7 @@ describe('redactResolvedSagaLink', () => {
 });
 
 describe('redactMcpStructuredOutput', () => {
-  test('removes unsafe locator keys and redacts local path values', () => {
+  it('removes unsafe locator keys and redacts local path values', () => {
     const redacted = redactMcpStructuredOutput({
       rawSessionRecord: {
         id: 'raw-1',
@@ -354,7 +354,7 @@ describe('redactMcpStructuredOutput', () => {
     expect(JSON.stringify(redacted)).not.toContain('file:///tmp/saga/session.jsonl');
   });
 
-  test('does not preserve spoofed raw forensic body fields', () => {
+  it('does not preserve spoofed raw forensic body fields', () => {
     const exposureWarning =
       'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.';
     const redacted = redactMcpStructuredOutput({
@@ -441,7 +441,7 @@ describe('redactMcpStructuredOutput', () => {
 });
 
 describe('searchMemoryEntries', () => {
-  test('ranks matches across claims, recent activity, and Active Context lines', () => {
+  it('ranks matches across claims, recent activity, and Active Context lines', () => {
     const entries: MemorySearchEntry[] = [
       {
         confidence: 0.72,
@@ -522,7 +522,7 @@ describe('searchMemoryEntries', () => {
     expect(contextIndexMatch?.matchedFields).toContain('title');
   });
 
-  test('redacts local paths from structured search memory matches', () => {
+  it('redacts local paths from structured search memory matches', () => {
     const matches = searchMemoryEntries({ query: 'transcript' }, [
       {
         confidence: 0.45,

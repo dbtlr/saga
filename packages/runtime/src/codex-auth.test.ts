@@ -2,12 +2,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveCodexAuth } from './codex-auth.js';
 
 describe('resolveCodexAuth', () => {
-  test('uses CODEX_HOME/auth.json before ~/.codex/auth.json', () => {
+  it('uses CODEX_HOME/auth.json before ~/.codex/auth.json', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     const codexHome = join(cwd, 'codex-home');
     const userHome = join(cwd, 'home');
@@ -34,7 +34,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.detail).not.toContain('sk-codex');
   });
 
-  test('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json is absent', () => {
+  it('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json is absent', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     const codexHome = join(cwd, 'codex-home');
     const userHome = join(cwd, 'home');
@@ -59,7 +59,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.status === 'available' ? auth.openaiApiKey : undefined).toBe('sk-home');
   });
 
-  test('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has login tokens without an API key', () => {
+  it('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has login tokens without an API key', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     const codexHome = join(cwd, 'codex-home');
     const userHome = join(cwd, 'home');
@@ -97,7 +97,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.detail).not.toContain('refresh');
   });
 
-  test('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has an unknown shape without an API key', () => {
+  it('falls back to ~/.codex/auth.json when CODEX_HOME/auth.json has an unknown shape without an API key', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     const codexHome = join(cwd, 'codex-home');
     const userHome = join(cwd, 'home');
@@ -124,7 +124,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.detail).not.toContain('sk-home');
   });
 
-  test('reports Codex login tokens without treating them as embedding credentials', () => {
+  it('reports Codex login tokens without treating them as embedding credentials', () => {
     const userHome = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     mkdirSync(join(userHome, '.codex'), { recursive: true });
     writeFileSync(
@@ -154,7 +154,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.guidance).toContain('Lexical recall remains available');
   });
 
-  test('reports missing auth files as unavailable', () => {
+  it('reports missing auth files as unavailable', () => {
     const auth = resolveCodexAuth({
       env: {},
       homeDir: mkdtempSync(join(tmpdir(), 'saga-codex-auth-')),
@@ -167,7 +167,7 @@ describe('resolveCodexAuth', () => {
     });
   });
 
-  test('reports malformed auth files as unavailable without throwing', () => {
+  it('reports malformed auth files as unavailable without throwing', () => {
     const userHome = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     mkdirSync(join(userHome, '.codex'), { recursive: true });
     writeFileSync(join(userHome, '.codex', 'auth.json'), '{nope');
@@ -185,7 +185,7 @@ describe('resolveCodexAuth', () => {
     expect(auth.guidance).toContain('Lexical recall remains available');
   });
 
-  test('reports malformed auth files without parser text or source excerpts', () => {
+  it('reports malformed auth files without parser text or source excerpts', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     const codexHome = join(cwd, 'codex-home');
     mkdirSync(codexHome, { recursive: true });
@@ -214,7 +214,7 @@ describe('resolveCodexAuth', () => {
     expect(publicStatus).not.toContain('JSON');
   });
 
-  test('reports unreadable auth files as unavailable without trying to mutate them', () => {
+  it('reports unreadable auth files as unavailable without trying to mutate them', () => {
     const userHome = mkdtempSync(join(tmpdir(), 'saga-codex-auth-'));
     mkdirSync(join(userHome, '.codex', 'auth.json'), { recursive: true });
 

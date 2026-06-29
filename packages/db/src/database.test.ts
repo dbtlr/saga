@@ -1,6 +1,6 @@
 import { RuntimeConfigLive } from '@saga/runtime';
 import { Effect, Exit } from 'effect';
-import { assert, describe, expect, test } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 
 import {
   assertMigrationsCurrent,
@@ -48,7 +48,7 @@ function serviceWithMigrationCount(
 }
 
 describe('makeDatabase', () => {
-  test('requires DATABASE_URL', async () => {
+  it('requires DATABASE_URL', async () => {
     const result = await Effect.runPromiseExit(
       makeDatabase({
         databaseUrl: undefined,
@@ -70,7 +70,7 @@ describe('makeDatabase', () => {
 });
 
 describe('databaseLive', () => {
-  test('provides a closeable database service from runtime config', async () => {
+  it('provides a closeable database service from runtime config', async () => {
     const program = Effect.gen(function* program() {
       const database = yield* DatabaseTag;
       expect(database.db).toBeDefined();
@@ -90,7 +90,7 @@ describe('databaseLive', () => {
 });
 
 describe('assertMigrationsCurrent', () => {
-  test('fails when fewer than the expected migrations are applied', async () => {
+  it('fails when fewer than the expected migrations are applied', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT - 1)),
@@ -100,7 +100,7 @@ describe('assertMigrationsCurrent', () => {
     });
   });
 
-  test('returns migration status when migrations are current', async () => {
+  it('returns migration status when migrations are current', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT)),
@@ -113,7 +113,7 @@ describe('assertMigrationsCurrent', () => {
     });
   });
 
-  test('fails when an applied migration hash differs from this build', async () => {
+  it('fails when an applied migration hash differs from this build', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(
@@ -126,7 +126,7 @@ describe('assertMigrationsCurrent', () => {
     });
   });
 
-  test('fails when the database has newer migrations than this build expects', async () => {
+  it('fails when the database has newer migrations than this build expects', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT + 1)),
@@ -138,7 +138,7 @@ describe('assertMigrationsCurrent', () => {
 });
 
 describe('getMigrationStatus', () => {
-  test('reports zero applied migrations when the drizzle table is missing', async () => {
+  it('reports zero applied migrations when the drizzle table is missing', async () => {
     await expect(
       Effect.runPromise(getMigrationStatus(serviceWithMigrationCount(99, { tableExists: false }))),
     ).resolves.toStrictEqual({
@@ -150,7 +150,7 @@ describe('getMigrationStatus', () => {
 });
 
 describe('runMigrationsSafely', () => {
-  test('skips migration execution when migrations are already current', async () => {
+  it('skips migration execution when migrations are already current', async () => {
     await expect(
       Effect.runPromise(runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT))),
     ).resolves.toStrictEqual({

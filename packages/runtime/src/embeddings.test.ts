@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { CodexAuthStatus } from './codex-auth.js';
 import type { EmbeddingPolicy } from './embedding-policy.js';
@@ -42,7 +42,7 @@ const disabledPolicy: EmbeddingPolicy = {
 };
 
 describe('composeEmbeddingWorkflow', () => {
-  test('policy enabled with available credentials is vector-aware', () => {
+  it('policy enabled with available credentials is vector-aware', () => {
     const workflow = composeEmbeddingWorkflow({ auth: availableAuth, policy: enabledPolicy });
 
     expect(workflow.mode).toBe('vector-aware');
@@ -55,7 +55,7 @@ describe('composeEmbeddingWorkflow', () => {
     expect(JSON.stringify(workflow)).not.toContain('sk-secret');
   });
 
-  test('policy enabled with missing credentials degrades to lexical fallback', () => {
+  it('policy enabled with missing credentials degrades to lexical fallback', () => {
     const workflow = composeEmbeddingWorkflow({ auth: missingAuth, policy: enabledPolicy });
 
     expect(workflow.mode).toBe('lexical-fallback');
@@ -66,7 +66,7 @@ describe('composeEmbeddingWorkflow', () => {
     expect(workflow.lexicalFallback.state).toBe('active');
   });
 
-  test('policy disabled is lexical-only by policy even when credentials are available', () => {
+  it('policy disabled is lexical-only by policy even when credentials are available', () => {
     const workflow = composeEmbeddingWorkflow({ auth: availableAuth, policy: disabledPolicy });
 
     expect(workflow.mode).toBe('lexical-only-by-policy');
@@ -79,7 +79,7 @@ describe('composeEmbeddingWorkflow', () => {
     expect(JSON.stringify(workflow)).not.toContain('sk-secret');
   });
 
-  test('policy disabled takes precedence over missing credentials', () => {
+  it('policy disabled takes precedence over missing credentials', () => {
     const workflow = composeEmbeddingWorkflow({ auth: missingAuth, policy: disabledPolicy });
 
     expect(workflow.mode).toBe('lexical-only-by-policy');
@@ -88,7 +88,7 @@ describe('composeEmbeddingWorkflow', () => {
 });
 
 describe('inspectEmbeddingWorkflow', () => {
-  test('resolves installation policy and Codex auth together', () => {
+  it('resolves installation policy and Codex auth together', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-embedding-inspect-'));
     const sagaHome = join(cwd, 'saga-home');
     const codexHome = join(cwd, 'codex-home');
@@ -110,7 +110,7 @@ describe('inspectEmbeddingWorkflow', () => {
     expect(JSON.stringify(workflow)).not.toContain('sk-inspect');
   });
 
-  test('keeps malformed auth parser text and secrets out of workflow status', () => {
+  it('keeps malformed auth parser text and secrets out of workflow status', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-embedding-auth-'));
     const sagaHome = join(cwd, 'saga-home');
     const codexHome = join(cwd, 'codex-home');

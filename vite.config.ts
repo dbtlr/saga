@@ -58,7 +58,6 @@ const config = {
         'sort-keys': 'off',
         //  - 273 sites; autofix rewrites test()->it() without fixing the vitest
         //    import; large mechanical churn of debatable value.
-        'vitest/consistent-test-it': 'off',
         //  - sequential awaits in DB/transaction loops, ordered imports, and a
         //    health-poll-with-delay are intentional; Promise.all would be wrong.
         'no-await-in-loop': 'off',

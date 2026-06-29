@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   createLaunchdSupervisor,
@@ -25,7 +25,7 @@ const renderOptions = {
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
 describe('serviceStatus', () => {
-  test('reports unreachable service', async () => {
+  it('reports unreachable service', async () => {
     const output = await serviceStatus(renderOptions);
 
     expect(output).toContain('Saga service status');
@@ -34,7 +34,7 @@ describe('serviceStatus', () => {
 });
 
 describe('renderServiceStatus', () => {
-  test('reports observed running state', () => {
+  it('reports observed running state', () => {
     expect(
       renderServiceStatus(
         {
@@ -51,7 +51,7 @@ describe('renderServiceStatus', () => {
     ).toContain('process     running');
   });
 
-  test('renders observed log paths', () => {
+  it('renders observed log paths', () => {
     expect(
       renderServiceStatus(
         {
@@ -70,7 +70,7 @@ describe('renderServiceStatus', () => {
 });
 
 describe('runServiceCommand', () => {
-  test('dispatches lifecycle subcommands through the supervisor', async () => {
+  it('dispatches lifecycle subcommands through the supervisor', async () => {
     const supervisor = fakeSupervisor();
 
     const output = await runServiceCommand(['restart'], renderOptions, {
@@ -84,7 +84,7 @@ describe('runServiceCommand', () => {
     expect(output).toContain('health ok');
   });
 
-  test('reports stopped when launchd starts but health never becomes ready', async () => {
+  it('reports stopped when launchd starts but health never becomes ready', async () => {
     const output = await runServiceCommand(['start'], renderOptions, {
       healthCheck: async () => 'unreachable (connection refused)',
       healthProbe: { attempts: 1, intervalMs: 0 },
@@ -96,7 +96,7 @@ describe('runServiceCommand', () => {
     expect(output).toContain('health check failed');
   });
 
-  test('includes supervisor state in status output', async () => {
+  it('includes supervisor state in status output', async () => {
     const output = await runServiceCommand(['status'], renderOptions, {
       healthCheck: async () => 'unreachable (connection refused)',
       supervisor: fakeSupervisor('stopped'),
@@ -111,7 +111,7 @@ describe('runServiceCommand', () => {
 });
 
 describe('waitForServiceHealth', () => {
-  test('polls until health is ready', async () => {
+  it('polls until health is ready', async () => {
     let attempts = 0;
     const health = await waitForServiceHealth(
       'http://127.0.0.1:4766/health',
@@ -128,7 +128,7 @@ describe('waitForServiceHealth', () => {
 });
 
 describe('renderServiceLifecycle', () => {
-  test('renders launchd lifecycle details', () => {
+  it('renders launchd lifecycle details', () => {
     expect(
       renderServiceLifecycle(
         {
@@ -145,7 +145,7 @@ describe('renderServiceLifecycle', () => {
 });
 
 describe('renderLaunchdPlist', () => {
-  test('builds a launchd agent for saga service run', () => {
+  it('builds a launchd agent for saga service run', () => {
     const plist = renderLaunchdPlist({
       paths: {
         plistPath: '/Users/drew/Library/LaunchAgents/com.saga.service.plist',
@@ -162,7 +162,7 @@ describe('renderLaunchdPlist', () => {
     expect(plist).toContain('<string>run</string>');
   });
 
-  test('uses the package-local tsx executable', () => {
+  it('uses the package-local tsx executable', () => {
     expect(
       existsSync(join(workspaceRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs')),
     ).toBe(true);
@@ -170,14 +170,14 @@ describe('renderLaunchdPlist', () => {
 });
 
 describe('launchdPrintProcess', () => {
-  test('reports running only when launchctl output includes a pid', () => {
+  it('reports running only when launchctl output includes a pid', () => {
     expect(launchdPrintProcess('state = running\n\tpid = 12345\n')).toBe('running');
     expect(launchdPrintProcess('state = waiting\n\tlast exit code = 0\n')).toBe('not running');
   });
 });
 
 describe('createLaunchdSupervisor', () => {
-  test('does not mutate launchd state on non-macOS', async () => {
+  it('does not mutate launchd state on non-macOS', async () => {
     if (process.platform === 'darwin') {
       return;
     }

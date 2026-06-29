@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   redactAgentFacingSessionText,
@@ -6,7 +6,7 @@ import {
 } from './session-output-redaction.js';
 
 describe('session output redaction', () => {
-  test('redacts local transcript paths with spaces and UNC paths', () => {
+  it('redacts local transcript paths with spaces and UNC paths', () => {
     const redacted = redactAgentFacingSessionText(
       [
         'posix=/Users/Drew Smith/.codex/transcripts/session.jsonl',
@@ -26,7 +26,7 @@ describe('session output redaction', () => {
     expect(redacted).not.toContain('file://');
   });
 
-  test('redacts directory roots and extensionless paths with spaces', () => {
+  it('redacts directory roots and extensionless paths with spaces', () => {
     const redacted = redactAgentFacingSessionText(
       [
         'root=/Users/Drew Smith/Workspaces/saga',
@@ -52,7 +52,7 @@ describe('session output redaction', () => {
     expect(redacted).not.toContain('file://');
   });
 
-  test('preserves safe agent-facing URI schemes', () => {
+  it('preserves safe agent-facing URI schemes', () => {
     const redacted = redactAgentFacingSessionText(
       [
         'https://example.test/Users/Drew%20Smith/session.jsonl',
@@ -73,7 +73,7 @@ describe('session output redaction', () => {
     expect(redacted).not.toContain('[local-path-redacted]');
   });
 
-  test('preserves safe agent-facing source locators', () => {
+  it('preserves safe agent-facing source locators', () => {
     expect(redactAgentFacingSourceLocator('https://example.test/session/abc123')).toBe(
       'https://example.test/session/abc123',
     );
@@ -88,7 +88,7 @@ describe('session output redaction', () => {
     );
   });
 
-  test('nulls unsafe local and file source locators', () => {
+  it('nulls unsafe local and file source locators', () => {
     expect(redactAgentFacingSourceLocator(null)).toBeNull();
     expect(
       redactAgentFacingSourceLocator('file:///Users/Drew Smith/.codex/session.jsonl'),

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveEmbeddingPolicy } from './embedding-policy.js';
 
@@ -16,7 +16,7 @@ function writeSagaConfig(home: string, contents: string): void {
 }
 
 describe('resolveEmbeddingPolicy', () => {
-  test('reads enabled remote embeddings from the installation config', () => {
+  it('reads enabled remote embeddings from the installation config', () => {
     const home = tempHome();
     writeSagaConfig(home, JSON.stringify({ embeddings: { remote: 'enabled' } }));
 
@@ -28,7 +28,7 @@ describe('resolveEmbeddingPolicy', () => {
     });
   });
 
-  test('reads an explicit disabled standard from the installation config', () => {
+  it('reads an explicit disabled standard from the installation config', () => {
     const home = tempHome();
     writeSagaConfig(home, JSON.stringify({ embeddings: { remote: 'disabled' } }));
 
@@ -40,7 +40,7 @@ describe('resolveEmbeddingPolicy', () => {
     });
   });
 
-  test('defaults to disabled when no installation config file exists', () => {
+  it('defaults to disabled when no installation config file exists', () => {
     const home = tempHome();
 
     const policy = resolveEmbeddingPolicy({ env: {}, homeDir: home });
@@ -51,7 +51,7 @@ describe('resolveEmbeddingPolicy', () => {
     });
   });
 
-  test('defaults to disabled when the config omits embeddings.remote', () => {
+  it('defaults to disabled when the config omits embeddings.remote', () => {
     const home = tempHome();
     writeSagaConfig(home, JSON.stringify({ embeddings: {} }));
 
@@ -63,7 +63,7 @@ describe('resolveEmbeddingPolicy', () => {
     });
   });
 
-  test('defaults to disabled for non-canonical remote values', () => {
+  it('defaults to disabled for non-canonical remote values', () => {
     const home = tempHome();
     for (const remote of [true, 'ENABLED', 'yes', 1, null]) {
       writeSagaConfig(home, JSON.stringify({ embeddings: { remote } }));
@@ -72,7 +72,7 @@ describe('resolveEmbeddingPolicy', () => {
     }
   });
 
-  test('fails closed to disabled when the config is malformed JSON', () => {
+  it('fails closed to disabled when the config is malformed JSON', () => {
     const home = tempHome();
     writeSagaConfig(home, '{ not valid json');
 
@@ -83,7 +83,7 @@ describe('resolveEmbeddingPolicy', () => {
     expect(policy.detail.toLowerCase()).toContain('parse');
   });
 
-  test('fails closed to disabled when the config is unreadable', () => {
+  it('fails closed to disabled when the config is unreadable', () => {
     const home = tempHome();
 
     const policy = resolveEmbeddingPolicy({
@@ -98,7 +98,7 @@ describe('resolveEmbeddingPolicy', () => {
     expect(policy.source).toBe('default');
   });
 
-  test('reads SAGA_HOME/config.json ahead of the user home config', () => {
+  it('reads SAGA_HOME/config.json ahead of the user home config', () => {
     const home = tempHome();
     const sagaHome = join(home, 'saga-home');
     mkdirSync(sagaHome, { recursive: true });

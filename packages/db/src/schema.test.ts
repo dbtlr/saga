@@ -1,6 +1,6 @@
 import { getTableName } from 'drizzle-orm';
 import { getTableColumns } from 'drizzle-orm/utils';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   activityIntervals,
@@ -21,7 +21,7 @@ import {
 } from './schema.js';
 
 describe('schema', () => {
-  test('defines workspace registration tables', () => {
+  it('defines workspace registration tables', () => {
     expect(getTableName(workspaces)).toBe('workspaces');
     expect(getTableName(workspaceProfiles)).toBe('workspace_profiles');
     expect(getTableName(sourceBindings)).toBe('source_bindings');
@@ -39,14 +39,14 @@ describe('schema', () => {
     expect(getTableName(sessionSegmentEmbeddings)).toBe('session_segment_embeddings');
   });
 
-  test('keeps workspace profile one-to-one with workspace', () => {
+  it('keeps workspace profile one-to-one with workspace', () => {
     const columns = getTableColumns(workspaceProfiles);
 
     expect(columns.workspaceId.primary).toBe(true);
     expect(columns.profile.notNull).toBe(true);
   });
 
-  test('keeps source binding identity explicit', () => {
+  it('keeps source binding identity explicit', () => {
     const columns = getTableColumns(sourceBindings);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -55,7 +55,7 @@ describe('schema', () => {
     expect(columns.enabled.notNull).toBe(true);
   });
 
-  test('keeps raw events append-only source facts explicit', () => {
+  it('keeps raw events append-only source facts explicit', () => {
     const columns = getTableColumns(rawEvents);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -67,7 +67,7 @@ describe('schema', () => {
     expect(columns.provenance.notNull).toBe(true);
   });
 
-  test('keeps claim lifecycle and projection state explicit', () => {
+  it('keeps claim lifecycle and projection state explicit', () => {
     const eventColumns = getTableColumns(claimEvents);
     const currentColumns = getTableColumns(currentClaims);
 
@@ -79,7 +79,7 @@ describe('schema', () => {
     expect(currentColumns.state.notNull).toBe(true);
   });
 
-  test('keeps Context Index entries tied to configured sources', () => {
+  it('keeps Context Index entries tied to configured sources', () => {
     const columns = getTableColumns(contextIndexEntries);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -91,7 +91,7 @@ describe('schema', () => {
     expect(columns.importance.notNull).toBe(true);
   });
 
-  test('keeps host-user attribution separate from authorization', () => {
+  it('keeps host-user attribution separate from authorization', () => {
     const columns = getTableColumns(users);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -100,7 +100,7 @@ describe('schema', () => {
     expect(columns.externalSubject.notNull).toBe(false);
   });
 
-  test('keeps sessions tied to workspace, source, and author provenance', () => {
+  it('keeps sessions tied to workspace, source, and author provenance', () => {
     const columns = getTableColumns(sessions);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -111,7 +111,7 @@ describe('schema', () => {
     expect(columns.sourceLocatorHash.notNull).toBe(false);
   });
 
-  test('persists settlement state on activity intervals', () => {
+  it('persists settlement state on activity intervals', () => {
     const columns = getTableColumns(activityIntervals);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -122,7 +122,7 @@ describe('schema', () => {
     expect(columns.settlementTriggerRawEventId.notNull).toBe(false);
   });
 
-  test('stores raw session snapshots as durable evidence', () => {
+  it('stores raw session snapshots as durable evidence', () => {
     const columns = getTableColumns(rawSessionRecords);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -137,7 +137,7 @@ describe('schema', () => {
     expect(columns.contentHash.notNull).toBe(true);
   });
 
-  test('keeps normalized turns structured and traceable to raw snapshots', () => {
+  it('keeps normalized turns structured and traceable to raw snapshots', () => {
     const columns = getTableColumns(sessionTurns);
 
     expect(columns.workspaceId.notNull).toBe(true);
@@ -150,7 +150,7 @@ describe('schema', () => {
     expect(columns.rawEventIds.notNull).toBe(true);
   });
 
-  test('keeps recall segments positioned and embedding-backed', () => {
+  it('keeps recall segments positioned and embedding-backed', () => {
     const segmentColumns = getTableColumns(sessionSegments);
     const embeddingColumns = getTableColumns(sessionSegmentEmbeddings);
 

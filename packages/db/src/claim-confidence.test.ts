@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { scoreClaimConfidence } from './claim.js';
 
 describe('scoreClaimConfidence', () => {
-  test('raises confidence for repeated, recent, explicit trusted human support', () => {
+  it('raises confidence for repeated, recent, explicit trusted human support', () => {
     const result = scoreClaimConfidence({
       actorId: 'control-plane',
       baseConfidence: 0.72,
@@ -29,7 +29,7 @@ describe('scoreClaimConfidence', () => {
     });
   });
 
-  test('lowers confidence for contradicted old claims with prior contradictions', () => {
+  it('lowers confidence for contradicted old claims with prior contradictions', () => {
     const result = scoreClaimConfidence({
       actorId: 'codex',
       baseConfidence: 0.72,

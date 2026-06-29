@@ -8,7 +8,7 @@ import type {
   RecallSearchInput,
   RecallSearchResult,
 } from '@saga/db';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
 import { resolveQueryEmbedding, runRecallCommand } from './recall.js';
@@ -21,7 +21,7 @@ const renderOptions = {
 } as const;
 
 describe('runRecallCommand', () => {
-  test('searches recall with filters and renders grouped records plus ids', async () => {
+  it('searches recall with filters and renders grouped records plus ids', async () => {
     const projectRoot = boundProject();
     let capturedInput: RecallSearchInput | undefined;
 
@@ -98,7 +98,7 @@ describe('runRecallCommand', () => {
     expect(ids).toBe('segment-id');
   });
 
-  test('passes an available query embedding to recall search', async () => {
+  it('passes an available query embedding to recall search', async () => {
     const projectRoot = boundProject();
     let capturedInput: RecallSearchInput | undefined;
 
@@ -134,7 +134,7 @@ describe('runRecallCommand', () => {
     });
   });
 
-  test('shows expanded context around a segment with provenance', async () => {
+  it('shows expanded context around a segment with provenance', async () => {
     const projectRoot = boundProject();
     const output = await runRecallCommand(
       ['show', 'segment-id', '--before', '1', '--after', '3'],
@@ -174,7 +174,7 @@ describe('runRecallCommand', () => {
     expect(output).not.toContain('/work/saga');
   });
 
-  test('lets specific context window flags override each side independently', async () => {
+  it('lets specific context window flags override each side independently', async () => {
     const projectRoot = boundProject();
     const cases = [
       {
@@ -216,7 +216,7 @@ describe('runRecallCommand', () => {
     }
   });
 
-  test('renders structured JSON for expanded context', async () => {
+  it('renders structured JSON for expanded context', async () => {
     const projectRoot = boundProject();
     const output = await runRecallCommand(['show', 'segment-id', '--window', '0'], renderOptions, {
       cwd: projectRoot,
@@ -249,7 +249,7 @@ describe('runRecallCommand', () => {
     expect(output).not.toContain('/Users/example/.codex/transcripts/session.jsonl');
   });
 
-  test('redacts local paths from structured recall search segment snippets', async () => {
+  it('redacts local paths from structured recall search segment snippets', async () => {
     const projectRoot = boundProject();
     const output = await runRecallCommand(['search', 'lexical', '--no-embeddings'], renderOptions, {
       cwd: projectRoot,
@@ -272,7 +272,7 @@ describe('runRecallCommand', () => {
     expect(output).not.toContain('/Users/example/.codex/transcripts/session.jsonl');
   });
 
-  test('does not backfill host into a no-host binding', async () => {
+  it('does not backfill host into a no-host binding', async () => {
     const projectRoot = boundProjectWithoutHost();
     const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8');
 
@@ -319,7 +319,7 @@ describe('resolveQueryEmbedding', () => {
     readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
   };
 
-  test('never calls the remote provider when remote embeddings are disabled by policy', async () => {
+  it('never calls the remote provider when remote embeddings are disabled by policy', async () => {
     const fetchSpy = recordingFetch();
 
     const embedding = await resolveQueryEmbedding(
@@ -337,7 +337,7 @@ describe('resolveQueryEmbedding', () => {
     expect(fetchSpy.calls).toBe(0);
   });
 
-  test('never calls the remote provider when credentials are unavailable', async () => {
+  it('never calls the remote provider when credentials are unavailable', async () => {
     const fetchSpy = recordingFetch();
 
     const embedding = await resolveQueryEmbedding(
@@ -360,7 +360,7 @@ describe('resolveQueryEmbedding', () => {
     expect(fetchSpy.calls).toBe(0);
   });
 
-  test('embeds the query against the remote provider when policy enabled and credentials available', async () => {
+  it('embeds the query against the remote provider when policy enabled and credentials available', async () => {
     const fetchSpy = recordingFetch();
 
     const embedding = await resolveQueryEmbedding(

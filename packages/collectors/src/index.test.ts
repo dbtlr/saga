@@ -2,12 +2,12 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { rawEventFromClaudeHook, rawEventFromCodexHook } from './index.js';
 
 describe('rawEventFromCodexHook', () => {
-  test('normalizes Codex hook input into a raw event envelope', () => {
+  it('normalizes Codex hook input into a raw event envelope', () => {
     const event = rawEventFromCodexHook(
       {
         cwd: '/repo',
@@ -57,7 +57,7 @@ describe('rawEventFromCodexHook', () => {
     });
   });
 
-  test('copies manual ingest markers into payload and provenance', () => {
+  it('copies manual ingest markers into payload and provenance', () => {
     const event = rawEventFromCodexHook(
       {
         captureMode: 'manual',
@@ -90,7 +90,7 @@ describe('rawEventFromCodexHook', () => {
 });
 
 describe('rawEventFromClaudeHook', () => {
-  test('normalizes Claude hook input into a raw event envelope', () => {
+  it('normalizes Claude hook input into a raw event envelope', () => {
     const event = rawEventFromClaudeHook(
       {
         cwd: '/repo',
@@ -138,7 +138,7 @@ describe('rawEventFromClaudeHook', () => {
     });
   });
 
-  test('distinguishes repeated identical Claude prompts with transcript occurrence', () => {
+  it('distinguishes repeated identical Claude prompts with transcript occurrence', () => {
     const dir = mkdtempSync(join(tmpdir(), 'saga-claude-transcript-'));
     const transcriptPath = join(dir, 'transcript.jsonl');
     writeFileSync(

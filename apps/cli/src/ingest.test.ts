@@ -2,13 +2,13 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { captureHook, ingestCodexHook, ingestHook, runIngestCommand } from './ingest.js';
 import { writeBindingFile } from './init.js';
 
 describe('ingestCodexHook', () => {
-  test('returns Codex hook-compatible JSON for record output', async () => {
+  it('returns Codex hook-compatible JSON for record output', async () => {
     await expect(
       ingestCodexHook(
         {
@@ -30,7 +30,7 @@ describe('ingestCodexHook', () => {
     ).resolves.toBe(JSON.stringify({ continue: true }));
   });
 
-  test('returns non-blocking hook JSON when capture is skipped', async () => {
+  it('returns non-blocking hook JSON when capture is skipped', async () => {
     await expect(
       ingestCodexHook(
         {
@@ -57,7 +57,7 @@ describe('ingestCodexHook', () => {
     );
   });
 
-  test('supports structured CLI output', async () => {
+  it('supports structured CLI output', async () => {
     const output = await ingestCodexHook(
       {
         ascii: true,
@@ -84,7 +84,7 @@ describe('ingestCodexHook', () => {
     });
   });
 
-  test('accepts manual hook input from a file', async () => {
+  it('accepts manual hook input from a file', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'saga-ingest-'));
     const inputPath = join(dir, 'hook.json');
     writeFileSync(inputPath, JSON.stringify({ hook_event_name: 'Stop', session_id: 'session-id' }));
@@ -127,7 +127,7 @@ describe('ingestCodexHook', () => {
 });
 
 describe('ingestHook', () => {
-  test('returns Claude hook-compatible JSON for record output', async () => {
+  it('returns Claude hook-compatible JSON for record output', async () => {
     await expect(
       ingestHook(
         'claude',
@@ -150,7 +150,7 @@ describe('ingestHook', () => {
     ).resolves.toBe(JSON.stringify({ continue: true }));
   });
 
-  test('returns non-blocking Claude hook JSON when capture is skipped', async () => {
+  it('returns non-blocking Claude hook JSON when capture is skipped', async () => {
     await expect(
       ingestHook(
         'claude',
@@ -178,7 +178,7 @@ describe('ingestHook', () => {
     );
   });
 
-  test('dispatches claude-hook through the ingest command', async () => {
+  it('dispatches claude-hook through the ingest command', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'saga-ingest-claude-'));
     const inputPath = join(dir, 'hook.json');
     writeFileSync(inputPath, JSON.stringify({ cwd: dir, hook_event_name: 'Stop' }));
@@ -197,7 +197,7 @@ describe('ingestHook', () => {
     });
   });
 
-  test('skips capture with a clear error when harness binding lacks sourceBindingId', async () => {
+  it('skips capture with a clear error when harness binding lacks sourceBindingId', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-invalid-binding-'));
     writeBindingFile(projectRoot, {
       harnesses: {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   countLine,
@@ -15,24 +15,24 @@ const plain = { ascii: false, color: 'never' as const, format: 'records' as cons
 const ascii = { ascii: true, color: 'always' as const, format: 'records' as const, isTty: true };
 
 describe('render primitives', () => {
-  test('keeps color disabled when requested', () => {
+  it('keeps color disabled when requested', () => {
     expect(shouldColor(plain)).toBe(false);
     expect(glyph('success', plain)).toBe('✓');
   });
 
-  test('uses ascii fallbacks', () => {
+  it('uses ascii fallbacks', () => {
     expect(glyph('error', ascii)).toBe('[err]');
     expect(separator(ascii, 4)).toBe('----');
   });
 
-  test('renders common line primitives', () => {
+  it('renders common line primitives', () => {
     expect(countLine(2, 'workspace', plain)).toBe('2 workspaces');
     expect(noteLine('note', 'check service status', plain)).toBe('note: check service status');
     expect(severityLine('warning', 3, 'warnings', plain)).toBe('  ⚠   3 warnings');
     expect(errorLine('unknown command', plain)).toBe('✗ unknown command');
   });
 
-  test('renders record blocks with aligned labels', () => {
+  it('renders record blocks with aligned labels', () => {
     expect(
       recordBlock(
         'SGA',

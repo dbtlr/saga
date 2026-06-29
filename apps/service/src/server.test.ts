@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { startSagaService } from './server.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
 describe('startSagaService', () => {
-  test('serves health', async () => {
+  it('serves health', async () => {
     const service = await startSagaService(
       {
         databaseUrl: 'postgres://test/saga',
@@ -39,7 +39,7 @@ describe('startSagaService', () => {
     }
   });
 
-  test('fails startup when database config is missing', async () => {
+  it('fails startup when database config is missing', async () => {
     await expect(
       startSagaService({
         databaseUrl: undefined,
@@ -58,7 +58,7 @@ describe('startSagaService', () => {
 });
 
 describe('service entrypoint', () => {
-  test('loads runtime config and starts the foreground service', () => {
+  it('loads runtime config and starts the foreground service', () => {
     const entrypoint = readFileSync(fileURLToPath(new URL('main.ts', import.meta.url)), 'utf8');
 
     expect(entrypoint).toContain('loadRuntimeConfig');
@@ -66,7 +66,7 @@ describe('service entrypoint', () => {
     expect(entrypoint).toContain('SIGTERM');
   });
 
-  test('exposes an explicit migration entrypoint', () => {
+  it('exposes an explicit migration entrypoint', () => {
     const entrypoint = readFileSync(fileURLToPath(new URL('migrate.ts', import.meta.url)), 'utf8');
 
     expect(entrypoint).toContain('loadRuntimeConfig');
@@ -76,7 +76,7 @@ describe('service entrypoint', () => {
 });
 
 describe('deploy targets', () => {
-  test('systemd target runs the service package entrypoint', () => {
+  it('systemd target runs the service package entrypoint', () => {
     const unit = readFileSync(join(workspaceRoot, 'deploy', 'systemd', 'saga.service'), 'utf8');
 
     expect(unit).toContain('EnvironmentFile=/etc/saga/saga.env');
@@ -84,14 +84,14 @@ describe('deploy targets', () => {
     expect(unit).toContain('pnpm --dir /opt/saga --filter @saga/service start');
   });
 
-  test('systemd docs make migrations an explicit deploy step', () => {
+  it('systemd docs make migrations an explicit deploy step', () => {
     const docs = readFileSync(join(workspaceRoot, 'docs', 'deployable-service.md'), 'utf8');
 
     expect(docs).toContain('Run migrations explicitly before first start');
     expect(docs).toContain('sudo -u saga pnpm --dir /opt/saga --filter @saga/service migrate');
   });
 
-  test('hosted target documents file-backed secrets', () => {
+  it('hosted target documents file-backed secrets', () => {
     const env = readFileSync(
       join(workspaceRoot, 'deploy', 'hosted', 'service.env.example'),
       'utf8',

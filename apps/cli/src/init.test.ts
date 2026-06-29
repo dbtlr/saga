@@ -2,22 +2,22 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { BINDING_FILE_NAME, normalizeHandle, readBindingFile, writeBindingFile } from './init.js';
 
 describe('normalizeHandle', () => {
-  test('creates lowercase slug handles', () => {
+  it('creates lowercase slug handles', () => {
     expect(normalizeHandle('Saga Workspace!')).toBe('saga-workspace');
   });
 
-  test('falls back for empty handles', () => {
+  it('falls back for empty handles', () => {
     expect(normalizeHandle('!!!')).toBe('workspace');
   });
 });
 
 describe('writeBindingFile', () => {
-  test('writes local binding json', () => {
+  it('writes local binding json', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-init-'));
     const bindingPath = writeBindingFile(projectRoot, {
       project: {

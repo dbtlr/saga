@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createSagaMcpServer } from './index.js';
 
@@ -72,7 +72,7 @@ const server = createSagaMcpServer({
 });
 
 describe('createSagaMcpServer', () => {
-  test('lists Saga MCP tools', async () => {
+  it('lists Saga MCP tools', async () => {
     const response = await server.handle({
       id: 1,
       jsonrpc: '2.0',
@@ -103,7 +103,7 @@ describe('createSagaMcpServer', () => {
     });
   });
 
-  test('calls get_active_context', async () => {
+  it('calls get_active_context', async () => {
     const response = await server.handle({
       id: 'context',
       jsonrpc: '2.0',
@@ -126,7 +126,7 @@ describe('createSagaMcpServer', () => {
     });
   });
 
-  test('calls search_memory', async () => {
+  it('calls search_memory', async () => {
     const response = await server.handle({
       id: 'search',
       jsonrpc: '2.0',
@@ -142,7 +142,7 @@ describe('createSagaMcpServer', () => {
     expect(JSON.stringify(response?.result)).toContain('Found Active Context');
   });
 
-  test('calls resolve_saga_link', async () => {
+  it('calls resolve_saga_link', async () => {
     const response = await server.handle({
       id: 'resolve',
       jsonrpc: '2.0',
@@ -158,7 +158,7 @@ describe('createSagaMcpServer', () => {
     expect(JSON.stringify(response?.result)).toContain('saga:context/architecture-seed');
   });
 
-  test('calls list_recent_sessions', async () => {
+  it('calls list_recent_sessions', async () => {
     const response = await server.handle({
       id: 'recent',
       jsonrpc: '2.0',
@@ -195,7 +195,7 @@ describe('createSagaMcpServer', () => {
     });
   });
 
-  test('calls search_sessions', async () => {
+  it('calls search_sessions', async () => {
     const response = await server.handle({
       id: 'session-search',
       jsonrpc: '2.0',
@@ -219,7 +219,7 @@ describe('createSagaMcpServer', () => {
     });
   });
 
-  test('calls get_session_context', async () => {
+  it('calls get_session_context', async () => {
     const response = await server.handle({
       id: 'session-context',
       jsonrpc: '2.0',
@@ -251,7 +251,7 @@ describe('createSagaMcpServer', () => {
     });
   });
 
-  test('returns JSON-RPC errors', async () => {
+  it('returns JSON-RPC errors', async () => {
     const response = await server.handle({
       id: 99,
       jsonrpc: '2.0',
@@ -265,7 +265,7 @@ describe('createSagaMcpServer', () => {
     expect(response?.error?.message).toBe('search_memory requires a non-empty query');
   });
 
-  test('validates session recall tool arguments', async () => {
+  it('validates session recall tool arguments', async () => {
     await expect(
       server.handle({
         id: 100,

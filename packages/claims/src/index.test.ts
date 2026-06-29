@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   candidateClaimKey,
@@ -26,7 +26,7 @@ function rawEvent(input: Partial<ClaimExtractionRawEvent> = {}): ClaimExtraction
 }
 
 describe('extractCandidateClaimsFromRawEvents', () => {
-  test('extracts deterministic candidates from Codex user prompts', () => {
+  it('extracts deterministic candidates from Codex user prompts', () => {
     const [claim] = extractCandidateClaimsFromRawEvents([rawEvent()]);
 
     expect(claim).toMatchObject({
@@ -43,7 +43,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
     });
   });
 
-  test('classifies preferences and follow-ups', () => {
+  it('classifies preferences and follow-ups', () => {
     const claims = extractCandidateClaimsFromRawEvents([
       rawEvent({
         payload: {
@@ -58,7 +58,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
     expect(claims.map((claim) => claim.kind)).toStrictEqual(['preference', 'follow_up']);
   });
 
-  test('extracts deterministic candidates from Claude user prompts', () => {
+  it('extracts deterministic candidates from Claude user prompts', () => {
     const [claim] = extractCandidateClaimsFromRawEvents([
       rawEvent({
         eventType: 'claude.UserPromptSubmit',
@@ -79,7 +79,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
     });
   });
 
-  test('ignores events without user prompts', () => {
+  it('ignores events without user prompts', () => {
     expect(
       extractCandidateClaimsFromRawEvents([
         rawEvent({
@@ -90,7 +90,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
     ).toStrictEqual([]);
   });
 
-  test('computes stable candidate keys', () => {
+  it('computes stable candidate keys', () => {
     const [claim] = extractCandidateClaimsFromRawEvents([rawEvent()]);
     if (claim === undefined) {
       throw new Error('expected claim');
@@ -111,7 +111,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
 });
 
 describe('detectClaimContradiction', () => {
-  test('detects negated variants of the same claim', () => {
+  it('detects negated variants of the same claim', () => {
     expect(
       detectClaimContradiction(
         'Use SSR for the control plane.',
@@ -122,7 +122,7 @@ describe('detectClaimContradiction', () => {
     });
   });
 
-  test('ignores unrelated negated claims', () => {
+  it('ignores unrelated negated claims', () => {
     expect(
       detectClaimContradiction(
         'Use SSR for the control plane.',

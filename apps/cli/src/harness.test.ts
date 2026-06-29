@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   classifyClaudeActivationEvidence,
@@ -48,7 +48,7 @@ function boundProject(): string {
 }
 
 describe('listHarnessAdapters', () => {
-  test('describes the supported harness targets', () => {
+  it('describes the supported harness targets', () => {
     const projectRoot = '/workspace';
 
     expect(
@@ -76,7 +76,7 @@ describe('listHarnessAdapters', () => {
 });
 
 describe('installHarness', () => {
-  test('installs Codex hooks and records local harness state', async () => {
+  it('installs Codex hooks and records local harness state', async () => {
     const projectRoot = boundProject();
 
     const status = await installHarness({
@@ -121,7 +121,7 @@ describe('installHarness', () => {
     expect(commandCheck.status).toBe(0);
   });
 
-  test('installs Claude Code hooks and records local harness state', async () => {
+  it('installs Claude Code hooks and records local harness state', async () => {
     const projectRoot = boundProject();
 
     const status = await installHarness({
@@ -160,7 +160,7 @@ describe('installHarness', () => {
     expect(commandCheck.status).toBe(0);
   });
 
-  test('preserves non-Saga Codex hooks', async () => {
+  it('preserves non-Saga Codex hooks', async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -192,7 +192,7 @@ describe('installHarness', () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test('preserves non-Saga Claude hooks', async () => {
+  it('preserves non-Saga Claude hooks', async () => {
     const projectRoot = boundProject();
     const settingsPath = join(projectRoot, '.claude', 'settings.local.json');
     mkdirSync(join(projectRoot, '.claude'));
@@ -224,7 +224,7 @@ describe('installHarness', () => {
     expect(readBindingFile(projectRoot)?.harnesses?.claude).toBeUndefined();
   });
 
-  test('preserves valid non-command Claude hooks', async () => {
+  it('preserves valid non-command Claude hooks', async () => {
     const projectRoot = boundProject();
     const settingsPath = join(projectRoot, '.claude', 'settings.local.json');
     mkdirSync(join(projectRoot, '.claude'));
@@ -264,7 +264,7 @@ describe('installHarness', () => {
     ]);
   });
 
-  test('requires saga init first', async () => {
+  it('requires saga init first', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-harness-missing-'));
 
     await expect(installHarness({ cwd: projectRoot, target: 'codex' })).rejects.toThrow(
@@ -272,7 +272,7 @@ describe('installHarness', () => {
     );
   });
 
-  test('does not write active hooks when Codex source registration fails', async () => {
+  it('does not write active hooks when Codex source registration fails', async () => {
     const projectRoot = boundProject();
 
     await expect(
@@ -290,7 +290,7 @@ describe('installHarness', () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test('does not write active hooks when database migrations are stale', async () => {
+  it('does not write active hooks when database migrations are stale', async () => {
     const projectRoot = boundProject();
 
     await expect(
@@ -308,7 +308,7 @@ describe('installHarness', () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test('rolls back local binding when hook activation dependencies fail', async () => {
+  it('rolls back local binding when hook activation dependencies fail', async () => {
     const projectRoot = boundProject();
     mkdirSync(join(projectRoot, '.gitignore'));
 
@@ -325,7 +325,7 @@ describe('installHarness', () => {
     expect(existsSync(join(projectRoot, '.codex', 'saga-codex-hook.sh'))).toBe(false);
   });
 
-  test('rejects shape-invalid Codex hooks config before recording local harness state', async () => {
+  it('rejects shape-invalid Codex hooks config before recording local harness state', async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -342,7 +342,7 @@ describe('installHarness', () => {
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
   });
 
-  test('validates hook settings before registering source bindings', async () => {
+  it('validates hook settings before registering source bindings', async () => {
     const projectRoot = boundProject();
     const settingsPath = join(projectRoot, '.claude', 'settings.local.json');
     mkdirSync(join(projectRoot, '.claude'));
@@ -368,7 +368,7 @@ describe('installHarness', () => {
 });
 
 describe('inspectHarness', () => {
-  test('reports missing harness state when binding and hooks are absent', () => {
+  it('reports missing harness state when binding and hooks are absent', () => {
     const projectRoot = boundProject();
 
     const status = inspectHarness({ cwd: projectRoot, target: 'codex' });
@@ -378,7 +378,7 @@ describe('inspectHarness', () => {
     expect(status.hooksCoverage).toBe('none');
   });
 
-  test('reports divergent harness state when binding exists without hooks', () => {
+  it('reports divergent harness state when binding exists without hooks', () => {
     const projectRoot = boundProject();
     const binding = readBindingFile(projectRoot)!;
     writeBindingFile(projectRoot, {
@@ -402,7 +402,7 @@ describe('inspectHarness', () => {
     expect(status.stateDetail).toBe('local binding exists but hooks are missing');
   });
 
-  test('reports divergent harness state when partial hooks exist without binding', () => {
+  it('reports divergent harness state when partial hooks exist without binding', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -433,7 +433,7 @@ describe('inspectHarness', () => {
     );
   });
 
-  test('reports divergent harness state when legacy direct hooks exist without binding', () => {
+  it('reports divergent harness state when legacy direct hooks exist without binding', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -455,7 +455,7 @@ describe('inspectHarness', () => {
     expect(status.stateDetail).toBe('hooks are installed but local binding is missing');
   });
 
-  test('reports pending Codex trust for complete recognized shim hooks', () => {
+  it('reports pending Codex trust for complete recognized shim hooks', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -504,7 +504,7 @@ describe('inspectHarness', () => {
     );
   });
 
-  test('reports divergent state when SessionStart matcher misses continuation sources', () => {
+  it('reports divergent state when SessionStart matcher misses continuation sources', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -549,7 +549,7 @@ describe('inspectHarness', () => {
     );
   });
 
-  test('reports configured Claude state for complete recognized shim hooks', () => {
+  it('reports configured Claude state for complete recognized shim hooks', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.claude', 'settings.local.json');
     const shimPath = join(projectRoot, '.claude', 'saga-claude-hook.sh');
@@ -590,7 +590,7 @@ describe('inspectHarness', () => {
     expect(status.nextStep).toBeUndefined();
   });
 
-  test('reports stale harness state for legacy unhosted local source bindings', () => {
+  it('reports stale harness state for legacy unhosted local source bindings', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -630,7 +630,7 @@ describe('inspectHarness', () => {
     expect(status.stateDetail).toContain('local binding host id is missing');
   });
 
-  test('reports invalid harness state for malformed local harness binding', () => {
+  it('reports invalid harness state for malformed local harness binding', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -668,7 +668,7 @@ describe('inspectHarness', () => {
     );
   });
 
-  test('reports stale harness state when binding metadata no longer matches the adapter', () => {
+  it('reports stale harness state when binding metadata no longer matches the adapter', () => {
     const projectRoot = boundProject();
     writeBindingFile(projectRoot, {
       ...readBindingFile(projectRoot)!,
@@ -691,7 +691,7 @@ describe('inspectHarness', () => {
     expect(status.stateDetail).toContain('binding hooks path does not match the current adapter');
   });
 
-  test('reports malformed Codex hooks config', () => {
+  it('reports malformed Codex hooks config', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -704,7 +704,7 @@ describe('inspectHarness', () => {
     expect(status.hooksError).toContain(`invalid Codex hooks file ${hooksPath}:`);
   });
 
-  test('reports shape-invalid Codex hooks config', () => {
+  it('reports shape-invalid Codex hooks config', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -722,7 +722,7 @@ describe('inspectHarness', () => {
 describe('classifyCodexActivationEvidence', () => {
   const checkedAt = new Date('2026-06-22T12:00:00.000Z');
 
-  test('proves activation from recent real Codex hook events', () => {
+  it('proves activation from recent real Codex hook events', () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
       events: [
@@ -747,7 +747,7 @@ describe('classifyCodexActivationEvidence', () => {
     expect(status.sessionStartSources.unproven).toStrictEqual(['startup', 'clear', 'compact']);
   });
 
-  test('distinguishes stale real hook evidence', () => {
+  it('distinguishes stale real hook evidence', () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
       events: [
@@ -765,7 +765,7 @@ describe('classifyCodexActivationEvidence', () => {
     expect(status.nextStep).toContain('restart Codex');
   });
 
-  test('distinguishes manual or synthetic raw events from hook activation proof', () => {
+  it('distinguishes manual or synthetic raw events from hook activation proof', () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
       events: [
@@ -788,7 +788,7 @@ describe('classifyCodexActivationEvidence', () => {
     expect(status.detail).toContain('manual/synthetic or lack hook provenance');
   });
 
-  test('treats file-ingested Codex hook markers as manual-only', () => {
+  it('treats file-ingested Codex hook markers as manual-only', () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
       events: [
@@ -813,7 +813,7 @@ describe('classifyCodexActivationEvidence', () => {
     expect(status.nextStep).toContain('interactive Codex session');
   });
 
-  test('reports no evidence when no matching rows are present', () => {
+  it('reports no evidence when no matching rows are present', () => {
     const status = classifyCodexActivationEvidence({
       checkedAt,
       events: [],
@@ -828,7 +828,7 @@ describe('classifyCodexActivationEvidence', () => {
 describe('classifyClaudeActivationEvidence', () => {
   const checkedAt = new Date('2026-06-22T12:00:00.000Z');
 
-  test('proves activation from recent real Claude Code hook events', () => {
+  it('proves activation from recent real Claude Code hook events', () => {
     const status = classifyClaudeActivationEvidence({
       checkedAt,
       events: [
@@ -855,7 +855,7 @@ describe('classifyClaudeActivationEvidence', () => {
     expect(status.sessionStartSources.unproven).toStrictEqual(['resume', 'clear', 'compact']);
   });
 
-  test('distinguishes stale Claude Code hook evidence', () => {
+  it('distinguishes stale Claude Code hook evidence', () => {
     const status = classifyClaudeActivationEvidence({
       checkedAt,
       events: [
@@ -874,7 +874,7 @@ describe('classifyClaudeActivationEvidence', () => {
     expect(status.nextStep).toContain('run saga harness status claude again');
   });
 
-  test('reports no evidence for installed Claude Code hooks without raw events', () => {
+  it('reports no evidence for installed Claude Code hooks without raw events', () => {
     const status = classifyClaudeActivationEvidence({
       checkedAt,
       events: [],
@@ -889,7 +889,7 @@ describe('classifyClaudeActivationEvidence', () => {
 });
 
 describe('inspectHarnessWithActivation', () => {
-  test('promotes Codex pending trust to configured when recent hook evidence proves activation', async () => {
+  it('promotes Codex pending trust to configured when recent hook evidence proves activation', async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -932,7 +932,7 @@ describe('inspectHarnessWithActivation', () => {
     expect(status.stateDetail).toContain('recent Codex hook raw_event found');
   });
 
-  test('does not promote stale static integration state with active evidence', async () => {
+  it('does not promote stale static integration state with active evidence', async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -978,7 +978,7 @@ describe('inspectHarnessWithActivation', () => {
     expect(status.activation.state).toBe('active');
   });
 
-  test('reports missing Claude Code binding before checking raw-event evidence', async () => {
+  it('reports missing Claude Code binding before checking raw-event evidence', async () => {
     const projectRoot = boundProject();
 
     const status = await inspectHarnessWithActivation({
@@ -996,7 +996,7 @@ describe('inspectHarnessWithActivation', () => {
     );
   });
 
-  test('reports missing Claude Code hooks separately from no evidence', async () => {
+  it('reports missing Claude Code hooks separately from no evidence', async () => {
     const projectRoot = boundProject();
     const binding = readBindingFile(projectRoot)!;
     writeBindingFile(projectRoot, {
@@ -1027,7 +1027,7 @@ describe('inspectHarnessWithActivation', () => {
     expect(status.nextStep).toContain('run saga harness install claude');
   });
 
-  test('reports installed Claude Code hooks with no recent activation evidence', async () => {
+  it('reports installed Claude Code hooks with no recent activation evidence', async () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.claude', 'settings.local.json');
     const shimPath = join(projectRoot, '.claude', 'saga-claude-hook.sh');
@@ -1077,7 +1077,7 @@ describe('inspectHarnessWithActivation', () => {
 });
 
 describe('runHarnessCommand', () => {
-  test('renders Codex pending-trust next step in status records', async () => {
+  it('renders Codex pending-trust next step in status records', async () => {
     const projectRoot = realpathSync(boundProject());
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     const shimPath = join(projectRoot, '.codex', 'saga-codex-hook.sh');
@@ -1133,7 +1133,7 @@ describe('runHarnessCommand', () => {
     );
   });
 
-  test('renders activation next steps for not-proven non-pending states', async () => {
+  it('renders activation next steps for not-proven non-pending states', async () => {
     const projectRoot = realpathSync(boundProject());
     const output = await withCwd(projectRoot, () =>
       runHarnessCommand(['status', 'codex'], {
@@ -1152,7 +1152,7 @@ describe('runHarnessCommand', () => {
     expect(output).toContain('next step       run saga init and saga harness install codex');
   });
 
-  test('reports all harness targets when status target is omitted', async () => {
+  it('reports all harness targets when status target is omitted', async () => {
     const projectRoot = boundProject();
     const output = await withoutDatabaseUrl(() =>
       withCwd(projectRoot, () =>
@@ -1172,7 +1172,7 @@ describe('runHarnessCommand', () => {
 });
 
 describe('uninstallHarness', () => {
-  test('reports malformed Codex hooks config with path', () => {
+  it('reports malformed Codex hooks config with path', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));
@@ -1183,7 +1183,7 @@ describe('uninstallHarness', () => {
     );
   });
 
-  test('preserves non-command Codex hooks', () => {
+  it('preserves non-command Codex hooks', () => {
     const projectRoot = boundProject();
     const hooksPath = join(projectRoot, '.codex', 'hooks.json');
     mkdirSync(join(projectRoot, '.codex'));

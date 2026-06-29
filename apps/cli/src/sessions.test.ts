@@ -12,7 +12,7 @@ import type {
   SessionDetail,
   SessionRawSessionRecordMetadata,
 } from '@saga/db';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
 import { runSessionsCommand } from './sessions.js';
@@ -25,7 +25,7 @@ const renderOptions = {
 } as const;
 
 describe('runSessionsCommand', () => {
-  test('imports a raw session file with Phase 1 metadata flags', async () => {
+  it('imports a raw session file with Phase 1 metadata flags', async () => {
     const projectRoot = boundProject();
     const inputPath = join(projectRoot, 'session.jsonl');
     writeFileSync(inputPath, '{"type":"user","text":"Import this session"}\n');
@@ -101,7 +101,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('file://');
   });
 
-  test('lists recent raw session records with records and ids formats', async () => {
+  it('lists recent raw session records with records and ids formats', async () => {
     const projectRoot = boundProject();
     const rows = [recentRecord()];
 
@@ -146,7 +146,7 @@ describe('runSessionsCommand', () => {
     expect(ids).toBe('raw-record-id');
   });
 
-  test('redacts local locators from recent structured output', async () => {
+  it('redacts local locators from recent structured output', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(['recent'], renderOptions, {
       cwd: projectRoot,
@@ -159,7 +159,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('file://');
   });
 
-  test('deletes a session by explicit id with structured safety metadata', async () => {
+  it('deletes a session by explicit id with structured safety metadata', async () => {
     const projectRoot = boundProject();
     const secretReason = 'delete-reason-secret-token';
     const output = await runSessionsCommand(
@@ -194,7 +194,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain(secretReason);
   });
 
-  test('redacts a session with repeated literal and regex patterns without echoing audit text', async () => {
+  it('redacts a session with repeated literal and regex patterns without echoing audit text', async () => {
     const projectRoot = boundProject();
     const secretOrigin = 'redact-origin-secret-token';
     const secretReason = 'redact-reason-secret-token';
@@ -251,7 +251,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain(secretReason);
   });
 
-  test('surfaces invalid regex redaction errors without echoing the supplied pattern', async () => {
+  it('surfaces invalid regex redaction errors without echoing the supplied pattern', async () => {
     const projectRoot = boundProject();
     const secretNeedle = 'cli-regex-secret-token';
     const rawPattern = `${secretNeedle}(`;
@@ -296,7 +296,7 @@ describe('runSessionsCommand', () => {
     expect(errorText).not.toContain(`/${rawPattern}/`);
   });
 
-  test('omits free-form redaction audit text from json output', async () => {
+  it('omits free-form redaction audit text from json output', async () => {
     const projectRoot = boundProject();
     const secretOrigin = 'json-redact-origin-secret-token';
     const secretReason = 'json-redact-reason-secret-token';
@@ -328,7 +328,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('secret-token');
   });
 
-  test('shows a bounded session detail with Activity Intervals, turns, segments, and metadata', async () => {
+  it('shows a bounded session detail with Activity Intervals, turns, segments, and metadata', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
       ['show', 'session-id', '--turns', '1', '--segments', '1', '--raw-records', '2', '--raw-body'],
@@ -368,7 +368,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('file://');
   });
 
-  test('redacts local paths from sessions show structured segment text', async () => {
+  it('redacts local paths from sessions show structured segment text', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(['show', 'session-id'], renderOptions, {
       cwd: projectRoot,
@@ -396,7 +396,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('file:///Users/example/.codex/transcripts/session.jsonl');
   });
 
-  test('omits raw body fields by default when showing session detail', async () => {
+  it('omits raw body fields by default when showing session detail', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
       ['show', 'session-id'],
@@ -421,7 +421,7 @@ describe('runSessionsCommand', () => {
     expect(output).not.toContain('body json');
   });
 
-  test('renders raw body fields only when requested', async () => {
+  it('renders raw body fields only when requested', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
       ['show', 'session-id', '--raw-body'],
@@ -454,7 +454,7 @@ describe('runSessionsCommand', () => {
     expect(output).toContain('normal Saga surfaces hide');
   });
 
-  test('keeps explicit raw forensic body fields raw in structured output', async () => {
+  it('keeps explicit raw forensic body fields raw in structured output', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(['show', 'session-id', '--raw-body'], renderOptions, {
       cwd: projectRoot,
@@ -479,7 +479,7 @@ describe('runSessionsCommand', () => {
     );
   });
 
-  test.each([
+  it.each([
     ['missing warning', { mode: 'raw_forensic', requestedBy: 'includeRawBody' }],
     ['blank warning', { mode: 'raw_forensic', requestedBy: 'includeRawBody', warning: '   ' }],
     [
@@ -520,7 +520,7 @@ describe('runSessionsCommand', () => {
     },
   );
 
-  test('renders the bounded raw session snapshot list without duplicate active or selected blocks', async () => {
+  it('renders the bounded raw session snapshot list without duplicate active or selected blocks', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
       ['show', 'session-id', '--raw-records', '2'],
@@ -548,7 +548,7 @@ describe('runSessionsCommand', () => {
     expect(output).toContain('raw-record-older');
   });
 
-  test('does not backfill host into a no-host binding for sessions recent', async () => {
+  it('does not backfill host into a no-host binding for sessions recent', async () => {
     const projectRoot = boundProjectWithoutHost();
     const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8');
 
@@ -565,7 +565,7 @@ describe('runSessionsCommand', () => {
     expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8')).toBe(before);
   });
 
-  test('does not backfill host into a no-host binding for sessions show', async () => {
+  it('does not backfill host into a no-host binding for sessions show', async () => {
     const projectRoot = boundProjectWithoutHost();
     const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8');
 

@@ -1,10 +1,10 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { SessionTurn } from './schema.js';
 import { deriveSessionSegmentsFromTurns } from './session-segments.js';
 
 describe('deriveSessionSegmentsFromTurns', () => {
-  test('keeps duplicate same-call tool call parts and matching result standalone', () => {
+  it('keeps duplicate same-call tool call parts and matching result standalone', () => {
     const turns = [
       makeTurn(0, [
         {
@@ -40,7 +40,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     ]);
   });
 
-  test('keeps multiple distinct tool call ids in one turn standalone', () => {
+  it('keeps multiple distinct tool call ids in one turn standalone', () => {
     const turns = [
       makeTurn(0, [
         {
@@ -84,7 +84,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     ]);
   });
 
-  test('keeps mixed tool call and result parts in one turn standalone', () => {
+  it('keeps mixed tool call and result parts in one turn standalone', () => {
     const turns = [
       makeTurn(0, [
         {
@@ -119,7 +119,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     ]);
   });
 
-  test('groups adjacent and interleaved one-part tool turns by call id', () => {
+  it('groups adjacent and interleaved one-part tool turns by call id', () => {
     const turns = [
       makeTurn(0, [
         {
@@ -171,7 +171,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     ]);
   });
 
-  test('keeps ambiguous tool-bearing turns in the grouping window without grouping them', () => {
+  it('keeps ambiguous tool-bearing turns in the grouping window without grouping them', () => {
     const turns = [
       makeTurn(0, [
         {
@@ -256,7 +256,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     expect(segmentsByTurnId.get(turns[2]?.id ?? '')?.searchText).toContain('ALPHA_RESULT_NEEDLE');
   });
 
-  test('persists safe observability for a standalone skipped-only turn', () => {
+  it('persists safe observability for a standalone skipped-only turn', () => {
     const secretNeedle = 'sk-standaloneskippedsecretfixture000000';
     const turns = [
       makeTurn(0, [
@@ -304,7 +304,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     });
   });
 
-  test('persists safe observability for a skipped tool group member', () => {
+  it('persists safe observability for a skipped tool group member', () => {
     const hugeLogNeedle = 'SKIPPED_TOOL_RESULT_NEEDLE';
     const hugeLog = Array.from(
       { length: 850 },
