@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Effect, Exit } from 'effect';
-import { describe, expect, test } from 'vitest';
+import { assert, describe, expect, test } from 'vitest';
 
 import {
   ConfigError,
@@ -176,10 +176,8 @@ describe('loadRuntimeConfig', () => {
       }),
     );
 
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result)) {
-      expect(result.cause.toString()).toContain('ConfigError');
-    }
+    assert(Exit.isFailure(result));
+    expect(result.cause.toString()).toContain('ConfigError');
   });
 
   test('loads explicit env over local env files', async () => {

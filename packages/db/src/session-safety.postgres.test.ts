@@ -257,6 +257,7 @@ describePostgres('session safety', () => {
       ),
     ).rejects.toThrow('invalid redaction regex pattern at index 1: invalid syntax');
 
+    let errorText: string | undefined;
     try {
       await Effect.runPromise(
         redactSessionSafety(service, {
@@ -265,14 +266,15 @@ describePostgres('session safety', () => {
           workspaceId,
         }),
       );
-      throw new Error('expected invalid regex redaction to fail');
     } catch (cause) {
-      const errorText = String(cause);
-      expect(errorText).toContain('invalid redaction regex pattern');
-      expect(errorText).not.toContain(secretNeedle);
-      expect(errorText).not.toContain(rawPattern);
-      expect(errorText).not.toContain(`/${rawPattern}/`);
+      errorText = String(cause);
     }
+
+    expect(errorText).toBeDefined();
+    expect(errorText).toContain('invalid redaction regex pattern');
+    expect(errorText).not.toContain(secretNeedle);
+    expect(errorText).not.toContain(rawPattern);
+    expect(errorText).not.toContain(`/${rawPattern}/`);
 
     const rawRecords = await service.db
       .select()

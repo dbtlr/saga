@@ -57,7 +57,6 @@ const config = {
         'no-shadow': 'off',
         'new-cap': 'off',
         'promise/avoid-new': 'off',
-        'vitest/no-conditional-expect': 'off',
         'vitest/require-to-throw-message': 'off',
         'vitest/valid-expect': 'off',
         // SGA-170 GLOBAL-DISABLE CANDIDATE (for discussion): misfires on

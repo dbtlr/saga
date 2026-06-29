@@ -1,6 +1,6 @@
 import { RuntimeConfigLive } from '@saga/runtime';
 import { Effect, Exit } from 'effect';
-import { describe, expect, test } from 'vitest';
+import { assert, describe, expect, test } from 'vitest';
 
 import {
   assertMigrationsCurrent,
@@ -64,10 +64,8 @@ describe('makeDatabase', () => {
       }),
     );
 
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result)) {
-      expect(result.cause.toString()).toContain('DATABASE_URL is required');
-    }
+    assert(Exit.isFailure(result));
+    expect(result.cause.toString()).toContain('DATABASE_URL is required');
   });
 });
 
