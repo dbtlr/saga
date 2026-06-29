@@ -306,14 +306,20 @@ function waitForChildExit(child: ChildProcess): Promise<void> {
   }
 
   return new Promise((resolve) => {
+    const settle = (): void => {
+      clearTimeout(timeout);
+      child.off('exit', settle);
+      // settle() races between the SIGKILL timeout and child 'exit'; it clears
+      // the timer and detaches the listener so it runs once. The static rule
+      // still sees two call paths to resolve().
+      // oxlint-disable-next-line promise/no-multiple-resolved
+      resolve();
+    };
     const timeout = setTimeout(() => {
       signalChild(child, 'SIGKILL');
-      resolve();
+      settle();
     }, 1_000);
-    child.once('exit', () => {
-      clearTimeout(timeout);
-      resolve();
-    });
+    child.once('exit', settle);
   });
 }
 
@@ -323,14 +329,20 @@ function terminateChild(child: ChildProcess): Promise<void> {
   }
 
   return new Promise((resolve) => {
+    const settle = (): void => {
+      clearTimeout(timeout);
+      child.off('exit', settle);
+      // settle() races between the SIGKILL timeout and child 'exit'; it clears
+      // the timer and detaches the listener so it runs once. The static rule
+      // still sees two call paths to resolve().
+      // oxlint-disable-next-line promise/no-multiple-resolved
+      resolve();
+    };
     const timeout = setTimeout(() => {
       signalChild(child, 'SIGKILL');
-      resolve();
+      settle();
     }, 1_000);
-    child.once('exit', () => {
-      clearTimeout(timeout);
-      resolve();
-    });
+    child.once('exit', settle);
     signalChild(child, 'SIGTERM');
   });
 }
