@@ -51,7 +51,9 @@ import {
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
-class RollbackMigrationFixture extends Error {}
+class RollbackMigrationFixtureError extends Error {
+  override name = 'RollbackMigrationFixtureError';
+}
 
 describePostgres('postgres integration', () => {
   const databaseName = `saga_test_${Date.now().toString(36)}`;
@@ -430,10 +432,10 @@ describePostgres('postgres integration', () => {
         `;
         expect(rawRecordAuthors).toStrictEqual([{ author_user_id: canonicalUser.id }]);
 
-        throw new RollbackMigrationFixture();
+        throw new RollbackMigrationFixtureError();
       });
     } catch (error) {
-      if (!(error instanceof RollbackMigrationFixture)) {
+      if (!(error instanceof RollbackMigrationFixtureError)) {
         throw error;
       }
     }

@@ -42,12 +42,12 @@ const CONTROL_PLANE_PORT = 4767;
 const SERVICE_HEALTH_ATTEMPTS = 25;
 const SERVICE_HEALTH_INTERVAL_MS = 200;
 
-export class StartInterrupted extends Error {
+export class StartInterruptedError extends Error {
   readonly exitCode: number;
 
   constructor(exitCode: number) {
     super(`start interrupted with exit code ${exitCode.toString()}`);
-    this.name = 'StartInterrupted';
+    this.name = 'StartInterruptedError';
     this.exitCode = exitCode;
   }
 }
@@ -214,7 +214,7 @@ async function waitForServiceHealth(input: {
     });
     return undefined;
   } catch (error) {
-    if (error instanceof StartInterrupted) {
+    if (error instanceof StartInterruptedError) {
       return error.exitCode;
     }
     throw error;
@@ -233,12 +233,12 @@ async function pollServiceHealth(input: {
   for (let attempt = 0; attempt < SERVICE_HEALTH_ATTEMPTS; attempt += 1) {
     const interruptedSignal = input.interruptedSignal();
     if (interruptedSignal !== undefined) {
-      throw new StartInterrupted(exitCodeForSignal(interruptedSignal));
+      throw new StartInterruptedError(exitCodeForSignal(interruptedSignal));
     }
 
     if (input.child.exitCode !== null || input.child.signalCode !== null) {
       if (input.child.signalCode === 'SIGINT' || input.child.signalCode === 'SIGTERM') {
-        throw new StartInterrupted(exitCodeForSignal(input.child.signalCode));
+        throw new StartInterruptedError(exitCodeForSignal(input.child.signalCode));
       }
       throw new Error(
         `service process exited before becoming healthy on ${input.config.service.host}:${input.config.service.port.toString()}`,
