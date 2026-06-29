@@ -70,7 +70,6 @@ const config = {
         'promise/param-names': 'off',
         'unicorn/consistent-function-scoping': 'off',
         'unicorn/custom-error-definition': 'off',
-        'oxc/no-map-spread': 'off',
       },
       overrides: [
         forbid(

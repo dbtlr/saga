@@ -132,15 +132,15 @@ export function normalizeCodexTranscript(input: {
     }
   }
 
-  const sortedTurns = turns.map((turn) => ({
-    ...turn,
-    metadata: compactRecord({
+  for (const turn of turns) {
+    turn.metadata = compactRecord({
       ...turn.metadata,
       codexTurnId: turn.codexTurnId,
       cwd: state.cwd,
       normalizer: 'codex-transcript-v1',
-    }),
-  }));
+    });
+  }
+  const sortedTurns = turns;
 
   const timestamps = sortedTurns.flatMap((turn) => [turn.startedAt, turn.endedAt]).filter(isDate);
   const startedAt = earliest(timestamps);

@@ -186,7 +186,7 @@ export function listContextIndexEntries(
         .orderBy(desc(contextIndexEntries.importance), asc(contextIndexEntries.title))
         .limit(input.limit ?? 50);
 
-      return rows.map(({ entry, sourceBinding }) => ({ ...entry, sourceBinding }));
+      return rows.map(({ entry, sourceBinding }) => Object.assign(entry, { sourceBinding }));
     },
     catch: (cause) =>
       cause instanceof ContextIndexError

@@ -121,10 +121,11 @@ export function indexSessionSegmentEmbeddings(
         limit,
         provider: resolved.provider,
       });
-      const prepared = candidates.map((candidate) => ({
-        ...candidate,
-        inputHash: sessionSegmentEmbeddingInputHash(candidate.search_text, resolved.provider),
-      }));
+      const prepared = candidates.map((candidate) =>
+        Object.assign(candidate, {
+          inputHash: sessionSegmentEmbeddingInputHash(candidate.search_text, resolved.provider),
+        }),
+      );
       const existingCount = prepared.filter(
         (candidate) => candidate.existing_input_hash === candidate.inputHash,
       ).length;
