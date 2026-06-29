@@ -44,24 +44,29 @@ const config = {
       // SGA-170: rules disabled pending case-by-case enablement. Each is
       // re-enabled, evaluated, and either fixed or justified in its own commit.
       rules: {
-        // --- Disabled at adoption; re-enabled one at a time below (SGA-170). ---
-        // Behavior-changing autofixers (reverted; handle manually):
-        //  - rewrites test()->it() without fixing the vitest import.
-        'vitest/consistent-test-it': 'off',
-        //  - alphabetizes object literals -> changes Object.keys() order
-        //    (load-bearing for e.g. CLI command order).
+        // === SGA-170 GLOBAL-DISABLE CANDIDATES (for end-of-task discussion) ===
+        // Each is more correct to disable project-wide than to fix/inline-disable
+        // at every site; left off pending the user's call.
+        //  - reorders object literals -> changes Object.keys() order (load-bearing,
+        //    e.g. CLI command order); 542 sites, behavior-risky, mostly noise.
         'sort-keys': 'off',
-        // Not auto-fixed; pending evaluation:
-        'typescript/no-unsafe-type-assertion': 'off',
+        //  - 273 sites; autofix rewrites test()->it() without fixing the vitest
+        //    import; large mechanical churn of debatable value.
+        'vitest/consistent-test-it': 'off',
+        //  - sequential awaits in DB/transaction loops, ordered imports, and a
+        //    health-poll-with-delay are intentional; Promise.all would be wrong.
         'no-await-in-loop': 'off',
+        //  - every site wraps a callback/event API (setTimeout, child 'exit',
+        //    server.listen); `new Promise` is the required primitive here.
+        'promise/avoid-new': 'off',
+        //  - misfires on non-test entry points/scripts, and in real suites only
+        //    flags the idiomatic describe-scope shared-connection pattern in
+        //    DB-gated integration tests.
+        'vitest/require-hook': 'off',
+        // === Pending fix in the rule loop (SGA-170) ===
+        'typescript/no-unsafe-type-assertion': 'off',
         'no-shadow': 'off',
         'new-cap': 'off',
-        'promise/avoid-new': 'off',
-        // SGA-170 GLOBAL-DISABLE CANDIDATE (for discussion): misfires on
-        // non-test entry points/scripts, and in real suites only flags the
-        // idiomatic describe-scope `const sql = postgres(...)` shared-connection
-        // pattern in DB-gated integration tests (unverifiable here, no DB).
-        'vitest/require-hook': 'off',
       },
       overrides: [
         forbid(
