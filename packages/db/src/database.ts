@@ -234,15 +234,18 @@ export function readExpectedMigrationHashes(
 }
 
 function isMigrationJournal(value: unknown): value is { entries: { tag: string }[] } {
+  if (value === null || typeof value !== 'object' || !('entries' in value)) {
+    return false;
+  }
+  const { entries } = value;
   return (
-    value !== null &&
-    typeof value === 'object' &&
-    Array.isArray((value as { entries?: unknown }).entries) &&
-    (value as { entries: unknown[] }).entries.every(
+    Array.isArray(entries) &&
+    entries.every(
       (entry) =>
         entry !== null &&
         typeof entry === 'object' &&
-        typeof (entry as { tag?: unknown }).tag === 'string',
+        'tag' in entry &&
+        typeof entry.tag === 'string',
     )
   );
 }

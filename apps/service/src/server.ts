@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
 
 import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
@@ -47,7 +46,10 @@ export async function startSagaService(
   });
 
   await listen(server, config.service.port, config.service.host);
-  const address = server.address() as AddressInfo;
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected the service to be listening on a TCP address');
+  }
   const host = address.address;
   const port = address.port;
 

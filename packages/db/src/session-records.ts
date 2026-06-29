@@ -5,7 +5,7 @@ import { safeContentPartsForSkippedSegments } from './session-content-redaction.
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
-  redactAgentFacingSessionValue,
+  redactAgentFacingSessionArray,
   redactAgentFacingSessionText,
 } from './session-output-redaction.js';
 
@@ -849,7 +849,13 @@ export function getSessionDetail(
 function mapRecentSessionRecordRow(row: RecentSessionRecordRow): RecentSessionRecord {
   return {
     activityInterval:
-      row.activity_interval_id === null ? null : mapActivityInterval(row as ActivityIntervalRow),
+      row.activity_interval_id === null
+        ? null
+        : // SQL invariant: the LEFT JOIN populates every activity_interval_*
+          // column together, so a non-null id guarantees the rest are present.
+          // TS only narrows the checked field, not its siblings.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- join guarantees all activity_interval_* columns are non-null here
+          mapActivityInterval(row as ActivityIntervalRow),
     authorUser: mapAuthor(row),
     counts: {
       activityIntervals: Number(row.activity_intervals_count),
@@ -888,12 +894,12 @@ function groupActivityIntervals(
     const existing = turnsByInterval.get(row.activity_interval_id) ?? [];
     const segments = segmentsByTurn.get(row.turn_id) ?? [];
     existing.push({
-      contentParts: redactAgentFacingSessionValue(
+      contentParts: redactAgentFacingSessionArray(
         safeContentPartsForSkippedSegments(
           row.turn_content_parts,
           skippedSegmentsByTurn.get(row.turn_id) ?? segments,
         ),
-      ) as unknown[],
+      ),
       endedAt: normalizeNullableTimestamp(row.turn_ended_at, 'turn.endedAt'),
       metadata: redactAgentFacingJsonRecord(row.turn_metadata),
       rawEventIds: row.turn_raw_event_ids,

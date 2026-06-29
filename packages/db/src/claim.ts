@@ -177,7 +177,7 @@ export function insertClaimEventAndProject(
           claimText: input.text,
           confidence: confidence.score,
           eventType: input.eventType,
-          evidence: input.evidence as unknown as Record<string, unknown>,
+          evidence: input.evidence,
           occurredAt: observedAt,
           rawEventId: input.evidence.rawEventId,
           workspaceId: input.workspaceId,
@@ -1114,10 +1114,12 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return isRecord(value) ? value : {};
 }
 
 function projectionAdvanceSql(

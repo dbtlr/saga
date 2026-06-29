@@ -60,6 +60,11 @@ export function redactAgentFacingJsonRecord(value: JsonRecord): JsonRecord {
   return isRecord(redacted) ? redacted : {};
 }
 
+export function redactAgentFacingSessionArray(value: readonly unknown[]): unknown[] {
+  const redacted = redactAgentFacingSessionValue(value);
+  return Array.isArray(redacted) ? redacted : [];
+}
+
 export function redactAgentFacingSessionText(value: string): string {
   const redacted = redactAgentFacingSessionValue(value);
   return typeof redacted === 'string' ? redacted : value;

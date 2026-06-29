@@ -219,17 +219,17 @@ export async function ingestClaims(
 }
 
 export async function captureCodexHook(input: CodexHookInput): Promise<CodexHookIngestResult> {
-  return captureHook('codex', input) as Promise<CodexHookIngestResult>;
+  return captureHook('codex', input);
 }
 
 export async function captureClaudeHook(input: ClaudeHookInput): Promise<ClaudeHookIngestResult> {
-  return captureHook('claude', input) as Promise<ClaudeHookIngestResult>;
+  return captureHook('claude', input);
 }
 
-export async function captureHook(
-  source: HarnessSource,
+export async function captureHook<S extends HarnessSource>(
+  source: S,
   input: HarnessHookInput,
-): Promise<HookIngestResult> {
+): Promise<HookIngestResult & { source: S }> {
   try {
     const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
     const binding = readBindingFile(projectRoot);
@@ -255,7 +255,7 @@ export async function captureHook(
         `${sourceDisplayName(source)} harness binding is stale: local host id is missing`,
       );
     }
-    const bindingWithHost = binding as WorkspaceBindingFileWithHost;
+    const bindingWithHost: WorkspaceBindingFileWithHost = { ...binding, host: binding.host };
 
     const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
     const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));

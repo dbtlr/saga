@@ -132,6 +132,9 @@ function readPackageEngines(projectRoot: string): {
   pnpm?: string | undefined;
 } {
   try {
+    // Boundary: package.json is external JSON; assert only a maximally-loose
+    // shape (unknown leaves) and validate each field's type below.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- external JSON; leaves are unknown and type-checked below
     const packageJson = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')) as {
       engines?: {
         node?: unknown;

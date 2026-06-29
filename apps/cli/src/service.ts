@@ -477,8 +477,10 @@ export async function checkHealth(url: string): Promise<string> {
     if (!response.ok) {
       return `unhealthy (${String(response.status)})`;
     }
-    const payload = (await response.json()) as { ok?: unknown };
-    return payload.ok === true ? `ok (${url})` : `unexpected response (${url})`;
+    const payload: unknown = await response.json();
+    const healthy =
+      typeof payload === 'object' && payload !== null && 'ok' in payload && payload.ok === true;
+    return healthy ? `ok (${url})` : `unexpected response (${url})`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `unreachable (${message})`;

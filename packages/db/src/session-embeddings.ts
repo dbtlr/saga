@@ -499,18 +499,18 @@ function parseOpenAiEmbeddingResponse(value: unknown): OpenAiEmbeddingResponseEn
     throw new SessionEmbeddingIndexError({ message: 'OpenAI embeddings response missing data' });
   }
   return data.map((item, responsePosition) => {
-    if (item === null || typeof item !== 'object') {
+    if (!isRecord(item)) {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response data item ${String(responsePosition)} was not an object`,
       });
     }
-    const index = (item as { index?: unknown }).index;
+    const index = item.index;
     if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response data item ${String(responsePosition)} missing valid index`,
       });
     }
-    const embedding = (item as { embedding?: unknown }).embedding;
+    const embedding = item.embedding;
     if (!Array.isArray(embedding) || !embedding.every((part) => typeof part === 'number')) {
       throw new SessionEmbeddingIndexError({
         message: `OpenAI embeddings response embedding at index ${String(index)} was malformed`,
@@ -564,4 +564,8 @@ function normalizeLimit(limit: number | undefined): number {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

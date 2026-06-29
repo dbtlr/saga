@@ -253,6 +253,10 @@ export function redactSearchMemoryStructuredMatches(
 ): Omit<RankedMemorySearchMatch, 'score'>[] {
   return matches.map(
     ({ score: _score, ...match }) =>
+      // Boundary: redactMcpStructuredOutput returns `unknown` (it recurses over
+      // arbitrary structured output); it only strips secret keys, so the
+      // score-less match shape is preserved.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- redaction preserves shape, only removes secret keys
       redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, 'score'>,
   );
 }
@@ -469,6 +473,10 @@ export function redactResolvedSagaLink<
       },
     },
   };
+  // `redacted` is reconstructed field-by-field to exactly match the declared
+  // return shape, but it spreads the generic `Resolved`, which TS cannot
+  // decompose to verify the narrowed sourceBinding against the omit-based type.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pins the public shape that a generic spread can't express
   return redacted as Omit<Resolved, 'entry'> & {
     entry: Omit<Resolved['entry'], 'sourceBinding'> & {
       sourceBinding: {

@@ -68,11 +68,15 @@ export function validateClaimReviewInput(data: unknown): UpdateClaimReviewInput 
 }
 
 function requireRecord(data: unknown): Record<string, unknown> {
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+  if (!isRecord(data)) {
     throw new Error('payload must be an object');
   }
 
-  return data as Record<string, unknown>;
+  return data;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function requireString(value: unknown, field: string): string {

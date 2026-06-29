@@ -127,6 +127,10 @@ export function deleteSessionSafety(
       const deletedAt = new Date();
 
       return service.sql.begin(async (tx) => {
+        // The transaction handle exposes the same tagged-template SQL interface
+        // as SqlTag, but postgres.js types `begin`'s callback arg as its own
+        // TransactionSql; bridge it to the shared SqlTag the helpers expect.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- transaction handle is the same tagged-template SQL interface
         const txSql = tx as unknown as SqlTag;
         const identity = await findSessionIdentity(txSql, { id, workspaceId });
         if (identity === undefined) {
@@ -939,10 +943,15 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 function rowsFromExecute<T>(value: unknown): T[] {
+  // Boundary: adapts the driver's untyped execute result (raw rows, or a
+  // wrapper with a `rows` array) into the row shape T the caller's SQL declares.
+  // The row type cannot be verified at runtime.
   if (Array.isArray(value)) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
     return value as T[];
   }
   if (isPlainRecord(value) && Array.isArray(value.rows)) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
     return value.rows as T[];
   }
   return [];

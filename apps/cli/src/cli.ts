@@ -65,6 +65,12 @@ export type CommandName = keyof typeof COMMANDS;
 const OUTPUT_FORMATS = new Set<OutputFormat>(['records', 'json', 'jsonl', 'ids']);
 const COLOR_MODES = new Set<ColorMode>(['auto', 'always', 'never']);
 
+const isOutputFormat = (value: string): value is OutputFormat =>
+  (OUTPUT_FORMATS as ReadonlySet<string>).has(value);
+const isColorMode = (value: string): value is ColorMode =>
+  (COLOR_MODES as ReadonlySet<string>).has(value);
+const isCommandName = (name: string): name is CommandName => Object.hasOwn(COMMANDS, name);
+
 const DEFAULT_OPTIONS: GlobalOptions = {
   ascii: false,
   color: 'auto',
@@ -130,7 +136,7 @@ options:
 `;
 
 export function getCommand(name: string): CommandDefinition | undefined {
-  return Object.hasOwn(COMMANDS, name) ? COMMANDS[name as CommandName] : undefined;
+  return isCommandName(name) ? COMMANDS[name] : undefined;
 }
 
 export function validateCommand(parsed: ParsedCommand): void {
@@ -195,10 +201,10 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       if (value === undefined) {
         throw new UsageError(`${arg} expects a value`);
       }
-      if (!OUTPUT_FORMATS.has(value as OutputFormat)) {
+      if (!isOutputFormat(value)) {
         throw new UsageError(`unsupported format: ${value}`);
       }
-      options.format = value as OutputFormat;
+      options.format = value;
       index += 1;
       continue;
     }
@@ -208,10 +214,10 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       if (value === undefined) {
         throw new UsageError('--color expects a value');
       }
-      if (!COLOR_MODES.has(value as ColorMode)) {
+      if (!isColorMode(value)) {
         throw new UsageError(`unsupported color mode: ${value}`);
       }
-      options.color = value as ColorMode;
+      options.color = value;
       index += 1;
       continue;
     }

@@ -845,10 +845,12 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return isRecord(value) ? value : {};
 }
 
 function compactRecord(record: JsonRecord): JsonRecord {
@@ -870,7 +872,7 @@ function canonicalJson(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value as JsonRecord)
+    Object.entries(value)
       .filter(([, entryValue]) => entryValue !== undefined)
       .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),

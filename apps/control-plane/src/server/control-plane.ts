@@ -402,6 +402,9 @@ function readBindingFile(
   }
 
   try {
+    // Boundary: the binding file is external JSON; assert only a Partial shape
+    // and validate the required fields immediately below before use.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- external JSON; required fields validated below
     const parsed = JSON.parse(readFileSync(bindingPath, 'utf8')) as Partial<WorkspaceBindingFile>;
     if (
       parsed.schemaVersion !== 1 ||

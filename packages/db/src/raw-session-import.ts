@@ -2679,6 +2679,9 @@ function buildRawBody(input: NormalizedRawSessionImportInput): {
 
 function parseJsonBody(rawContent: string): JsonBody | undefined {
   try {
+    // JSON.parse yields a value that is, by construction, a JsonBody (the full
+    // JSON value union); it returns `any`, so pin it to the declared shape.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.parse output is by definition a JsonBody
     return JSON.parse(rawContent) as JsonBody;
   } catch {
     return undefined;
@@ -2816,16 +2819,16 @@ function sha256(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return isRecord(value) ? value : {};
 }
 
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return isRecord(value) ? value : undefined;
 }
 
 function arrayRecords(value: unknown): Record<string, unknown>[] {
@@ -2881,7 +2884,7 @@ function canonicalJson(value: unknown): unknown {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
+    Object.entries(value)
       .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),
   );

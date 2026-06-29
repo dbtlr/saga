@@ -64,7 +64,6 @@ const config = {
         //    DB-gated integration tests.
         'vitest/require-hook': 'off',
         // === Pending fix in the rule loop (SGA-170) ===
-        'typescript/no-unsafe-type-assertion': 'off',
         // new-cap fires on capitalized factory idioms that are correct without
         // `new`: Effect's Data.TaggedError / Context.GenericTag and our Effect
         // Layer constructors (e.g. DatabaseLive, RuntimeConfigLive). Exempt those
@@ -124,7 +123,17 @@ const config = {
           uiPackages,
           'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',
         ),
-        { files: ['**/*.test.ts', '**/*.test.tsx'], rules: { 'no-restricted-imports': 'off' } },
+        {
+          files: ['**/*.test.ts', '**/*.test.tsx'],
+          rules: {
+            'no-restricted-imports': 'off',
+            // Casting mocks, fixtures, and partial objects to satisfy a
+            // function signature is idiomatic and low-risk in tests; scope the
+            // assertion-safety rule off here rather than litter suites with
+            // per-line disables. Source files are still held to the rule.
+            'typescript/no-unsafe-type-assertion': 'off',
+          },
+        },
       ],
     },
     fmt: {

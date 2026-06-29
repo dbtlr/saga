@@ -6,7 +6,7 @@ import { safeContentPartsForSkippedSegments } from './session-content-redaction.
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
-  redactAgentFacingSessionValue,
+  redactAgentFacingSessionArray,
   redactAgentFacingSessionText,
 } from './session-output-redaction.js';
 
@@ -1082,9 +1082,9 @@ function mapContextRows(
   }
 
   for (const turn of turns.values()) {
-    turn.contentParts = redactAgentFacingSessionValue(
+    turn.contentParts = redactAgentFacingSessionArray(
       safeContentPartsForSkippedSegments(turn.contentParts, turn.segments),
-    ) as unknown[];
+    );
   }
 
   return {

@@ -202,8 +202,9 @@ function parseEnum<const Value extends string>(
   if (normalized === undefined) {
     return fallback;
   }
-  if (allowed.includes(normalized as Value)) {
-    return normalized as Value;
+  const match = allowed.find((candidate) => candidate === normalized);
+  if (match !== undefined) {
+    return match;
   }
 
   issues.push({

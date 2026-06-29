@@ -202,7 +202,7 @@ export function ensureLocalHostBinding(
     typeof binding.host.id === 'string' &&
     binding.host.id.trim() !== ''
   ) {
-    return binding as WorkspaceBindingFileWithHost;
+    return { ...binding, host: binding.host };
   }
   return {
     ...binding,
@@ -226,5 +226,10 @@ export function readBindingFile(projectRoot: string): WorkspaceBindingFile | und
   if (!existsSync(bindingPath)) {
     return undefined;
   }
+  // Boundary: the binding file is written and owned by saga (writeBindingFile);
+  // JSON.parse yields `any`, and callers defensively re-check fields (host,
+  // harnesses, sourceBindingId) before use, so trusting the on-disk shape here is
+  // the correct seam.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- trusted on-disk binding shape; callers re-validate fields
   return JSON.parse(readFileSync(bindingPath, 'utf8')) as WorkspaceBindingFile;
 }

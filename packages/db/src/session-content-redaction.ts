@@ -130,6 +130,10 @@ function readNonNegativeNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null;
+}
+
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : {};
+  return isRecord(value) ? value : {};
 }

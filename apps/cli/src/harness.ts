@@ -881,10 +881,7 @@ function sessionStartSourcesFor(
       stringValue(event.payload.session_start_source) ??
       stringValue(event.provenance.source) ??
       stringValue(event.provenance.sessionStartSource);
-    if (
-      source !== undefined &&
-      SESSION_START_SOURCES.includes(source as (typeof SESSION_START_SOURCES)[number])
-    ) {
+    if (source !== undefined && (SESSION_START_SOURCES as readonly string[]).includes(source)) {
       observed.add(source);
     }
   }
