@@ -84,8 +84,8 @@ export async function runMcpCommand(
   return undefined;
 }
 
-export function createProjectMcpServer(input: { cwd?: string } = {}) {
-  const cwd = input.cwd;
+export function createProjectMcpServer(options: { cwd?: string } = {}) {
+  const cwd = options.cwd;
   return createSagaMcpServer({
     getActiveContext: async () => {
       const document = await compileProjectActiveContext(cwd === undefined ? {} : { cwd });

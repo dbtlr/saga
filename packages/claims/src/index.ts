@@ -147,8 +147,8 @@ function candidateStatements(prompt: string): string[] {
   let prefix = '';
   for (const line of prompt
     .split(/\r?\n|(?<=[.!])\s+/)
-    .map((line) => line.trim().replace(/^[-*]\s+/, ''))
-    .filter((line) => !line.endsWith('?'))) {
+    .map((segment) => segment.trim().replace(/^[-*]\s+/, ''))
+    .filter((segment) => !segment.endsWith('?'))) {
     if (/^(agreed|sounds good|that makes sense)[.!]?$/i.test(line)) {
       prefix = line;
       continue;

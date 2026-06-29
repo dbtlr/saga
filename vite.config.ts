@@ -65,7 +65,6 @@ const config = {
         'vitest/require-hook': 'off',
         // === Pending fix in the rule loop (SGA-170) ===
         'typescript/no-unsafe-type-assertion': 'off',
-        'no-shadow': 'off',
         'new-cap': 'off',
       },
       overrides: [

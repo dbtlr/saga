@@ -18,7 +18,7 @@ import type { HarnessActivationStatus } from './harness.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
-const checks: DoctorCheck[] = [
+const fixtureChecks: DoctorCheck[] = [
   {
     detail: 'v26.3.1',
     label: 'node',
@@ -39,13 +39,18 @@ const checks: DoctorCheck[] = [
 describe('renderDoctor', () => {
   test('renders unicode status tokens', () => {
     expect(
-      renderDoctor(checks, { ascii: false, color: 'never', format: 'records', isTty: false }),
+      renderDoctor(fixtureChecks, {
+        ascii: false,
+        color: 'never',
+        format: 'records',
+        isTty: false,
+      }),
     ).toContain('postgres    ⚠ DATABASE_URL is not set');
   });
 
   test('renders ascii status tokens', () => {
     expect(
-      renderDoctor(checks, { ascii: true, color: 'never', format: 'records', isTty: false }),
+      renderDoctor(fixtureChecks, { ascii: true, color: 'never', format: 'records', isTty: false }),
     ).toContain('migrations  [fail] connection refused');
   });
 
