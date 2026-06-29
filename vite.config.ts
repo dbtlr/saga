@@ -1,3 +1,4 @@
+import { vitestNode } from "@dbtlr/tooling/vitest";
 import { defineConfig } from "vite-plus";
 import type { OxlintConfig } from "oxlint";
 
@@ -91,7 +92,8 @@ export default defineConfig({
       { files: ["**/*.test.ts", "**/*.test.tsx"], rules: { "no-restricted-imports": "off" } },
     ],
   },
-  test: {
-    environment: "node",
-  },
+  // Monorepo layout: members run under the centralized root config, so test
+  // discovery globs must reach each package's src (the helper's package-relative
+  // default would match nothing here).
+  ...vitestNode({ include: ["**/src/**/*.test.ts", "**/tests/**/*.test.ts"] }),
 });
