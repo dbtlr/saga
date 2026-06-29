@@ -10,7 +10,7 @@ describe('server function validators', () => {
   it('accepts valid workspace profile payloads', () => {
     expect(
       validateWorkspaceProfileInput({ displayName: 'Saga', summary: 'Memory system' }),
-    ).toEqual({
+    ).toStrictEqual({
       displayName: 'Saga',
       summary: 'Memory system',
     });
@@ -29,7 +29,7 @@ describe('server function validators', () => {
   });
 
   it('accepts claim promotion actions', () => {
-    expect(validateClaimReviewInput({ action: 'promote', claimKey: 'claim-1' })).toEqual({
+    expect(validateClaimReviewInput({ action: 'promote', claimKey: 'claim-1' })).toStrictEqual({
       action: 'promote',
       claimKey: 'claim-1',
     });

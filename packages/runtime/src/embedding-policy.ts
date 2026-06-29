@@ -7,22 +7,22 @@ export type RemoteEmbeddingPolicyState = 'enabled' | 'disabled';
 // config. A future workspace override layer adds "workspace-config" without touching callers.
 export type EmbeddingPolicySource = 'installation-config' | 'default';
 
-export interface EmbeddingPolicyResolutionOptions {
+export type EmbeddingPolicyResolutionOptions = {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   readFile?: (path: string) => string;
-}
+};
 
-export interface EmbeddingPolicy {
+export type EmbeddingPolicy = {
   detail: string;
   remoteEmbeddings: RemoteEmbeddingPolicyState;
   source: EmbeddingPolicySource;
-}
+};
 
-export interface InstallationConfigLocation {
+export type InstallationConfigLocation = {
   displayPath: string;
   path: string;
-}
+};
 
 export function installationConfigLocation(
   options: EmbeddingPolicyResolutionOptions = {},
@@ -100,11 +100,17 @@ function disabledByDefault(detail: string): EmbeddingPolicy {
 }
 
 function readRemoteEmbeddingsState(value: unknown): RemoteEmbeddingPolicyState | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value)) {
+    return undefined;
+  }
   const embeddings = value.embeddings;
-  if (!isRecord(embeddings)) return undefined;
+  if (!isRecord(embeddings)) {
+    return undefined;
+  }
   const remote = embeddings.remote;
-  if (remote === 'enabled' || remote === 'disabled') return remote;
+  if (remote === 'enabled' || remote === 'disabled') {
+    return remote;
+  }
   return undefined;
 }
 

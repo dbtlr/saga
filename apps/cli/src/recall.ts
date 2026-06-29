@@ -4,27 +4,26 @@ import {
   makeDatabase,
   redactAgentFacingSessionValue,
   searchSessionRecall,
-  type RecallContextExpansion,
-  type RecallContextExpansionInput,
-  type RecallExpandedSegment,
-  type RecallExpandedTurn,
-  type RecallQueryEmbedding,
-  type RecallSearchInput,
-  type RecallSearchResult,
-  type RecallSegmentMatch,
 } from '@saga/db';
-import {
-  loadRuntimeConfig,
-  resolveCodexAuth,
-  resolveEmbeddingPolicy,
-  type CodexAuthResolutionOptions,
-  type EmbeddingPolicyResolutionOptions,
-} from '@saga/runtime';
+import type {
+  RecallContextExpansion,
+  RecallContextExpansionInput,
+  RecallExpandedSegment,
+  RecallExpandedTurn,
+  RecallQueryEmbedding,
+  RecallSearchInput,
+  RecallSearchResult,
+  RecallSegmentMatch,
+} from '@saga/db';
+import { loadRuntimeConfig, resolveCodexAuth, resolveEmbeddingPolicy } from '@saga/runtime';
+import type { CodexAuthResolutionOptions, EmbeddingPolicyResolutionOptions } from '@saga/runtime';
 import { Effect } from 'effect';
 
-import { type WorkspaceBindingFile, findProjectRoot, readBindingFile } from './init.js';
+import { findProjectRoot, readBindingFile } from './init.js';
+import type { WorkspaceBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, separator, type RenderOptions } from './render.js';
+import { recordBlock, separator } from './render.js';
+import type { RenderOptions } from './render.js';
 
 const SEARCH_FLAGS_WITH_VALUES = new Set([
   'activity',
@@ -46,7 +45,7 @@ const SEARCH_BOOLEAN_FLAGS = new Set(['no-embeddings']);
 const SHOW_FLAGS_WITH_VALUES = new Set(['after', 'before', 'window', 'workspace', 'workspace-id']);
 const SHOW_BOOLEAN_FLAGS = new Set<string>();
 
-export interface RecallCommandDependencies {
+export type RecallCommandDependencies = {
   cwd?: string | undefined;
   expandContext?:
     | ((input: RecallContextExpansionInput) => Promise<RecallContextExpansion>)
@@ -55,7 +54,7 @@ export interface RecallCommandDependencies {
     | ((query: string) => Promise<RecallQueryEmbedding | undefined>)
     | undefined;
   searchRecall?: ((input: RecallSearchInput) => Promise<RecallSearchResult>) | undefined;
-}
+};
 
 export async function runRecallCommand(
   args: readonly string[],
@@ -178,10 +177,10 @@ async function showRecallCommand(
   );
 }
 
-interface BoundProject {
+type BoundProject = {
   binding: WorkspaceBindingFile;
   projectRoot: string;
-}
+};
 
 function loadBoundProject(cwd: string | undefined): BoundProject {
   const projectRoot = findProjectRoot(cwd ?? process.cwd());
@@ -209,11 +208,11 @@ async function openDatabase(projectRoot: string) {
   return Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
 }
 
-export interface ResolveQueryEmbeddingOptions {
+export type ResolveQueryEmbeddingOptions = {
   authOptions?: CodexAuthResolutionOptions | undefined;
   fetchImpl?: typeof fetch | undefined;
   policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
-}
+};
 
 export async function resolveQueryEmbedding(
   query: string,
@@ -231,7 +230,9 @@ export async function resolveQueryEmbedding(
   }
 
   const auth = resolveCodexAuth(options.authOptions);
-  if (auth.status !== 'available') return undefined;
+  if (auth.status !== 'available') {
+    return undefined;
+  }
 
   const generator = createOpenAiSessionEmbeddingGenerator({
     apiKey: auth.openaiApiKey,
@@ -245,7 +246,9 @@ export async function resolveQueryEmbedding(
         text: query,
       },
     ]);
-    if (output === undefined) return undefined;
+    if (output === undefined) {
+      return undefined;
+    }
     return {
       dimensions: generator.provider.dimensions,
       model: generator.provider.model,
@@ -476,11 +479,11 @@ function renderExpandedSegment(
   );
 }
 
-interface LocalOptions {
+type LocalOptions = {
   booleans: Set<string>;
   flags: Record<string, string>;
   positionals: string[];
-}
+};
 
 function parseLocalOptions(
   args: readonly string[],
@@ -492,7 +495,9 @@ function parseLocalOptions(
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === undefined) continue;
+    if (arg === undefined) {
+      continue;
+    }
     if (arg === '--') {
       positionals.push(...args.slice(index + 1));
       break;
@@ -505,7 +510,9 @@ function parseLocalOptions(
     const [rawName, inlineValue] = arg.slice(2).split('=', 2);
     const name = rawName ?? '';
     if (spec.booleanFlags.has(name)) {
-      if (inlineValue !== undefined) throw new Error(`--${name} does not take a value`);
+      if (inlineValue !== undefined) {
+        throw new Error(`--${name} does not take a value`);
+      }
       booleans.add(name);
       continue;
     }
@@ -514,16 +521,22 @@ function parseLocalOptions(
     }
 
     const value = inlineValue ?? args[index + 1];
-    if (value === undefined) throw new Error(`--${name} expects a value`);
+    if (value === undefined) {
+      throw new Error(`--${name} expects a value`);
+    }
     flags[name] = value;
-    if (inlineValue === undefined) index += 1;
+    if (inlineValue === undefined) {
+      index += 1;
+    }
   }
 
   return { booleans, flags, positionals };
 }
 
 function parsePositiveIntegerFlag(value: string | undefined, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1 || String(parsed) !== value) {
     throw new Error(`--${label} must be a positive integer`);
@@ -532,7 +545,9 @@ function parsePositiveIntegerFlag(value: string | undefined, label: string): num
 }
 
 function parseNonNegativeIntegerFlag(value: string | undefined, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== value) {
     throw new Error(`--${label} must be a non-negative integer`);
@@ -541,7 +556,9 @@ function parseNonNegativeIntegerFlag(value: string | undefined, label: string): 
 }
 
 function parseScoreFlag(value: string | undefined, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
     throw new Error(`--${label} must be between 0 and 1`);
@@ -555,8 +572,12 @@ function parseContextWindowFlags(
   const windowTurns = parseNonNegativeIntegerFlag(flags.window, 'window');
   const before = parseNonNegativeIntegerFlag(flags.before, 'before');
   const after = parseNonNegativeIntegerFlag(flags.after, 'after');
-  if (windowTurns === undefined && before === undefined && after === undefined) return {};
-  if (before === undefined && after === undefined) return { windowTurns };
+  if (windowTurns === undefined && before === undefined && after === undefined) {
+    return {};
+  }
+  if (before === undefined && after === undefined) {
+    return { windowTurns };
+  }
   return {
     afterTurns: after,
     beforeTurns: before,
@@ -574,7 +595,9 @@ function workspaceIdFromFlags(
 function firstFlag(flags: Record<string, string>, names: readonly string[]): string | undefined {
   for (const name of names) {
     const value = flags[name];
-    if (value !== undefined) return value;
+    if (value !== undefined) {
+      return value;
+    }
   }
   return undefined;
 }
@@ -585,7 +608,9 @@ function formatScores(scores: RecallSegmentMatch['scores']): string {
     `lexical ${formatScore(scores.lexical)}`,
     `trigram ${formatScore(scores.trigram)}`,
   ];
-  if (scores.vector !== undefined) parts.push(`vector ${formatScore(scores.vector)}`);
+  if (scores.vector !== undefined) {
+    parts.push(`vector ${formatScore(scores.vector)}`);
+  }
   return parts.join(', ');
 }
 
@@ -610,12 +635,16 @@ function safeText(value: string): string {
 }
 
 function formatDate(value: Date | string | null): string {
-  if (value === null) return 'none';
+  if (value === null) {
+    return 'none';
+  }
   return value instanceof Date ? value.toISOString() : value;
 }
 
 function formatRange(start: number | null, end: number | null): string {
-  if (start === null && end === null) return 'none';
+  if (start === null && end === null) {
+    return 'none';
+  }
   return `${start === null ? '?' : String(start)}..${end === null ? '?' : String(end)}`;
 }
 
@@ -624,6 +653,8 @@ function stripTsHeadline(value: string): string {
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
+  if (value.length <= maxLength) {
+    return value;
+  }
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }

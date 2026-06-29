@@ -1,26 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  candidateClaimKey,
-  detectClaimContradiction,
-  type CandidateClaim,
-  type ClaimKind,
-  type ClaimEvidence,
-} from '@saga/claims';
-import { and, desc, eq, notInArray, sql, type SQL } from 'drizzle-orm';
+import { candidateClaimKey, detectClaimContradiction } from '@saga/claims';
+import type { CandidateClaim, ClaimKind, ClaimEvidence } from '@saga/claims';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
-import {
-  claimEvents,
-  currentClaims,
-  rawEvents,
-  sourceBindings,
-  type ClaimEvent,
-  type CurrentClaim,
-  type RawEvent,
-} from './schema.js';
+import { claimEvents, currentClaims, rawEvents, sourceBindings } from './schema.js';
+import type { ClaimEvent, CurrentClaim, RawEvent } from './schema.js';
 
 export type ClaimEventType =
   | 'contradicted'
@@ -46,7 +35,7 @@ export type ClaimState =
 export type ClaimMaintenanceAction = 'decay' | 'merge' | 'split' | 'supersede';
 export type ClaimReviewAction = 'accept' | 'pin' | 'reject' | 'unpin' | 'unwatch' | 'watch';
 
-export interface InsertClaimEventInput {
+export type InsertClaimEventInput = {
   attributes: Record<string, unknown>;
   claimKey: string;
   confidence: number;
@@ -55,14 +44,14 @@ export interface InsertClaimEventInput {
   kind: ClaimKind;
   text: string;
   workspaceId: string;
-}
+};
 
-export interface ClaimProjectionResult {
+export type ClaimProjectionResult = {
   currentClaim: CurrentClaim;
   event: ClaimEvent;
-}
+};
 
-export interface ClaimConfidenceInput {
+export type ClaimConfidenceInput = {
   actorId?: string | null | undefined;
   baseConfidence: number;
   claimKind: ClaimKind;
@@ -73,9 +62,9 @@ export interface ClaimConfidenceInput {
   priorEvents: number;
   sourceType: string;
   trustLevel?: string | null | undefined;
-}
+};
 
-export interface ClaimConfidenceResult {
+export type ClaimConfidenceResult = {
   inputs: {
     actorAuthority: number;
     base: number;
@@ -87,17 +76,17 @@ export interface ClaimConfidenceResult {
     sourceQuality: number;
   };
   score: number;
-}
+};
 
-export interface InsertClaimReviewEventInput {
+export type InsertClaimReviewEventInput = {
   action: ClaimReviewAction;
   actorId?: string | undefined;
   claimKey: string;
   occurredAt?: Date | string | undefined;
   workspaceId: string;
-}
+};
 
-export interface InsertClaimMaintenanceEventInput {
+export type InsertClaimMaintenanceEventInput = {
   action: ClaimMaintenanceAction;
   actorId?: string | undefined;
   claimKey: string;
@@ -105,15 +94,15 @@ export interface InsertClaimMaintenanceEventInput {
   reason?: string | undefined;
   targetClaimKeys?: readonly string[] | undefined;
   workspaceId: string;
-}
+};
 
-export interface InsertClaimPromotionEventInput {
+export type InsertClaimPromotionEventInput = {
   actorId?: string | undefined;
   claimKey: string;
   occurredAt?: Date | string | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
 export class ClaimProjectionError extends Data.TaggedError('ClaimProjectionError')<{
   readonly message: string;
@@ -269,7 +258,9 @@ export function insertClaimEventAndProject(
         })
         .returning();
 
-      if (currentClaim !== undefined) return { currentClaim, event };
+      if (currentClaim !== undefined) {
+        return { currentClaim, event };
+      }
 
       return { currentClaim: await findExistingCurrentClaim(service, input), event };
     },
@@ -322,11 +313,17 @@ function projectContradictionsForCandidate(
       workspaceId: candidate.workspaceId,
     });
     for (const claim of existingClaims) {
-      if (claim.claimKey === candidateKey) continue;
-      if (claim.state === 'rejected' || claim.state === 'contradicted') continue;
+      if (claim.claimKey === candidateKey) {
+        continue;
+      }
+      if (claim.state === 'rejected' || claim.state === 'contradicted') {
+        continue;
+      }
 
       const contradiction = detectClaimContradiction(claim.claimText, candidate.text);
-      if (contradiction === undefined) continue;
+      if (contradiction === undefined) {
+        continue;
+      }
 
       yield* insertClaimEventAndProject(service, {
         attributes: {
@@ -791,10 +788,18 @@ async function readClaimConfidenceStats(
 }
 
 function stateForEventType(eventType: ClaimEventType): ClaimState {
-  if (eventType === 'supported' || eventType === 'promoted') return 'supported';
-  if (eventType === 'contradicted') return 'contradicted';
-  if (eventType === 'decayed') return 'decayed';
-  if (eventType === 'rejected') return 'rejected';
+  if (eventType === 'supported' || eventType === 'promoted') {
+    return 'supported';
+  }
+  if (eventType === 'contradicted') {
+    return 'contradicted';
+  }
+  if (eventType === 'decayed') {
+    return 'decayed';
+  }
+  if (eventType === 'rejected') {
+    return 'rejected';
+  }
   if (eventType === 'merged' || eventType === 'split' || eventType === 'superseded') {
     return 'superseded';
   }
@@ -802,18 +807,34 @@ function stateForEventType(eventType: ClaimEventType): ClaimState {
 }
 
 function eventTypeForReviewAction(action: ClaimReviewAction): ClaimEventType {
-  if (action === 'accept') return 'supported';
-  if (action === 'reject') return 'rejected';
-  if (action === 'pin') return 'pinned';
-  if (action === 'unpin') return 'unpinned';
-  if (action === 'watch') return 'watched';
+  if (action === 'accept') {
+    return 'supported';
+  }
+  if (action === 'reject') {
+    return 'rejected';
+  }
+  if (action === 'pin') {
+    return 'pinned';
+  }
+  if (action === 'unpin') {
+    return 'unpinned';
+  }
+  if (action === 'watch') {
+    return 'watched';
+  }
   return 'unwatched';
 }
 
 function eventTypeForMaintenanceAction(action: ClaimMaintenanceAction): ClaimEventType {
-  if (action === 'decay') return 'decayed';
-  if (action === 'merge') return 'merged';
-  if (action === 'split') return 'split';
+  if (action === 'decay') {
+    return 'decayed';
+  }
+  if (action === 'merge') {
+    return 'merged';
+  }
+  if (action === 'split') {
+    return 'split';
+  }
   return 'superseded';
 }
 
@@ -851,7 +872,9 @@ function preserveReviewAttributes(
   nextAttributes: Record<string, unknown>,
   existingAttributes: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  if (existingAttributes === undefined) return nextAttributes;
+  if (existingAttributes === undefined) {
+    return nextAttributes;
+  }
 
   const governanceAttributes = Object.fromEntries(
     Object.entries(existingAttributes).filter(
@@ -874,10 +897,18 @@ function reviewAttributesForEventType(
     reviewLastAction: eventType,
     reviewLastAt: reviewedAt,
   };
-  if (eventType === 'pinned') return { ...next, reviewPinned: true };
-  if (eventType === 'unpinned') return { ...next, reviewPinned: false };
-  if (eventType === 'watched') return { ...next, reviewWatched: true };
-  if (eventType === 'unwatched') return { ...next, reviewWatched: false };
+  if (eventType === 'pinned') {
+    return { ...next, reviewPinned: true };
+  }
+  if (eventType === 'unpinned') {
+    return { ...next, reviewPinned: false };
+  }
+  if (eventType === 'watched') {
+    return { ...next, reviewWatched: true };
+  }
+  if (eventType === 'unwatched') {
+    return { ...next, reviewWatched: false };
+  }
   return next;
 }
 
@@ -898,7 +929,9 @@ function promotionAttributes(
 
 function promotionTitle(title: string | undefined, claimText: string): string {
   const normalized = title?.trim();
-  if (normalized !== undefined && normalized !== '') return normalized;
+  if (normalized !== undefined && normalized !== '') {
+    return normalized;
+  }
   return claimText.length <= 72 ? claimText : `${claimText.slice(0, 69)}...`;
 }
 
@@ -975,16 +1008,26 @@ function withConfidenceAttributes(
 }
 
 function actorAuthorityScore(actorId: string | null | undefined): number {
-  if (actorId === 'control-plane') return 0.08;
-  if (actorId === 'human') return 0.08;
-  if (actorId === 'codex' || actorId === 'claude') return 0.01;
+  if (actorId === 'control-plane') {
+    return 0.08;
+  }
+  if (actorId === 'human') {
+    return 0.08;
+  }
+  if (actorId === 'codex' || actorId === 'claude') {
+    return 0.01;
+  }
   return 0;
 }
 
 function contradictionScore(input: ClaimConfidenceInput): number {
   const priorPenalty = -Math.min(0.16, input.priorContradictions * 0.08);
-  if (input.eventType === 'contradicted') return priorPenalty - 0.22;
-  if (input.eventType === 'decayed') return priorPenalty - 0.45;
+  if (input.eventType === 'contradicted') {
+    return priorPenalty - 0.22;
+  }
+  if (input.eventType === 'decayed') {
+    return priorPenalty - 0.45;
+  }
   if (
     input.eventType === 'merged' ||
     input.eventType === 'split' ||
@@ -992,22 +1035,38 @@ function contradictionScore(input: ClaimConfidenceInput): number {
   ) {
     return priorPenalty - 0.5;
   }
-  if (input.eventType === 'rejected') return priorPenalty - 0.35;
+  if (input.eventType === 'rejected') {
+    return priorPenalty - 0.35;
+  }
   return priorPenalty;
 }
 
 function explicitnessScore(input: ClaimConfidenceInput): number {
-  if (input.eventType === 'promoted') return 0.12;
-  if (input.eventType === 'supported' && input.sourceType === 'saga') return 0.08;
-  if (input.eventType === 'extracted' && input.claimKind === 'decision') return 0.03;
-  if (input.eventType === 'extracted' && input.claimKind === 'preference') return 0.02;
+  if (input.eventType === 'promoted') {
+    return 0.12;
+  }
+  if (input.eventType === 'supported' && input.sourceType === 'saga') {
+    return 0.08;
+  }
+  if (input.eventType === 'extracted' && input.claimKind === 'decision') {
+    return 0.03;
+  }
+  if (input.eventType === 'extracted' && input.claimKind === 'preference') {
+    return 0.02;
+  }
   return 0;
 }
 
 function humanPromotionScore(input: ClaimConfidenceInput): number {
-  if (input.eventType === 'promoted' && input.sourceType === 'saga') return 0.2;
-  if (input.eventType === 'supported' && input.sourceType === 'saga') return 0.15;
-  if (input.eventType === 'rejected' && input.sourceType === 'saga') return -0.35;
+  if (input.eventType === 'promoted' && input.sourceType === 'saga') {
+    return 0.2;
+  }
+  if (input.eventType === 'supported' && input.sourceType === 'saga') {
+    return 0.15;
+  }
+  if (input.eventType === 'rejected' && input.sourceType === 'saga') {
+    return -0.35;
+  }
   return 0;
 }
 
@@ -1016,17 +1075,29 @@ function recurrenceScore(priorEvents: number): number {
 }
 
 function recencyScore(ageDays: number): number {
-  if (ageDays <= 7) return 0.03;
-  if (ageDays <= 30) return 0.01;
-  if (ageDays <= 90) return 0;
+  if (ageDays <= 7) {
+    return 0.03;
+  }
+  if (ageDays <= 30) {
+    return 0.01;
+  }
+  if (ageDays <= 90) {
+    return 0;
+  }
   return -0.08;
 }
 
 function sourceQualityScore(input: ClaimConfidenceInput): number {
   const trustScore = input.trustLevel === 'trusted' ? 0.08 : 0;
-  if (input.sourceType === 'saga') return trustScore + 0.05;
-  if (input.sourceType === 'git') return trustScore + 0.03;
-  if (input.sourceType === 'codex' || input.sourceType === 'claude') return trustScore + 0.01;
+  if (input.sourceType === 'saga') {
+    return trustScore + 0.05;
+  }
+  if (input.sourceType === 'git') {
+    return trustScore + 0.03;
+  }
+  if (input.sourceType === 'codex' || input.sourceType === 'claude') {
+    return trustScore + 0.01;
+  }
   return trustScore;
 }
 
@@ -1072,10 +1143,18 @@ function projectionAdvanceSql(
 }
 
 function statePrecedence(state: string): number {
-  if (state === 'rejected') return 4;
-  if (state === 'superseded') return 3;
-  if (state === 'contradicted') return 2;
-  if (state === 'supported') return 1;
+  if (state === 'rejected') {
+    return 4;
+  }
+  if (state === 'superseded') {
+    return 3;
+  }
+  if (state === 'contradicted') {
+    return 2;
+  }
+  if (state === 'supported') {
+    return 1;
+  }
   return 0;
 }
 

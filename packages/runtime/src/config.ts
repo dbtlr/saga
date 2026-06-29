@@ -7,7 +7,7 @@ import { Context, Data, Effect, Layer } from 'effect';
 export type SagaEnvironment = 'development' | 'test' | 'production';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-export interface RuntimeConfig {
+export type RuntimeConfig = {
   databaseUrl: string | undefined;
   environment: SagaEnvironment;
   logLevel: LogLevel;
@@ -18,9 +18,9 @@ export interface RuntimeConfig {
   secrets: {
     openaiApiKey: string | undefined;
   };
-}
+};
 
-export interface RedactedRuntimeConfig {
+export type RedactedRuntimeConfig = {
   databaseUrl: string | undefined;
   environment: SagaEnvironment;
   logLevel: LogLevel;
@@ -31,22 +31,22 @@ export interface RedactedRuntimeConfig {
   secrets: {
     openaiApiKey: string | undefined;
   };
-}
+};
 
-export interface ConfigIssue {
+export type ConfigIssue = {
   key: string;
   message: string;
-}
+};
 
 export class ConfigError extends Data.TaggedError('ConfigError')<{
   readonly issues: readonly ConfigIssue[];
 }> {}
 
-export interface LoadRuntimeConfigOptions {
+export type LoadRuntimeConfigOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   envFiles?: readonly string[];
-}
+};
 
 export const RuntimeConfigTag = Context.GenericTag<RuntimeConfig>('@saga/runtime/RuntimeConfig');
 
@@ -71,7 +71,9 @@ export function loadLocalEnv(
 
   for (const envFile of envFiles) {
     const path = resolve(cwd, envFile);
-    if (!existsSync(path)) continue;
+    if (!existsSync(path)) {
+      continue;
+    }
     Object.assign(loaded, parseDotenv(readFileSync(path)));
   }
 
@@ -159,14 +161,20 @@ function readSecretValue(
   issues: ConfigIssue[],
 ): string | undefined {
   const directValue = optionalString(env[key]);
-  if (directValue !== undefined) return directValue;
+  if (directValue !== undefined) {
+    return directValue;
+  }
 
   const filePath = optionalString(env[`${key}_FILE`]);
-  if (filePath === undefined) return undefined;
+  if (filePath === undefined) {
+    return undefined;
+  }
 
   try {
     const value = optionalString(readFileSync(filePath, 'utf8'));
-    if (value !== undefined) return value;
+    if (value !== undefined) {
+      return value;
+    }
     issues.push({
       key: `${key}_FILE`,
       message: `secret file ${filePath} is empty`,
@@ -191,8 +199,12 @@ function parseEnum<const Value extends string>(
   issues: ConfigIssue[],
 ): Value {
   const normalized = optionalString(value);
-  if (normalized === undefined) return fallback;
-  if (allowed.includes(normalized as Value)) return normalized as Value;
+  if (normalized === undefined) {
+    return fallback;
+  }
+  if (allowed.includes(normalized as Value)) {
+    return normalized as Value;
+  }
 
   issues.push({
     key,
@@ -203,7 +215,9 @@ function parseEnum<const Value extends string>(
 
 function parsePort(value: string | undefined, key: string, issues: ConfigIssue[]): number {
   const normalized = optionalString(value);
-  if (normalized === undefined) return DEFAULT_SERVICE_PORT;
+  if (normalized === undefined) {
+    return DEFAULT_SERVICE_PORT;
+  }
 
   const port = Number.parseInt(normalized, 10);
   if (Number.isInteger(port) && port > 0 && port <= 65_535 && String(port) === normalized) {

@@ -5,9 +5,11 @@ import {
   updateClaimReview,
   updateSourceBinding,
   updateWorkspaceProfile,
-  type UpdateClaimReviewInput,
-  type UpdateSourceBindingInput,
-  type UpdateWorkspaceProfileInput,
+} from './control-plane.js';
+import type {
+  UpdateClaimReviewInput,
+  UpdateSourceBindingInput,
+  UpdateWorkspaceProfileInput,
 } from './control-plane.js';
 
 export const getControlPlaneSnapshot = createServerFn({ method: 'GET' }).handler(() =>

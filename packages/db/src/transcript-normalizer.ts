@@ -1,14 +1,14 @@
 export type NormalizedTurnRole = 'assistant' | 'subagent' | 'system' | 'tool' | 'user';
 export type NormalizedActorKind = 'agent' | 'harness' | 'host_user' | 'subagent' | 'tool';
 
-export interface TranscriptImportHints {
+export type TranscriptImportHints = {
   cwd?: string | undefined;
   derivedSidechainHarnessSessionId?: string | undefined;
   harnessSessionId?: string | undefined;
   model?: string | undefined;
-}
+};
 
-export interface TranscriptNormalization {
+export type TranscriptNormalization = {
   activityInterval: {
     endedAt?: Date | undefined;
     metadata: Record<string, unknown>;
@@ -26,9 +26,9 @@ export interface TranscriptNormalization {
     title?: string | undefined;
   };
   turns: NormalizedTranscriptTurn[];
-}
+};
 
-export interface NormalizedTranscriptTurn {
+export type NormalizedTranscriptTurn = {
   actorKind: NormalizedActorKind;
   actorLabel?: string | undefined;
   codexTurnId?: string | undefined;
@@ -41,4 +41,4 @@ export interface NormalizedTranscriptTurn {
   role: NormalizedTurnRole;
   searchText: string;
   startedAt?: Date | undefined;
-}
+};

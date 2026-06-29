@@ -13,9 +13,8 @@ import {
   serviceStatus,
   launchdPrintProcess,
   waitForServiceHealth,
-  type ServiceLifecycleReport,
-  type ServiceSupervisor,
 } from './service.js';
+import type { ServiceLifecycleReport, ServiceSupervisor } from './service.js';
 
 const renderOptions = {
   ascii: true,
@@ -179,7 +178,9 @@ describe('launchdPrintProcess', () => {
 
 describe('createLaunchdSupervisor', () => {
   test('does not mutate launchd state on non-macOS', async () => {
-    if (process.platform === 'darwin') return;
+    if (process.platform === 'darwin') {
+      return;
+    }
     const report = await createLaunchdSupervisor({ cwd: process.cwd() }).install();
 
     expect(report).toMatchObject({

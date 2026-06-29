@@ -90,9 +90,9 @@ try {
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
   await adminSql.end({ timeout: 5 });
 
-  if (workspacePath !== undefined && failed === false && process.env.SAGA_SMOKE_KEEP !== '1') {
+  if (workspacePath !== undefined && !failed && process.env.SAGA_SMOKE_KEEP !== '1') {
     rmSync(workspacePath, { force: true, recursive: true });
-  } else if (workspacePath !== undefined && failed === true) {
+  } else if (workspacePath !== undefined && failed) {
     console.error(`smoke workspace kept for inspection: ${workspacePath}`);
   }
 }
@@ -216,7 +216,9 @@ function run(command, args, options) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  if (result.error !== undefined) throw result.error;
+  if (result.error !== undefined) {
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       [

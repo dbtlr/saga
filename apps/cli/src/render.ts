@@ -1,18 +1,18 @@
 import type { ColorMode, GlobalOptions, OutputFormat } from './cli.js';
 
-export interface RenderOptions {
+export type RenderOptions = {
   ascii: boolean;
   color: ColorMode;
   format: OutputFormat;
   isTty: boolean;
-}
+};
 
 export type Severity = 'success' | 'warning' | 'error';
 
-export interface FieldRow {
+export type FieldRow = {
   label: string;
   value: string;
-}
+};
 
 const ANSI = {
   bold: '\u001b[1m',
@@ -38,7 +38,7 @@ const SEVERITY_COLOR: Record<Severity, keyof typeof ANSI> = {
 
 export function renderOptionsFromGlobals(
   options: GlobalOptions,
-  isTty = process.stdout.isTTY === true,
+  isTty = process.stdout.isTTY,
 ): RenderOptions {
   return {
     ascii: options.ascii,
@@ -49,14 +49,22 @@ export function renderOptionsFromGlobals(
 }
 
 export function shouldColor(options: RenderOptions): boolean {
-  if (options.ascii) return false;
-  if (options.color === 'always') return true;
-  if (options.color === 'never') return false;
+  if (options.ascii) {
+    return false;
+  }
+  if (options.color === 'always') {
+    return true;
+  }
+  if (options.color === 'never') {
+    return false;
+  }
   return options.isTty && process.env.NO_COLOR === undefined;
 }
 
 export function style(text: string, token: keyof typeof ANSI, options: RenderOptions): string {
-  if (!shouldColor(options)) return text;
+  if (!shouldColor(options)) {
+    return text;
+  }
   return `${ANSI[token]}${text}${ANSI.reset}`;
 }
 

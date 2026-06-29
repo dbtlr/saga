@@ -7,8 +7,8 @@ import {
   rewriteResolvedSagaLinkReferences,
   runMcpCommand,
   searchMemoryEntries,
-  type MemorySearchEntry,
 } from './mcp.js';
+import type { MemorySearchEntry } from './mcp.js';
 
 async function* chunks(text: string) {
   yield text;
@@ -142,7 +142,7 @@ describe('rewriteResolvedSagaLinkReferences', () => {
       sourceBindingId: 'source-1',
       url: 'saga:context/adr',
     });
-    expect(rewritten.references[1]).toEqual({
+    expect(rewritten.references[1]).toStrictEqual({
       connector: 'norn',
       externalId: 'notes/adr.md',
       sourceBindingId: 'source-2',
@@ -235,7 +235,7 @@ describe('redactResolvedSagaLink', () => {
       },
     });
 
-    expect(redacted.entry.sourceBinding).toEqual({
+    expect(redacted.entry.sourceBinding).toStrictEqual({
       displayName: 'GitHub',
       enabled: true,
       id: 'github-source',
@@ -350,7 +350,7 @@ describe('redactMcpStructuredOutput', () => {
     expect(JSON.stringify(redacted)).not.toContain('/home/drew/work/saga');
     expect(JSON.stringify(redacted)).not.toContain('/work/saga');
     expect(JSON.stringify(redacted)).not.toContain('/custom-root/saga');
-    expect(JSON.stringify(redacted)).not.toContain('C:\\\\Users\\\\drew');
+    expect(JSON.stringify(redacted)).not.toContain(String.raw`C:\\Users\\drew`);
     expect(JSON.stringify(redacted)).not.toContain('file:///tmp/saga/session.jsonl');
   });
 
@@ -543,8 +543,8 @@ describe('searchMemoryEntries', () => {
     expect(JSON.stringify(structured)).toContain('[local-path-redacted]');
     expect(JSON.stringify(structured)).toContain('https://example.test/session');
     expect(JSON.stringify(structured)).not.toContain('/Users/Drew Smith');
-    expect(JSON.stringify(structured)).not.toContain('C:\\\\Users\\\\Drew Smith');
-    expect(JSON.stringify(structured)).not.toContain('\\\\\\\\server\\\\share');
+    expect(JSON.stringify(structured)).not.toContain(String.raw`C:\\Users\\Drew Smith`);
+    expect(JSON.stringify(structured)).not.toContain(String.raw`\\\\server\\share`);
     expect(structured[0]).not.toHaveProperty('score');
   });
 });

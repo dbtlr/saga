@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import { normalizeClaudeTranscript } from './claude-transcript-normalizer.js';
 import { normalizeCodexTranscript } from './codex-transcript-normalizer.js';
-import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
+import { makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import { importLifecycleBoundaryEvent, importRawSessionRecord } from './raw-session-import.js';
 import {
@@ -21,12 +22,8 @@ import {
   workspaces,
 } from './schema.js';
 import { expandRecallContext, searchSessionRecall } from './session-recall.js';
-import {
-  getSessionDetail,
-  listRecentSessionRecords,
-  type RecentSessionRecord,
-  type SessionDetail,
-} from './session-records.js';
+import { getSessionDetail, listRecentSessionRecords } from './session-records.js';
+import type { RecentSessionRecord, SessionDetail } from './session-records.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -74,14 +71,18 @@ describePostgres('raw session import', () => {
   });
 
   async function createBoundWorkspace(handlePrefix: string): Promise<string> {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
         handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
     return workspace.id;
   }
 
@@ -90,7 +91,9 @@ describePostgres('raw session import', () => {
     expectedWaiters: number,
     runWhileLocked: () => Promise<T>,
   ): Promise<T> {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const lockAcquired = deferred<void>();
     const releaseLock = deferred<void>();
@@ -113,7 +116,9 @@ describePostgres('raw session import', () => {
   }
 
   async function waitForBlockedTransactionLocks(expectedWaiters: number): Promise<void> {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const [locks] = await service.sql<{ blocked: number }[]>`
@@ -123,7 +128,9 @@ describePostgres('raw session import', () => {
           and pid <> pg_backend_pid()
           and wait_event_type = 'Lock'
       `;
-      if ((locks?.blocked ?? 0) >= expectedWaiters) return;
+      if ((locks?.blocked ?? 0) >= expectedWaiters) {
+        return;
+      }
       await sleep(20);
     }
 
@@ -156,7 +163,9 @@ describePostgres('raw session import', () => {
     occurredAt: string;
     workspaceId: string;
   }): Promise<{ rawEventId: string; sourceBindingId: string }> {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     // sourceBindings has a unique index on (workspaceId, sourceType, sourceUri); upsert so repeated
     // calls for the same host/harness return ONE stable binding id (else session lookup forks).
     const sourceUri = `${input.harness}://host/${input.hostId}`;
@@ -177,7 +186,9 @@ describePostgres('raw session import', () => {
         ),
       )
       .limit(1);
-    if (binding === undefined) throw new Error('source binding upsert returned no row');
+    if (binding === undefined) {
+      throw new Error('source binding upsert returned no row');
+    }
     const rawEvent = await Effect.runPromise(
       insertRawEvent(service, {
         actorId: input.hostId,
@@ -197,7 +208,9 @@ describePostgres('raw session import', () => {
   }
 
   test('migrates lexical indexes for session segment search', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const indexes = await service.db.execute<{ indexdef: string; indexname: string }>(sql`
       select indexname, indexdef
@@ -208,7 +221,7 @@ describePostgres('raw session import', () => {
       order by indexname
     `);
 
-    expect(indexes.map((index) => index.indexname)).toEqual([
+    expect(indexes.map((index) => index.indexname)).toStrictEqual([
       'session_segments_search_trgm_idx',
       'session_segments_search_tsv_idx',
     ]);
@@ -221,7 +234,9 @@ describePostgres('raw session import', () => {
   });
 
   test('imports the same raw record idempotently without duplicate active snapshots', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-idempotent');
     const input = {
       author: {
@@ -307,7 +322,9 @@ describePostgres('raw session import', () => {
   });
 
   test('unchanged raw-session reimport leaves current row updatedAt timestamps unchanged', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-idempotent-updated-at');
     const rawContent = codexTranscript([
       {
@@ -409,15 +426,17 @@ describePostgres('raw session import', () => {
       .from(users)
       .where(eq(users.id, first.authorUser.id));
 
-    expect(storedSession?.updatedAt).toEqual(frozenUpdatedAt);
-    expect(storedActivityInterval?.updatedAt).toEqual(frozenUpdatedAt);
-    expect(storedRawSessionRecord?.updatedAt).toEqual(frozenUpdatedAt);
-    expect(storedSourceBinding?.updatedAt).toEqual(frozenUpdatedAt);
-    expect(storedUser?.updatedAt).toEqual(frozenUpdatedAt);
+    expect(storedSession?.updatedAt).toStrictEqual(frozenUpdatedAt);
+    expect(storedActivityInterval?.updatedAt).toStrictEqual(frozenUpdatedAt);
+    expect(storedRawSessionRecord?.updatedAt).toStrictEqual(frozenUpdatedAt);
+    expect(storedSourceBinding?.updatedAt).toStrictEqual(frozenUpdatedAt);
+    expect(storedUser?.updatedAt).toStrictEqual(frozenUpdatedAt);
   });
 
   test('handles concurrent duplicate first imports within one source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
     const workspaceId = await createBoundWorkspace('raw-import-concurrent-first');
     const input = {
@@ -447,14 +466,16 @@ describePostgres('raw session import', () => {
       inputs.map((callerInput) => Effect.runPromise(importRawSessionRecord(db, callerInput))),
     );
     const [first] = results;
-    if (first === undefined) throw new Error('concurrent imports returned no results');
+    if (first === undefined) {
+      throw new Error('concurrent imports returned no results');
+    }
 
     expect(results.filter((result) => result.operation === 'inserted')).toHaveLength(1);
     expect(results.filter((result) => result.operation === 'unchanged')).toHaveLength(7);
-    expect(new Set(results.map((result) => result.session.id))).toEqual(
+    expect(new Set(results.map((result) => result.session.id))).toStrictEqual(
       new Set([first.session.id]),
     );
-    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toStrictEqual(
       new Set([first.rawSessionRecord.id]),
     );
     expect(new Set(results.map((result) => result.sourceBinding.id)).size).toBe(1);
@@ -478,7 +499,7 @@ describePostgres('raw session import', () => {
         (select count(*)::int from source_bindings where workspace_id = ${workspaceId}) as source_bindings,
         (select count(*)::int from users where workspace_id = ${workspaceId}) as users
     `;
-    expect(counts).toEqual({
+    expect(counts).toStrictEqual({
       active_raw_records: 1,
       activity_intervals: 1,
       raw_records: 1,
@@ -500,7 +521,9 @@ describePostgres('raw session import', () => {
   });
 
   test('scopes same workspace harness session ids by source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-source-scoped-harness-id');
     const baseInput = {
       author: {
@@ -570,13 +593,15 @@ describePostgres('raw session import', () => {
       )
       .orderBy(asc(sessions.sourceBindingId));
     expect(rows).toHaveLength(2);
-    expect(new Set(rows.map((row) => row.sourceBindingId))).toEqual(
+    expect(new Set(rows.map((row) => row.sourceBindingId))).toStrictEqual(
       new Set([first.sourceBinding.id, second.sourceBinding.id]),
     );
   });
 
   test('scopes same workspace locator fallback ids by source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-source-scoped-locator');
     const baseInput = {
       author: {
@@ -648,13 +673,15 @@ describePostgres('raw session import', () => {
       (row) => row.sourceLocatorHash === first.session.sourceLocatorHash,
     );
     expect(scopedRows).toHaveLength(2);
-    expect(new Set(scopedRows.map((row) => row.sourceBindingId))).toEqual(
+    expect(new Set(scopedRows.map((row) => row.sourceBindingId))).toStrictEqual(
       new Set([first.sourceBinding.id, second.sourceBinding.id]),
     );
   });
 
   test('keeps same-handle host users distinct across host subjects', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-host-users');
     const baseInput = {
       author: {
@@ -713,7 +740,7 @@ describePostgres('raw session import', () => {
       .from(users)
       .where(eq(users.workspaceId, workspaceId))
       .orderBy(asc(users.externalSubject));
-    expect(hostUsers.map((user) => user.externalSubject)).toEqual(['host-1', 'host-2']);
+    expect(hostUsers.map((user) => user.externalSubject)).toStrictEqual(['host-1', 'host-2']);
 
     const rows = await service.sql<{ external_subject: string; sessions: string }[]>`
       select u.external_subject, count(*)::text as sessions
@@ -724,14 +751,16 @@ describePostgres('raw session import', () => {
       group by u.external_subject
       order by u.external_subject
     `;
-    expect(rows).toEqual([
+    expect(rows).toStrictEqual([
       { external_subject: 'host-1', sessions: '1' },
       { external_subject: 'host-2', sessions: '1' },
     ]);
   });
 
   test('lists recent raw session records with session and provenance metadata', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-list');
     const imported = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -815,7 +844,9 @@ describePostgres('raw session import', () => {
   });
 
   test('redacts local session provenance from public read models while preserving persisted rows', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-provenance-redaction');
     const projectRoot = '/work/saga';
     const transcriptPath = '/work/saga/private-session.jsonl';
@@ -905,7 +936,9 @@ describePostgres('raw session import', () => {
   });
 
   test('shows a session detail through either session id or raw record id with bounded turns', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-show');
     const imported = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -983,7 +1016,7 @@ describePostgres('raw session import', () => {
     expect(withRawBody.activeRawSessionRecord?.bodyText).toBe(
       '{"role":"user","content":"First detail turn"}\n{"role":"assistant","content":"Second detail turn"}\n',
     );
-    expect(withRawBody.activeRawSessionRecord?.bodyJson).toEqual([
+    expect(withRawBody.activeRawSessionRecord?.bodyJson).toStrictEqual([
       { role: 'user', content: 'First detail turn' },
       { role: 'assistant', content: 'Second detail turn' },
     ]);
@@ -994,14 +1027,16 @@ describePostgres('raw session import', () => {
       mode: 'raw_forensic',
       requestedBy: 'includeRawBody',
     });
-    expect(withRawBody.rawSessionRecords[0]?.bodyJson).toEqual([
+    expect(withRawBody.rawSessionRecords[0]?.bodyJson).toStrictEqual([
       { role: 'user', content: 'First detail turn' },
       { role: 'assistant', content: 'Second detail turn' },
     ]);
   });
 
   test('shows a selected raw record outside the bounded raw-record window', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-show-selected-outside-window');
     const baseInput = {
       author: {
@@ -1069,7 +1104,9 @@ describePostgres('raw session import', () => {
         workspaceId,
       })
       .returning();
-    if (historicalTurn === undefined) throw new Error('historical turn insert returned no row');
+    if (historicalTurn === undefined) {
+      throw new Error('historical turn insert returned no row');
+    }
     await service.db.insert(sessionSegments).values({
       activityIntervalId: first.activityInterval.id,
       charEnd: 'Historical selected turn'.length,
@@ -1111,7 +1148,9 @@ describePostgres('raw session import', () => {
   });
 
   test('imports growing raw content as a new active snapshot and regenerates derived rows', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-growing');
     const baseInput = {
       author: {
@@ -1152,7 +1191,7 @@ describePostgres('raw session import', () => {
       .from(rawSessionRecords)
       .where(eq(rawSessionRecords.sessionId, first.session.id));
     expect(records).toHaveLength(2);
-    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toStrictEqual([
       second.rawSessionRecord.id,
     ]);
     expect(records.find((record) => record.id === first.rawSessionRecord.id)?.isActive).toBe(false);
@@ -1184,14 +1223,16 @@ describePostgres('raw session import', () => {
         ),
       );
     expect(activeSegments).toHaveLength(2);
-    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+    expect(activeSegments.map((segment) => segment.searchText)).toStrictEqual([
       'First turn',
       'Second turn',
     ]);
   });
 
   test('handles concurrent duplicate growing imports as one new active snapshot', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
     const workspaceId = await createBoundWorkspace('raw-import-concurrent-growing');
     const baseInput = {
@@ -1224,14 +1265,16 @@ describePostgres('raw session import', () => {
       ),
     );
     const [grown] = results;
-    if (grown === undefined) throw new Error('concurrent growing imports returned no results');
+    if (grown === undefined) {
+      throw new Error('concurrent growing imports returned no results');
+    }
 
     expect(results.filter((result) => result.operation === 'inserted')).toHaveLength(1);
     expect(results.filter((result) => result.operation === 'unchanged')).toHaveLength(7);
-    expect(new Set(results.map((result) => result.session.id))).toEqual(
+    expect(new Set(results.map((result) => result.session.id))).toStrictEqual(
       new Set([first.session.id]),
     );
-    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toStrictEqual(
       new Set([grown.rawSessionRecord.id]),
     );
     expect(grown.rawSessionRecord.id).not.toBe(first.rawSessionRecord.id);
@@ -1243,9 +1286,9 @@ describePostgres('raw session import', () => {
       .where(eq(rawSessionRecords.sessionId, first.session.id))
       .orderBy(asc(rawSessionRecords.snapshotOrdinal));
     expect(records).toHaveLength(2);
-    expect(records.map((record) => record.snapshotOrdinal)).toEqual([0, 1]);
+    expect(records.map((record) => record.snapshotOrdinal)).toStrictEqual([0, 1]);
     expect(records.find((record) => record.id === first.rawSessionRecord.id)?.isActive).toBe(false);
-    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toStrictEqual([
       grown.rawSessionRecord.id,
     ]);
 
@@ -1264,14 +1307,16 @@ describePostgres('raw session import', () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.rawSessionRecordId, grown.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
-    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+    expect(activeSegments.map((segment) => segment.searchText)).toStrictEqual([
       'Before concurrent growth',
       'Concurrent growth response',
     ]);
   });
 
   test('uses an explicit harness source binding without re-enabling disabled bindings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-disabled-source');
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1285,7 +1330,9 @@ describePostgres('raw session import', () => {
         workspaceId,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const result = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -1341,7 +1388,9 @@ describePostgres('raw session import', () => {
   });
 
   test('implicit manual imports re-enable an existing disabled harness source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-manual-enabled-source');
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1355,7 +1404,9 @@ describePostgres('raw session import', () => {
         workspaceId,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const result = await Effect.runPromise(
       importRawSessionRecord(service, {
@@ -1411,7 +1462,9 @@ describePostgres('raw session import', () => {
   });
 
   test('settles the active Activity Interval from ambient Stop lifecycle input', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-stop-interval');
     const baseInput = {
       author: {
@@ -1501,7 +1554,9 @@ describePostgres('raw session import', () => {
   });
 
   test('settles an unchanged active raw snapshot from ambient Stop lifecycle input', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-unchanged-stop-interval');
     const rawContent = codexTranscript([
       {
@@ -1566,7 +1621,9 @@ describePostgres('raw session import', () => {
   });
 
   test('settles unchanged Stop input captured at the active interval boundary', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-boundary-stop-interval');
     const rawContent = codexTranscript([
       {
@@ -1633,7 +1690,9 @@ describePostgres('raw session import', () => {
   });
 
   test('refreshes stale current active snapshot state before same-content no-op', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-stale-current-active');
     const input = {
       author: {
@@ -1693,7 +1752,7 @@ describePostgres('raw session import', () => {
     expect(repeated.operation).toBe('unchanged');
     expect(repeated.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
     expect(repeated.activityInterval.id).toBe(first.activityInterval.id);
-    expect(repeated.session.lastActivityAt).toEqual(new Date('2026-06-22T19:19:01.000Z'));
+    expect(repeated.session.lastActivityAt).toStrictEqual(new Date('2026-06-22T19:19:01.000Z'));
     expect(sessionRow?.metadata).toMatchObject({
       cwd: '/work/saga',
       latestRawSessionRecordId: first.rawSessionRecord.id,
@@ -1707,7 +1766,9 @@ describePostgres('raw session import', () => {
   });
 
   test('opens new Activity Intervals for clear-context lifecycle and idle timeout', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-interval-boundaries');
     const clearBaseInput = {
       author: {
@@ -1781,7 +1842,7 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, clearFirst.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(clearIntervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+    expect(clearIntervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
     expect(clearIntervals[0]).toMatchObject({
       settlementReason: 'clear_context',
     });
@@ -1854,7 +1915,7 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, idleFirst.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(idleIntervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+    expect(idleIntervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
     expect(idleIntervals[0]).toMatchObject({
       endedAt: new Date('2026-06-22T20:30:01.000Z'),
       settlementReason: 'idle_timeout',
@@ -1862,7 +1923,9 @@ describePostgres('raw session import', () => {
   });
 
   test('opens new Activity Intervals for same-content clear and compact lifecycle inputs', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     for (const sessionStartSource of ['clear', 'compact'] as const) {
       const workspaceId = await createBoundWorkspace(
@@ -1933,14 +1996,16 @@ describePostgres('raw session import', () => {
       });
       expect(repeatedBoundary.operation).toBe('unchanged');
       expect(repeatedBoundary.activityInterval.id).toBe(boundary.activityInterval.id);
-      expect(repeatedBoundary.session.lastActivityAt).toEqual(new Date('2026-06-23T00:05:00.000Z'));
+      expect(repeatedBoundary.session.lastActivityAt).toStrictEqual(
+        new Date('2026-06-23T00:05:00.000Z'),
+      );
 
       const intervals = await service.db
         .select()
         .from(activityIntervals)
         .where(eq(activityIntervals.sessionId, first.session.id))
         .orderBy(asc(activityIntervals.ordinal));
-      expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+      expect(intervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
       expect(intervals[0]).toMatchObject({
         endedAt: new Date('2026-06-23T00:05:00.000Z'),
         settlementReason: 'clear_context',
@@ -1962,7 +2027,9 @@ describePostgres('raw session import', () => {
   });
 
   test('same-content clear and compact boundaries keep derived rows in the producing interval (ADR-0031)', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     for (const sessionStartSource of ['clear', 'compact'] as const) {
       const workspaceId = await createBoundWorkspace(
@@ -2002,7 +2069,7 @@ describePostgres('raw session import', () => {
         .from(sessionTurns)
         .where(eq(sessionTurns.sessionId, first.session.id));
       expect(turnsAfterContent.length).toBeGreaterThan(0);
-      expect(new Set(turnsAfterContent.map((turn) => turn.activityIntervalId))).toEqual(
+      expect(new Set(turnsAfterContent.map((turn) => turn.activityIntervalId))).toStrictEqual(
         new Set([first.activityInterval.id]),
       );
 
@@ -2028,7 +2095,7 @@ describePostgres('raw session import', () => {
         .from(activityIntervals)
         .where(eq(activityIntervals.sessionId, first.session.id))
         .orderBy(asc(activityIntervals.ordinal));
-      expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+      expect(intervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
       expect(boundary.activityInterval.id).toBe(intervals[1]?.id);
       expect(boundary.activityInterval.id).not.toBe(first.activityInterval.id);
 
@@ -2039,7 +2106,7 @@ describePostgres('raw session import', () => {
         .from(sessionTurns)
         .where(eq(sessionTurns.sessionId, first.session.id));
       expect(turnsAfterBoundary).toHaveLength(turnsAfterContent.length);
-      expect(new Set(turnsAfterBoundary.map((turn) => turn.activityIntervalId))).toEqual(
+      expect(new Set(turnsAfterBoundary.map((turn) => turn.activityIntervalId))).toStrictEqual(
         new Set([first.activityInterval.id]),
       );
 
@@ -2047,9 +2114,9 @@ describePostgres('raw session import', () => {
         .select()
         .from(sessionSegments)
         .where(eq(sessionSegments.sessionId, first.session.id));
-      expect(new Set(segmentsAfterBoundary.map((segment) => segment.activityIntervalId))).toEqual(
-        new Set([first.activityInterval.id]),
-      );
+      expect(
+        new Set(segmentsAfterBoundary.map((segment) => segment.activityIntervalId)),
+      ).toStrictEqual(new Set([first.activityInterval.id]));
 
       // ADR-0031: the post-boundary interval exists but holds no derived content yet.
       expect(
@@ -2070,7 +2137,9 @@ describePostgres('raw session import', () => {
   });
 
   test('same-content resume input continues the producing interval without reassigning derived rows (ADR-0031)', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-same-content-resume-derived');
     const rawContent = codexTranscript([
       {
@@ -2128,13 +2197,15 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.sessionId, first.session.id));
     expect(turnsAfterResume).toHaveLength(turnsAfterContent.length);
-    expect(new Set(turnsAfterResume.map((turn) => turn.activityIntervalId))).toEqual(
+    expect(new Set(turnsAfterResume.map((turn) => turn.activityIntervalId))).toStrictEqual(
       new Set([first.activityInterval.id]),
     );
   });
 
   test('a second distinct same-content boundary settles the active interval without corrupting the first (ADR-0031)', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-second-boundary');
     const rawContent = codexTranscript([
       {
@@ -2188,7 +2259,11 @@ describePostgres('raw session import', () => {
 
     // The second boundary must genuinely settle the (empty) active interval and open a new one,
     // not silently collapse back onto the record's already-settled producing interval.
-    expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'settled', 'active']);
+    expect(intervals.map((interval) => interval.status)).toStrictEqual([
+      'settled',
+      'settled',
+      'active',
+    ]);
     expect(clearTwice.activityInterval.id).toBe(intervals[2]?.id);
     expect(clearTwice.activityInterval.id).not.toBe(clearOnce.activityInterval.id);
 
@@ -2207,13 +2282,15 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.sessionId, first.session.id));
     expect(turns.length).toBeGreaterThan(0);
-    expect(new Set(turns.map((turn) => turn.activityIntervalId))).toEqual(
+    expect(new Set(turns.map((turn) => turn.activityIntervalId))).toStrictEqual(
       new Set([first.activityInterval.id]),
     );
   });
 
   test('opens a new Activity Interval for same-content idle-boundary input', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('raw-import-same-content-idle');
     const rawContent = codexTranscript([
       {
@@ -2270,17 +2347,19 @@ describePostgres('raw session import', () => {
       startedAt: new Date('2026-06-23T01:45:01.000Z'),
       status: 'active',
     });
-    expect(boundary.session.lastActivityAt).toEqual(new Date('2026-06-23T01:45:01.000Z'));
+    expect(boundary.session.lastActivityAt).toStrictEqual(new Date('2026-06-23T01:45:01.000Z'));
     expect(repeatedBoundary.operation).toBe('unchanged');
     expect(repeatedBoundary.activityInterval.id).toBe(boundary.activityInterval.id);
-    expect(repeatedBoundary.session.lastActivityAt).toEqual(new Date('2026-06-23T01:45:01.000Z'));
+    expect(repeatedBoundary.session.lastActivityAt).toStrictEqual(
+      new Date('2026-06-23T01:45:01.000Z'),
+    );
 
     const intervals = await service.db
       .select()
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, first.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+    expect(intervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
     expect(intervals[0]).toMatchObject({
       endedAt: new Date('2026-06-23T01:30:01.000Z'),
       settlementReason: 'idle_timeout',
@@ -2301,7 +2380,9 @@ describePostgres('raw session import', () => {
   });
 
   test('handles concurrent duplicate clear-context imports as one new active Activity Interval', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
     const workspaceId = await createBoundWorkspace('raw-import-concurrent-clear');
     const baseInput = {
@@ -2380,19 +2461,21 @@ describePostgres('raw session import', () => {
         ),
     );
     const [clearResult] = results;
-    if (clearResult === undefined) throw new Error('concurrent clear imports returned no results');
+    if (clearResult === undefined) {
+      throw new Error('concurrent clear imports returned no results');
+    }
 
     expect(results.filter((result) => result.operation === 'inserted')).toHaveLength(1);
     expect(results.filter((result) => result.operation === 'unchanged')).toHaveLength(
       clearInputs.length - 1,
     );
-    expect(new Set(results.map((result) => result.session.id))).toEqual(
+    expect(new Set(results.map((result) => result.session.id))).toStrictEqual(
       new Set([first.session.id]),
     );
-    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toStrictEqual(
       new Set([clearResult.rawSessionRecord.id]),
     );
-    expect(new Set(results.map((result) => result.activityInterval.id))).toEqual(
+    expect(new Set(results.map((result) => result.activityInterval.id))).toStrictEqual(
       new Set([clearResult.activityInterval.id]),
     );
     expect(clearResult.activityInterval.id).not.toBe(first.activityInterval.id);
@@ -2403,7 +2486,7 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, first.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+    expect(intervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
     expect(intervals[0]).toMatchObject({
       settlementReason: 'clear_context',
     });
@@ -2414,13 +2497,15 @@ describePostgres('raw session import', () => {
       .where(eq(rawSessionRecords.sessionId, first.session.id))
       .orderBy(asc(rawSessionRecords.snapshotOrdinal));
     expect(records).toHaveLength(2);
-    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toStrictEqual([
       clearResult.rawSessionRecord.id,
     ]);
   });
 
   test('handles concurrent duplicate idle-boundary imports as one new active Activity Interval', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
     const workspaceId = await createBoundWorkspace('raw-import-concurrent-idle');
     const baseInput = {
@@ -2495,19 +2580,21 @@ describePostgres('raw session import', () => {
         ),
     );
     const [idleResult] = results;
-    if (idleResult === undefined) throw new Error('concurrent idle imports returned no results');
+    if (idleResult === undefined) {
+      throw new Error('concurrent idle imports returned no results');
+    }
 
     expect(results.filter((result) => result.operation === 'inserted')).toHaveLength(1);
     expect(results.filter((result) => result.operation === 'unchanged')).toHaveLength(
       idleInputs.length - 1,
     );
-    expect(new Set(results.map((result) => result.session.id))).toEqual(
+    expect(new Set(results.map((result) => result.session.id))).toStrictEqual(
       new Set([first.session.id]),
     );
-    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toEqual(
+    expect(new Set(results.map((result) => result.rawSessionRecord.id))).toStrictEqual(
       new Set([idleResult.rawSessionRecord.id]),
     );
-    expect(new Set(results.map((result) => result.activityInterval.id))).toEqual(
+    expect(new Set(results.map((result) => result.activityInterval.id))).toStrictEqual(
       new Set([idleResult.activityInterval.id]),
     );
     expect(idleResult.activityInterval.id).not.toBe(first.activityInterval.id);
@@ -2518,7 +2605,7 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, first.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(intervals.map((interval) => interval.status)).toEqual(['settled', 'active']);
+    expect(intervals.map((interval) => interval.status)).toStrictEqual(['settled', 'active']);
     expect(intervals[0]).toMatchObject({
       endedAt: new Date('2026-06-22T23:30:01.000Z'),
       settlementReason: 'idle_timeout',
@@ -2530,13 +2617,15 @@ describePostgres('raw session import', () => {
       .where(eq(rawSessionRecords.sessionId, first.session.id))
       .orderBy(asc(rawSessionRecords.snapshotOrdinal));
     expect(records).toHaveLength(2);
-    expect(records.filter((record) => record.isActive).map((record) => record.id)).toEqual([
+    expect(records.filter((record) => record.isActive).map((record) => record.id)).toStrictEqual([
       idleResult.rawSessionRecord.id,
     ]);
   });
 
   test('normalizes Codex transcript JSONL into session metadata, turns, parts, and spans', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-normalize');
     const rawContent = codexTranscript([
       {
@@ -2753,7 +2842,7 @@ describePostgres('raw session import', () => {
       normalizer: 'codex-transcript-v1',
       turnCount: 9,
     });
-    expect(result.activityInterval.startedAt).toEqual(new Date('2026-06-22T14:00:03.000Z'));
+    expect(result.activityInterval.startedAt).toStrictEqual(new Date('2026-06-22T14:00:03.000Z'));
     expect(result.activityInterval.metadata).toMatchObject({
       cwd: '/work/saga',
       normalizer: 'codex-transcript-v1',
@@ -2794,7 +2883,7 @@ describePostgres('raw session import', () => {
       .from(rawSessionRecords)
       .where(eq(rawSessionRecords.id, result.rawSessionRecord.id))
       .limit(1);
-    expect(rawRecord?.bodyJson).toEqual(
+    expect(rawRecord?.bodyJson).toStrictEqual(
       rawContent
         .trim()
         .split('\n')
@@ -2822,7 +2911,7 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(turns.map((turn) => turn.role)).toEqual([
+    expect(turns.map((turn) => turn.role)).toStrictEqual([
       'user',
       'assistant',
       'tool',
@@ -2847,11 +2936,11 @@ describePostgres('raw session import', () => {
       cwd: '/work/saga',
       normalizer: 'codex-transcript-v1',
     });
-    expect(turns[0]?.contentParts).toEqual([
+    expect(turns[0]?.contentParts).toStrictEqual([
       { type: 'text', text: 'Normalize Codex transcripts.' },
     ]);
     expect(turns[1]?.harnessTurnId).toBe('msg-assistant-1');
-    expect(turns[2]?.contentParts).toEqual([
+    expect(turns[2]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'apply_patch',
@@ -2860,7 +2949,7 @@ describePostgres('raw session import', () => {
         status: 'completed',
       },
     ]);
-    expect(turns[3]?.contentParts).toEqual([
+    expect(turns[3]?.contentParts).toStrictEqual([
       {
         type: 'tool_result',
         name: 'apply_patch',
@@ -2868,7 +2957,7 @@ describePostgres('raw session import', () => {
         output: 'Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated files\n',
       },
     ]);
-    expect(turns[4]?.contentParts).toEqual([
+    expect(turns[4]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'web.run',
@@ -2877,7 +2966,7 @@ describePostgres('raw session import', () => {
         status: 'completed',
       },
     ]);
-    expect(turns[5]?.contentParts).toEqual([
+    expect(turns[5]?.contentParts).toStrictEqual([
       {
         type: 'tool_result',
         name: 'web.run',
@@ -2888,7 +2977,7 @@ describePostgres('raw session import', () => {
         ],
       },
     ]);
-    expect(turns[6]?.contentParts).toEqual([
+    expect(turns[6]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'web_search',
@@ -2904,7 +2993,7 @@ describePostgres('raw session import', () => {
       sourcePayloadType: 'web_search_call',
       sourceRecordType: 'response_item',
     });
-    expect(turns[7]?.contentParts).toEqual([
+    expect(turns[7]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'tool_search',
@@ -2929,7 +3018,7 @@ describePostgres('raw session import', () => {
       sourcePayloadType: 'tool_search_call',
       sourceRecordType: 'response_item',
     });
-    expect(turns[8]?.contentParts).toEqual([
+    expect(turns[8]?.contentParts).toStrictEqual([
       {
         type: 'tool_result',
         name: 'tool_search',
@@ -2965,7 +3054,7 @@ describePostgres('raw session import', () => {
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
     expect(segments).toHaveLength(9);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'turn',
       'turn',
       'tool_group_call',
@@ -3016,7 +3105,9 @@ describePostgres('raw session import', () => {
   });
 
   test('groups interleaved tool call and result segments by call id', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-interleaved-tool-segments');
     const rawContent = codexTranscript([
       {
@@ -3108,7 +3199,7 @@ describePostgres('raw session import', () => {
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
 
-    expect(turns.map((turn) => turn.contentParts)).toEqual([
+    expect(turns.map((turn) => turn.contentParts)).toStrictEqual([
       [
         {
           type: 'tool_call',
@@ -3145,14 +3236,14 @@ describePostgres('raw session import', () => {
       ],
     ]);
     expect(segments).toHaveLength(4);
-    expect(segments.map((segment) => segment.ordinal)).toEqual([0, 1, 2, 3]);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.ordinal)).toStrictEqual([0, 1, 2, 3]);
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'tool_group_call',
       'tool_group_call',
       'tool_group_result',
       'tool_group_result',
     ]);
-    expect(segments.map((segment) => segment.turnId)).toEqual(turns.map((turn) => turn.id));
+    expect(segments.map((segment) => segment.turnId)).toStrictEqual(turns.map((turn) => turn.id));
     expect(segments[0]?.searchText).toContain('printf alpha-call');
     expect(segments[1]?.searchText).toContain('printf beta-call');
     expect(segments[2]?.searchText).toContain('ALPHA_RESULT_NEEDLE');
@@ -3202,8 +3293,8 @@ describePostgres('raw session import', () => {
     const betaSegments = segments.filter((segment) =>
       segment.searchText.includes('BETA_RESULT_NEEDLE'),
     );
-    expect(alphaSegments.map((segment) => segment.turnId)).toEqual([turns[2]?.id]);
-    expect(betaSegments.map((segment) => segment.turnId)).toEqual([turns[3]?.id]);
+    expect(alphaSegments.map((segment) => segment.turnId)).toStrictEqual([turns[2]?.id]);
+    expect(betaSegments.map((segment) => segment.turnId)).toStrictEqual([turns[3]?.id]);
 
     const callATurnSegments = await service.db
       .select()
@@ -3214,7 +3305,9 @@ describePostgres('raw session import', () => {
   });
 
   test('derives Codex subagent child relationships when the parent session is present later', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-subagent-relationships');
     const childRawContent = codexTranscript([
       {
@@ -3412,13 +3505,15 @@ describePostgres('raw session import', () => {
       .select()
       .from(sessionRelationships)
       .where(eq(sessionRelationships.workspaceId, workspaceId));
-    expect(repeatedRelationships.map((relationship) => relationship.id)).toEqual([
+    expect(repeatedRelationships.map((relationship) => relationship.id)).toStrictEqual([
       relationships[0]?.id,
     ]);
   });
 
   test('synchronizes Codex child relationships from current child evidence', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-relationship-sync');
     const host = { id: 'host-codex-relationship-sync' };
     const parentRawContent = codexTranscript([
@@ -3598,8 +3693,7 @@ describePostgres('raw session import', () => {
       .where(eq(sessionTurns.sessionId, parent.session.id))
       .orderBy(asc(sessionTurns.ordinal));
     const matchesCodexTurn = (turn: (typeof parentTurns)[number], turnId: string) =>
-      turn.harnessTurnId === turnId ||
-      (turn.metadata as Record<string, unknown>).codexTurnId === turnId;
+      turn.harnessTurnId === turnId || turn.metadata.codexTurnId === turnId;
     const firstParentTurn = parentTurns.find((turn) =>
       matchesCodexTurn(turn, 'parent-turn-sync-1'),
     );
@@ -3737,13 +3831,15 @@ describePostgres('raw session import', () => {
       targetSessionId: child.session.id,
     });
     expect(relationships[0]?.id).not.toBe(secondRelationshipId);
-    expect(relationships[0]?.evidence).toEqual({
+    expect(relationships[0]?.evidence).toStrictEqual({
       note: 'manual inference without import derivation',
     });
   });
 
   test('does not overwrite same-key non-derived child relationships during import sync', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-relationship-same-key-manual');
     const host = { id: 'host-codex-relationship-same-key-manual' };
     const parentRawContent = codexTranscript([
@@ -3880,7 +3976,7 @@ describePostgres('raw session import', () => {
       sourceTurnId: null,
       targetSessionId: child.session.id,
     });
-    expect(relationships[0]?.evidence).toEqual({
+    expect(relationships[0]?.evidence).toStrictEqual({
       note: 'same-key manual inference',
     });
 
@@ -3910,13 +4006,15 @@ describePostgres('raw session import', () => {
       sourceTurnId: null,
       targetSessionId: child.session.id,
     });
-    expect(relationships[0]?.evidence).toEqual({
+    expect(relationships[0]?.evidence).toStrictEqual({
       note: 'same-key manual inference',
     });
   });
 
   test('normalizes Claude transcript JSONL into session metadata, turns, parts, and spans', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('claude-normalize');
     const rawContent = claudeTranscript([
       {
@@ -4082,7 +4180,7 @@ describePostgres('raw session import', () => {
       rawContent,
       sourceLocator: '/tmp/claude-transcript-session-1.jsonl',
     });
-    expect(normalized?.turns.map((turn) => turn.role)).toEqual([
+    expect(normalized?.turns.map((turn) => turn.role)).toStrictEqual([
       'user',
       'assistant',
       'tool',
@@ -4139,7 +4237,7 @@ describePostgres('raw session import', () => {
         },
       ],
     });
-    expect(result.activityInterval.startedAt).toEqual(new Date('2026-06-22T16:00:00.000Z'));
+    expect(result.activityInterval.startedAt).toStrictEqual(new Date('2026-06-22T16:00:00.000Z'));
     expect(result.activityInterval.metadata).toMatchObject({
       cwd: '/work/saga',
       lifecycleEvents: [
@@ -4175,7 +4273,7 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(turns.map((turn) => turn.role)).toEqual([
+    expect(turns.map((turn) => turn.role)).toStrictEqual([
       'user',
       'assistant',
       'tool',
@@ -4197,10 +4295,10 @@ describePostgres('raw session import', () => {
       sessionId: 'claude-transcript-session-1',
       uuid: 'user-1',
     });
-    expect(turns[0]?.contentParts).toEqual([
+    expect(turns[0]?.contentParts).toStrictEqual([
       { type: 'text', text: 'Normalize Claude transcripts.' },
     ]);
-    expect(turns[2]?.contentParts).toEqual([
+    expect(turns[2]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'Bash',
@@ -4218,7 +4316,7 @@ describePostgres('raw session import', () => {
       actorLabel: 'Bash',
       harnessTurnId: 'toolu-bash-1:result',
     });
-    expect(turns[3]?.contentParts).toEqual([
+    expect(turns[3]?.contentParts).toStrictEqual([
       {
         type: 'tool_result',
         name: 'Bash',
@@ -4243,7 +4341,7 @@ describePostgres('raw session import', () => {
       actorLabel: 'Agent',
       harnessTurnId: 'toolu-agent-1',
     });
-    expect(turns[4]?.contentParts).toEqual([
+    expect(turns[4]?.contentParts).toStrictEqual([
       {
         type: 'tool_call',
         name: 'Agent',
@@ -4262,7 +4360,7 @@ describePostgres('raw session import', () => {
       .where(eq(sessionSegments.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
     expect(segments).toHaveLength(5);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'turn',
       'turn',
       'tool_group_call',
@@ -4275,7 +4373,9 @@ describePostgres('raw session import', () => {
   });
 
   test('splits large turns into overlapping positioned lexical segments', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('segment-large-turn');
     const longText = Array.from({ length: 2500 }, (_, index) => `token${index}`).join(' ');
     const rawContent = codexTranscript([
@@ -4331,7 +4431,7 @@ describePostgres('raw session import', () => {
 
     expect(segments).toHaveLength(3);
     expect(segments.every((segment) => segment.segmentKind === 'turn_chunk')).toBe(true);
-    expect(segments.map((segment) => [segment.tokenStart, segment.tokenEnd])).toEqual([
+    expect(segments.map((segment) => [segment.tokenStart, segment.tokenEnd])).toStrictEqual([
       [0, 917],
       [792, 1709],
       [1584, 2500],
@@ -4371,7 +4471,7 @@ describePostgres('raw session import', () => {
     });
     const metadata = segments[0]?.metadata as {
       segmentRawSpan?: { charEnd?: number; charStart?: number };
-      sourceRawSpans?: Array<{ charEnd?: number; charStart?: number }>;
+      sourceRawSpans?: { charEnd?: number; charStart?: number }[];
     };
     expect(metadata.segmentRawSpan?.charStart).toBe(metadata.sourceRawSpans?.[0]?.charStart);
     expect(metadata.segmentRawSpan?.charEnd).toBeLessThanOrEqual(
@@ -4380,7 +4480,9 @@ describePostgres('raw session import', () => {
   });
 
   test('redacts structured secrets from tool call and result object payloads', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('segment-structured-secret');
     const rawContent = codexTranscript([
       {
@@ -4458,7 +4560,7 @@ describePostgres('raw session import', () => {
       .orderBy(asc(sessionSegments.ordinal));
 
     expect(segments).toHaveLength(2);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'tool_group_call',
       'tool_group_result',
     ]);
@@ -4492,7 +4594,9 @@ describePostgres('raw session import', () => {
   });
 
   test('omits mixed skipped turn content parts from detail and recall expansion', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('segment-mixed-skipped-content');
     const safeText = 'Mixed safe searchable anchor context.';
     const omittedNeedle = 'sk-mixedskippedsecretneedle1234567890';
@@ -4580,7 +4684,9 @@ describePostgres('raw session import', () => {
     expect(JSON.stringify(detail.rawSessionRecords)).not.toContain(omittedNeedle);
 
     const anchorSegment = segments[0];
-    if (anchorSegment === undefined) throw new Error('expected a searchable anchor segment');
+    if (anchorSegment === undefined) {
+      throw new Error('expected a searchable anchor segment');
+    }
 
     const expansion = await Effect.runPromise(
       expandRecallContext(service, {
@@ -4618,7 +4724,9 @@ describePostgres('raw session import', () => {
   });
 
   test('filters low-signal and high-risk content from lexical segments', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('segment-filter');
     const hugeLog = Array.from(
       { length: 850 },
@@ -4748,7 +4856,7 @@ describePostgres('raw session import', () => {
       .orderBy(asc(sessionSegments.ordinal));
 
     expect(segments).toHaveLength(7);
-    expect(segments.map((segment) => segment.searchText)).toEqual([
+    expect(segments.map((segment) => segment.searchText)).toStrictEqual([
       'Remember safe searchable context.',
       'shell {"command":"cat build.log"} completed',
       '',
@@ -4757,7 +4865,7 @@ describePostgres('raw session import', () => {
       '',
       '',
     ]);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'turn',
       'tool_group_call',
       'tool_group_skipped',
@@ -4877,7 +4985,9 @@ describePostgres('raw session import', () => {
     expect(detailContent).not.toContain('routeTree');
 
     const anchorSegment = segments[0];
-    if (anchorSegment === undefined) throw new Error('expected a searchable anchor segment');
+    if (anchorSegment === undefined) {
+      throw new Error('expected a searchable anchor segment');
+    }
 
     const expansion = await Effect.runPromise(
       expandRecallContext(service, {
@@ -4899,7 +5009,9 @@ describePostgres('raw session import', () => {
   });
 
   test('imports Claude sidechain subagent transcripts as separate sessions from an explicit parent id', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('claude-sidechain');
     const parentRawContent = claudeTranscript([
       {
@@ -5027,7 +5139,7 @@ describePostgres('raw session import', () => {
       detectedHarnessSessionId: 'claude-parent-session:subagent:agent-1',
       parentHarnessSessionId: 'claude-parent-session',
     });
-    expect(subagent.session.metadata.subagentEvidence).toEqual(
+    expect(subagent.session.metadata.subagentEvidence).toStrictEqual(
       expect.arrayContaining([
         {
           sourceLocatorKind: 'claude-subagent-transcript',
@@ -5063,8 +5175,8 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.sessionId, subagent.session.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(parentTurns.map((turn) => turn.role)).toEqual(['user', 'subagent']);
-    expect(subagentTurns.map((turn) => turn.role)).toEqual(['user', 'assistant']);
+    expect(parentTurns.map((turn) => turn.role)).toStrictEqual(['user', 'subagent']);
+    expect(subagentTurns.map((turn) => turn.role)).toStrictEqual(['user', 'assistant']);
     expect(subagentTurns[0]?.metadata).toMatchObject({
       agentId: 'agent-1',
       isSidechain: true,
@@ -5114,13 +5226,15 @@ describePostgres('raw session import', () => {
       .select()
       .from(sessionRelationships)
       .where(eq(sessionRelationships.workspaceId, workspaceId));
-    expect(repeatedRelationships.map((relationship) => relationship.id)).toEqual([
+    expect(repeatedRelationships.map((relationship) => relationship.id)).toStrictEqual([
       relationships[0]?.id,
     ]);
   });
 
   test('does not derive subagent relationships across workspaces', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const parentWorkspaceId = await createBoundWorkspace('relationship-parent-workspace');
     const childWorkspaceId = await createBoundWorkspace('relationship-child-workspace');
     const parentRawContent = codexTranscript([
@@ -5200,7 +5314,9 @@ describePostgres('raw session import', () => {
   });
 
   test('does not derive subagent relationships across source bindings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('relationship-source-binding');
     const parentRawContent = codexTranscript([
       {
@@ -5297,7 +5413,9 @@ describePostgres('raw session import', () => {
   });
 
   test('keeps same local relationship session ids separate across source bindings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('relationship-source-local-id-collision');
     const parentHarnessSessionId = 'shared-local-parent-thread';
     const childHarnessSessionId = 'shared-local-child-thread';
@@ -5423,7 +5541,7 @@ describePostgres('raw session import', () => {
         sourceSessionId: relationship.sourceSessionId,
         targetSessionId: relationship.targetSessionId,
       })),
-    ).toEqual(
+    ).toStrictEqual(
       expect.arrayContaining([
         {
           sourceSessionId: firstParent.session.id,
@@ -5452,7 +5570,9 @@ describePostgres('raw session import', () => {
   });
 
   test('preserves Claude lifecycle payloads without creating turns', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('claude-lifecycle');
     const rawContent = claudeTranscript([
       {
@@ -5608,7 +5728,9 @@ describePostgres('raw session import', () => {
   });
 
   test('preserves per-record Claude cwd on turn metadata', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('claude-cwd');
     const rawContent = claudeTranscript([
       {
@@ -5669,14 +5791,16 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, result.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(turns.map((turn) => turn.metadata.cwd)).toEqual([
+    expect(turns.map((turn) => turn.metadata.cwd)).toStrictEqual([
       '/work/saga',
       '/work/saga/packages/db',
     ]);
   });
 
   test('unchanged Claude reimport preserves current session turn ids', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('claude-unchanged-turn-ids');
     const rawContent = claudeTranscript([
       {
@@ -5761,14 +5885,16 @@ describePostgres('raw session import', () => {
     expect(second.operation).toBe('unchanged');
     expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
     expect(second.session.id).toBe(first.session.id);
-    expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
-    expect(secondSegments.map((segment) => segment.id)).toEqual(
+    expect(secondTurns.map((turn) => turn.id)).toStrictEqual(firstTurns.map((turn) => turn.id));
+    expect(secondSegments.map((segment) => segment.id)).toStrictEqual(
       firstSegments.map((segment) => segment.id),
     );
   });
 
   test('records invalid Codex JSONL parse errors in normalization metadata', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-parse-errors');
     const rawContent = [
       JSON.stringify({
@@ -5836,7 +5962,9 @@ describePostgres('raw session import', () => {
   });
 
   test('persists Codex parse errors and compacted lifecycle evidence without turns', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-metadata-only');
     const rawContent = [
       JSON.stringify({
@@ -5926,7 +6054,9 @@ describePostgres('raw session import', () => {
   });
 
   test('same-hash Codex reimport repairs derived rows with current normalization', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-repair');
     const rawContent = codexTranscript([
       {
@@ -6003,7 +6133,9 @@ describePostgres('raw session import', () => {
           )
         : false,
     );
-    if (toolResultTurn === undefined) throw new Error('tool result turn was not normalized');
+    if (toolResultTurn === undefined) {
+      throw new Error('tool result turn was not normalized');
+    }
 
     await service.db
       .update(sessionTurns)
@@ -6036,7 +6168,7 @@ describePostgres('raw session import', () => {
       .where(eq(sessionTurns.rawSessionRecordId, first.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
     expect(repairedTurns).toHaveLength(2);
-    expect(repairedTurns[1]?.contentParts).toEqual([
+    expect(repairedTurns[1]?.contentParts).toStrictEqual([
       {
         type: 'tool_result',
         name: 'web.run',
@@ -6066,7 +6198,9 @@ describePostgres('raw session import', () => {
   });
 
   test('adopts legacy locator-scoped Codex session on later session_meta id detection', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-legacy-locator');
     const rawContent = codexTranscript([
       {
@@ -6164,7 +6298,7 @@ describePostgres('raw session import', () => {
       normalizer: 'codex-transcript-v1',
       turnCount: 1,
     });
-    expect(second.activityInterval.startedAt).toEqual(new Date('2026-06-22T14:40:02.000Z'));
+    expect(second.activityInterval.startedAt).toStrictEqual(new Date('2026-06-22T14:40:02.000Z'));
     expect(second.activityInterval.metadata).toMatchObject({
       cwd: '/work/saga',
       normalizer: 'codex-transcript-v1',
@@ -6203,7 +6337,9 @@ describePostgres('raw session import', () => {
   });
 
   test('unchanged Codex reimport preserves current session turn ids', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-unchanged-turn-ids');
     const rawContent = codexTranscript([
       {
@@ -6286,14 +6422,16 @@ describePostgres('raw session import', () => {
 
     expect(second.operation).toBe('unchanged');
     expect(second.rawSessionRecord.id).toBe(first.rawSessionRecord.id);
-    expect(secondTurns.map((turn) => turn.id)).toEqual(firstTurns.map((turn) => turn.id));
-    expect(secondSegments.map((segment) => segment.id)).toEqual(
+    expect(secondTurns.map((turn) => turn.id)).toStrictEqual(firstTurns.map((turn) => turn.id));
+    expect(secondSegments.map((segment) => segment.id)).toStrictEqual(
       firstSegments.map((segment) => segment.id),
     );
   });
 
   test('regenerates Codex derived rows from the active growing snapshot', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('codex-growing');
     const baseRecords = [
       {
@@ -6375,7 +6513,7 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.rawSessionRecordId, second.rawSessionRecord.id))
       .orderBy(asc(sessionTurns.ordinal));
-    expect(newTurns.map((turn) => turn.role)).toEqual(['user', 'assistant']);
+    expect(newTurns.map((turn) => turn.role)).toStrictEqual(['user', 'assistant']);
 
     const activeSegments = await service.db
       .select()
@@ -6383,14 +6521,16 @@ describePostgres('raw session import', () => {
       .where(eq(sessionSegments.rawSessionRecordId, second.rawSessionRecord.id))
       .orderBy(asc(sessionSegments.ordinal));
     expect(activeSegments).toHaveLength(2);
-    expect(activeSegments.map((segment) => segment.searchText)).toEqual([
+    expect(activeSegments.map((segment) => segment.searchText)).toStrictEqual([
       'First prompt',
       'Second answer',
     ]);
   });
 
   test('requires an existing bound workspace', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     await expect(
       Effect.runPromise(
@@ -6412,7 +6552,9 @@ describePostgres('raw session import', () => {
   });
 
   test('lifecycle boundary creates a session shell and opens interval 0 without derived content', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-shell');
     const seed = await seedSourceBindingAndRawEvent({
       eventType: 'SessionStart',
@@ -6470,13 +6612,13 @@ describePostgres('raw session import', () => {
     expect(embeddings).toHaveLength(0);
 
     // Provenance to the triggering Raw Event lives on the opened interval's metadata.
-    expect((result.activityInterval.metadata as Record<string, unknown>).triggerRawEventId).toBe(
-      seed.rawEventId,
-    );
+    expect(result.activityInterval.metadata.triggerRawEventId).toBe(seed.rawEventId);
   });
 
   test('lifecycle boundaries settle and open intervals without transcript content', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-boundaries');
     const base = {
       author: { handle: 'drew' },
@@ -6522,9 +6664,7 @@ describePostgres('raw session import', () => {
     const clear = await event('SessionStart', 'clear', '2026-06-27T11:05:00.000Z');
     expect(clear.operation).toBe('settled_opened');
     expect(clear.activityInterval.ordinal).toBe(1);
-    expect(
-      (clear.activityInterval.metadata as Record<string, unknown>).triggerRawEventId,
-    ).not.toBeUndefined();
+    expect(clear.activityInterval.metadata.triggerRawEventId).toBeDefined();
 
     const stop = await event('Stop', undefined, '2026-06-27T11:10:00.000Z');
     expect(stop.operation).toBe('settled');
@@ -6535,7 +6675,7 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, start.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(intervals.map((i) => i.status)).toEqual(['settled', 'settled']);
+    expect(intervals.map((i) => i.status)).toStrictEqual(['settled', 'settled']);
     expect(intervals[0]).toMatchObject({ settlementReason: 'clear_context' });
     expect(intervals[1]).toMatchObject({ settlementReason: 'stop_event' });
     expect(intervals[0]?.settlementTriggerRawEventId).not.toBeNull();
@@ -6564,7 +6704,9 @@ describePostgres('raw session import', () => {
   });
 
   test('re-processing the same lifecycle raw event is an idempotent no-op', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-idempotent');
 
     // Open an active interval so the subsequent Stop can settle it.
@@ -6633,7 +6775,9 @@ describePostgres('raw session import', () => {
   });
 
   test('re-processing a lifecycle SessionStart raw event (opened) is an idempotent no-op', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-idempotent-opened');
     const seed = await seedSourceBindingAndRawEvent({
       eventType: 'SessionStart',
@@ -6674,7 +6818,9 @@ describePostgres('raw session import', () => {
   });
 
   test('transcript import reuses a lifecycle-created session shell and preserves derived rows across a later boundary', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-coherence');
     const harnessSessionId = 'codex-coherence-session';
     const host = { id: 'host-coherence' } as const;
@@ -6793,11 +6939,15 @@ describePostgres('raw session import', () => {
       .from(sessionTurns)
       .where(eq(sessionTurns.sessionId, shell.session.id));
     expect(turnsAfterClear).toHaveLength(turnsAfterContent.length);
-    expect(new Set(turnsAfterClear.map((t) => t.activityIntervalId))).toEqual(derivedIntervalIds);
+    expect(new Set(turnsAfterClear.map((t) => t.activityIntervalId))).toStrictEqual(
+      derivedIntervalIds,
+    );
   });
 
   test('lifecycle idle timeout settles and opens a new interval without transcript content', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-idle-timeout');
     const base = {
       author: { handle: 'drew' },
@@ -6862,12 +7012,14 @@ describePostgres('raw session import', () => {
       .from(activityIntervals)
       .where(eq(activityIntervals.sessionId, start.session.id))
       .orderBy(asc(activityIntervals.ordinal));
-    expect(intervals.map((i) => i.status)).toEqual(['settled', 'active']);
+    expect(intervals.map((i) => i.status)).toStrictEqual(['settled', 'active']);
     expect(intervals[0]?.settlementReason).toBe('idle_timeout');
   });
 
-  test('Stop lifecycle event with no prior active interval settles immediately (no dangling active interval)', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+  test('stop lifecycle event with no prior active interval settles immediately (no dangling active interval)', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-stop-no-interval');
     const seed = await seedSourceBindingAndRawEvent({
       eventType: 'Stop',
@@ -6908,7 +7060,9 @@ describePostgres('raw session import', () => {
   });
 
   test('importLifecycleBoundaryEvent rejects when neither harnessSessionId nor locator is provided', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-no-identity');
     const seed = await seedSourceBindingAndRawEvent({
       eventType: 'SessionStart',
@@ -6940,7 +7094,9 @@ describePostgres('raw session import', () => {
   });
 
   test('re-processing the same lifecycle clear (settled_opened) raw event is an idempotent no-op', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createBoundWorkspace('lifecycle-idempotent-clear');
     const base = {
       author: { handle: 'drew' },
@@ -7019,7 +7175,9 @@ function claudeTranscript(records: readonly Record<string, unknown>[]): string {
 }
 
 function expectRecentSessionRecordTimestampsCanRender(row: RecentSessionRecord | undefined): void {
-  if (row === undefined) throw new Error('expected recent session record');
+  if (row === undefined) {
+    throw new Error('expected recent session record');
+  }
   expectNullableDate(row.session.startedAt, 'session.startedAt');
   expectNullableDate(row.session.lastActivityAt, 'session.lastActivityAt');
   expectNullableDate(row.session.endedAt, 'session.endedAt');
@@ -7095,6 +7253,8 @@ function expectDate(value: Date, label: string): void {
 }
 
 function expectNullableDate(value: Date | null, label: string): void {
-  if (value === null) return;
+  if (value === null) {
+    return;
+  }
   expectDate(value, label);
 }

@@ -209,7 +209,7 @@ describe('rewriteConnectorReferencesToSagaLinks', () => {
       sagaLink: 'saga:context/architecture-seed',
       url: 'saga:context/architecture-seed',
     });
-    expect(rewritten[1]).toEqual({
+    expect(rewritten[1]).toStrictEqual({
       connector: 'git',
       externalId: 'README.md',
       sourceBindingId: 'source-2',
@@ -237,7 +237,7 @@ describe('rewriteConnectorReferencesToSagaLinks', () => {
       ],
     );
 
-    expect(rewritten[0]).toEqual({
+    expect(rewritten[0]).toStrictEqual({
       connector: 'vault',
       externalId: 'README.md',
       sourceBindingId: 'source-2',

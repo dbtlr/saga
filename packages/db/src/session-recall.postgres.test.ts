@@ -3,7 +3,8 @@ import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
-import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
+import { makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -64,7 +65,9 @@ describePostgres('session recall', () => {
   });
 
   test('returns ranked segment matches grouped by session and Activity Interval with metadata', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'grouping');
 
     const result = await Effect.runPromise(
@@ -130,14 +133,14 @@ describePostgres('session recall', () => {
     const primaryGroup = result.sessions.find(
       (group) => group.session.id === corpus.primary.sessionId,
     );
-    expect(primaryGroup?.activityIntervals.map((group) => group.activityInterval.ordinal)).toEqual([
-      0, 1,
-    ]);
+    expect(
+      primaryGroup?.activityIntervals.map((group) => group.activityInterval.ordinal),
+    ).toStrictEqual([0, 1]);
     expect(
       primaryGroup?.activityIntervals.flatMap((group) =>
         group.matches.map((match) => match.segment.id),
       ),
-    ).toEqual(
+    ).toStrictEqual(
       expect.arrayContaining([
         corpus.primary.segmentIds.lexicalExact,
         corpus.primary.segmentIds.secondInterval,
@@ -146,7 +149,9 @@ describePostgres('session recall', () => {
   });
 
   test('uses trigram similarity for typo recall while keeping lexical and trigram scores distinct', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'trigram');
 
     const result = await Effect.runPromise(
@@ -179,7 +184,9 @@ describePostgres('session recall', () => {
   });
 
   test('uses optional vector candidates while preserving segment-level recall pointers', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'vector');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
@@ -223,7 +230,9 @@ describePostgres('session recall', () => {
   });
 
   test('can generate the recall query vector through an injected provider callback', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'vector-provider');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
@@ -250,13 +259,15 @@ describePostgres('session recall', () => {
       }),
     );
 
-    expect(queries).toEqual(['provider callback query']);
+    expect(queries).toStrictEqual(['provider callback query']);
     expect(result.sessions[0]?.matches[0]?.segment.id).toBe(corpus.primary.segmentIds.lexicalExact);
     expect(result.sessions[0]?.matches[0]?.scores.vector).toBeGreaterThan(0.99);
   });
 
   test('scopes recall to the workspace and only searches filtered segment text', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'isolation');
 
     const workspaceResult = await Effect.runPromise(
@@ -286,7 +297,9 @@ describePostgres('session recall', () => {
   });
 
   test('excludes disabled source bindings from search and context expansion', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'disabled-source');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
@@ -336,7 +349,9 @@ describePostgres('session recall', () => {
   });
 
   test('excludes inactive raw session snapshots from search and context expansion', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'inactive-raw');
     const provider = recallVectorProvider();
     await insertRecallEmbedding(service, {
@@ -386,7 +401,9 @@ describePostgres('session recall', () => {
   });
 
   test('expands deterministic turn context around a matched segment within interval and raw record bounds', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const corpus = await seedRecallCorpus(service, 'context');
 
     const expansion = await Effect.runPromise(
@@ -409,17 +426,17 @@ describePostgres('session recall', () => {
     expect(expansion.sourceBinding.config).toMatchObject({
       hostId: 'host-context',
     });
-    expect(expansion.turns.map((turn) => turn.ordinal)).toEqual([1, 2, 3]);
-    expect(expansion.turns.map((turn) => turn.id)).toEqual([
+    expect(expansion.turns.map((turn) => turn.ordinal)).toStrictEqual([1, 2, 3]);
+    expect(expansion.turns.map((turn) => turn.id)).toStrictEqual([
       corpus.primary.turnIds.grouping,
       corpus.primary.turnIds.authentication,
       corpus.primary.turnIds.filtered,
     ]);
-    expect(expansion.turns[0]?.segments.map((segment) => segment.ordinal)).toEqual([1, 2]);
-    expect(expansion.turns[1]?.segments.map((segment) => segment.id)).toEqual([
+    expect(expansion.turns[0]?.segments.map((segment) => segment.ordinal)).toStrictEqual([1, 2]);
+    expect(expansion.turns[1]?.segments.map((segment) => segment.id)).toStrictEqual([
       corpus.primary.segmentIds.authentication,
     ]);
-    expect(expansion.turns[2]?.contentParts).toEqual([
+    expect(expansion.turns[2]?.contentParts).toStrictEqual([
       {
         text: 'The raw transcript contained hunter2, but indexing filtered it.',
         type: 'text',
@@ -436,7 +453,7 @@ describePostgres('session recall', () => {
         workspaceId: corpus.workspaceId,
       }),
     );
-    expect(zeroWindow.turns.map((turn) => turn.id)).toEqual([
+    expect(zeroWindow.turns.map((turn) => turn.id)).toStrictEqual([
       corpus.primary.turnIds.authentication,
     ]);
 
@@ -451,7 +468,7 @@ describePostgres('session recall', () => {
     expect(asymmetricWindow.beforeTurns).toBe(0);
     expect(asymmetricWindow.afterTurns).toBe(1);
     expect(asymmetricWindow.windowTurns).toBe(1);
-    expect(asymmetricWindow.turns.map((turn) => turn.id)).toEqual([
+    expect(asymmetricWindow.turns.map((turn) => turn.id)).toStrictEqual([
       corpus.primary.turnIds.authentication,
       corpus.primary.turnIds.filtered,
     ]);
@@ -467,7 +484,7 @@ describePostgres('session recall', () => {
     expect(mixedWindow.beforeTurns).toBe(2);
     expect(mixedWindow.afterTurns).toBe(0);
     expect(mixedWindow.windowTurns).toBe(2);
-    expect(mixedWindow.turns.map((turn) => turn.id)).toEqual([
+    expect(mixedWindow.turns.map((turn) => turn.id)).toStrictEqual([
       corpus.primary.turnIds.lexicalExact,
       corpus.primary.turnIds.grouping,
       corpus.primary.turnIds.authentication,
@@ -475,7 +492,7 @@ describePostgres('session recall', () => {
   });
 });
 
-interface SeededCorpus {
+type SeededCorpus = {
   otherWorkspace: {
     sessionId: string;
     workspaceId: string;
@@ -504,13 +521,13 @@ interface SeededCorpus {
     sessionId: string;
   };
   workspaceId: string;
-}
+};
 
-interface WorkspaceBundle {
+type WorkspaceBundle = {
   authorUserId: string;
   sourceBindingId: string;
   workspaceId: string;
-}
+};
 
 function recallVectorProvider() {
   return {
@@ -742,7 +759,9 @@ async function createWorkspaceBundle(
       handle: `recall-${suffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     })
     .returning();
-  if (workspace === undefined) throw new Error('workspace insert returned no row');
+  if (workspace === undefined) {
+    throw new Error('workspace insert returned no row');
+  }
 
   const [sourceBinding] = await service.db
     .insert(sourceBindings)
@@ -758,7 +777,9 @@ async function createWorkspaceBundle(
       workspaceId: workspace.id,
     })
     .returning();
-  if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+  if (sourceBinding === undefined) {
+    throw new Error('source binding insert returned no row');
+  }
 
   const [author] = await service.db
     .insert(users)
@@ -774,7 +795,9 @@ async function createWorkspaceBundle(
       workspaceId: workspace.id,
     })
     .returning();
-  if (author === undefined) throw new Error('user insert returned no row');
+  if (author === undefined) {
+    throw new Error('user insert returned no row');
+  }
 
   return {
     authorUserId: author.id,
@@ -783,16 +806,16 @@ async function createWorkspaceBundle(
   };
 }
 
-interface SessionFixtureInput {
+type SessionFixtureInput = {
   capturedAt: Date;
   harness: string;
   harnessSessionId: string;
   model: string;
   title: string;
   turns: SessionFixtureTurn[];
-}
+};
 
-interface SessionFixtureTurn {
+type SessionFixtureTurn = {
   actorKind: string;
   actorLabel: string;
   contentParts: unknown[];
@@ -800,7 +823,7 @@ interface SessionFixtureTurn {
   key: string;
   role: string;
   searchTexts: string[];
-}
+};
 
 async function insertSessionFixture(
   service: DatabaseService,
@@ -830,9 +853,11 @@ async function insertSessionFixture(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (session === undefined) throw new Error('session insert returned no row');
+  if (session === undefined) {
+    throw new Error('session insert returned no row');
+  }
 
-  const intervalOrdinals = [...new Set(input.turns.map((turn) => turn.intervalOrdinal))].sort(
+  const intervalOrdinals = [...new Set(input.turns.map((turn) => turn.intervalOrdinal))].toSorted(
     (left, right) => left - right,
   );
   const intervalIds = new Map<number, string>();
@@ -853,12 +878,16 @@ async function insertSessionFixture(
         workspaceId: bundle.workspaceId,
       })
       .returning();
-    if (interval === undefined) throw new Error('activity interval insert returned no row');
+    if (interval === undefined) {
+      throw new Error('activity interval insert returned no row');
+    }
     intervalIds.set(intervalOrdinal, interval.id);
   }
 
   const firstIntervalId = intervalIds.get(intervalOrdinals[0] ?? 0);
-  if (firstIntervalId === undefined) throw new Error('session fixture requires an interval');
+  if (firstIntervalId === undefined) {
+    throw new Error('session fixture requires an interval');
+  }
 
   const [rawRecord] = await service.db
     .insert(rawSessionRecords)
@@ -882,7 +911,9 @@ async function insertSessionFixture(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (rawRecord === undefined) throw new Error('raw session record insert returned no row');
+  if (rawRecord === undefined) {
+    throw new Error('raw session record insert returned no row');
+  }
 
   const turnIds: Record<string, string> = {};
   const segmentIds: Record<string, string[]> = {};
@@ -890,7 +921,9 @@ async function insertSessionFixture(
 
   for (const [turnOrdinal, turnInput] of input.turns.entries()) {
     const intervalId = intervalIds.get(turnInput.intervalOrdinal);
-    if (intervalId === undefined) throw new Error('turn interval was not inserted');
+    if (intervalId === undefined) {
+      throw new Error('turn interval was not inserted');
+    }
 
     const [turn] = await service.db
       .insert(sessionTurns)
@@ -912,7 +945,9 @@ async function insertSessionFixture(
         workspaceId: bundle.workspaceId,
       })
       .returning();
-    if (turn === undefined) throw new Error('session turn insert returned no row');
+    if (turn === undefined) {
+      throw new Error('session turn insert returned no row');
+    }
     turnIds[turnInput.key] = turn.id;
     segmentIds[turnInput.key] = [];
 
@@ -934,7 +969,9 @@ async function insertSessionFixture(
           workspaceId: bundle.workspaceId,
         })
         .returning();
-      if (segment === undefined) throw new Error('session segment insert returned no row');
+      if (segment === undefined) {
+        throw new Error('session segment insert returned no row');
+      }
       segmentIds[turnInput.key]?.push(segment.id);
       segmentOrdinal += 1;
     }

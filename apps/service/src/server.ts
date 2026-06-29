@@ -1,26 +1,27 @@
-import { createServer, type Server } from 'node:http';
+import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
-export interface SagaServiceHandle {
+export type SagaServiceHandle = {
   close: () => Promise<void>;
   host: string;
   port: number;
   url: string;
-}
+};
 
-export interface HealthPayload {
+export type HealthPayload = {
   ok: true;
   service: 'saga';
   uptimeSeconds: number;
-}
+};
 
-export interface SagaServiceDependencies {
+export type SagaServiceDependencies = {
   validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
-}
+};
 
 export async function startSagaService(
   config: RuntimeConfig,

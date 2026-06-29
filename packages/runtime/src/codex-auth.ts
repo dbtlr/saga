@@ -17,19 +17,19 @@ export type CodexAuthUnavailableReason =
   | 'unreadable-auth-file'
   | 'openai-api-key-missing';
 
-export interface CodexAuthFileCandidate {
+export type CodexAuthFileCandidate = {
   displayPath: string;
   path: string;
   source: CodexAuthFileSource;
-}
+};
 
-export interface CodexAuthResolutionOptions {
+export type CodexAuthResolutionOptions = {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   readFile?: (path: string) => string;
-}
+};
 
-export interface CodexAuthAvailable {
+export type CodexAuthAvailable = {
   authFile: string;
   checkedFiles: readonly CodexAuthFileCandidate[];
   detail: string;
@@ -39,16 +39,16 @@ export interface CodexAuthAvailable {
   openaiApiKey: string;
   source: CodexAuthFileSource;
   status: 'available';
-}
+};
 
-export interface CodexAuthUnavailable {
+export type CodexAuthUnavailable = {
   checkedFiles: readonly CodexAuthFileCandidate[];
   detail: string;
   guidance: string;
   mode: Exclude<CodexAuthMode, 'api-key'>;
   reason: CodexAuthUnavailableReason;
   status: 'unavailable';
-}
+};
 
 export type CodexAuthStatus = CodexAuthAvailable | CodexAuthUnavailable;
 
@@ -103,7 +103,9 @@ export function resolveCodexAuth(options: CodexAuthResolutionOptions = {}): Code
     try {
       rawAuth = readFile(candidate.path);
     } catch (error) {
-      if (isMissingFileError(error)) continue;
+      if (isMissingFileError(error)) {
+        continue;
+      }
       return unavailable({
         checkedFiles,
         detail: `could not read ${candidate.displayPath}: ${errorMessage(error)}`,
@@ -170,7 +172,9 @@ export function resolveCodexAuth(options: CodexAuthResolutionOptions = {}): Code
     );
   }
 
-  if (fallbackUnavailable !== undefined) return fallbackUnavailable;
+  if (fallbackUnavailable !== undefined) {
+    return fallbackUnavailable;
+  }
 
   return unavailable({
     checkedFiles,
@@ -187,7 +191,9 @@ function addCandidate(
   seen: Set<string>,
   candidate: CodexAuthFileCandidate,
 ): void {
-  if (seen.has(candidate.path)) return;
+  if (seen.has(candidate.path)) {
+    return;
+  }
   seen.add(candidate.path);
   candidates.push(candidate);
 }
@@ -203,21 +209,27 @@ function mostRelevantUnavailable(
   current: CodexAuthUnavailable | undefined,
   candidate: CodexAuthUnavailable,
 ): CodexAuthUnavailable {
-  if (current === undefined) return candidate;
+  if (current === undefined) {
+    return candidate;
+  }
   return unavailableRank(candidate) > unavailableRank(current) ? candidate : current;
 }
 
 function unavailableRank(status: CodexAuthUnavailable): number {
   switch (status.reason) {
-    case 'login-without-api-key':
+    case 'login-without-api-key': {
       return 3;
-    case 'openai-api-key-missing':
+    }
+    case 'openai-api-key-missing': {
       return 2;
-    case 'missing-auth-file':
+    }
+    case 'missing-auth-file': {
       return 1;
+    }
     case 'malformed-auth-file':
-    case 'unreadable-auth-file':
+    case 'unreadable-auth-file': {
       return 0;
+    }
   }
 }
 
@@ -242,20 +254,28 @@ function parseAuthJson(rawAuth: string):
 }
 
 function readOpenAiApiKey(value: unknown): string | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value)) {
+    return undefined;
+  }
   const apiKey = value[OPENAI_API_KEY];
   return typeof apiKey === 'string' ? optionalString(apiKey) : undefined;
 }
 
 function hasLoginIndicators(value: unknown, depth = 0): boolean {
-  if (depth > 4 || value === null || typeof value !== 'object') return false;
+  if (depth > 4 || value === null || typeof value !== 'object') {
+    return false;
+  }
   if (Array.isArray(value)) {
     return value.some((item) => hasLoginIndicators(item, depth + 1));
   }
 
   for (const [key, nestedValue] of Object.entries(value)) {
-    if (LOGIN_INDICATOR_KEYS.has(key.toLowerCase())) return true;
-    if (hasLoginIndicators(nestedValue, depth + 1)) return true;
+    if (LOGIN_INDICATOR_KEYS.has(key.toLowerCase())) {
+      return true;
+    }
+    if (hasLoginIndicators(nestedValue, depth + 1)) {
+      return true;
+    }
   }
   return false;
 }

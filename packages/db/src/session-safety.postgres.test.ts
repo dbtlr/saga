@@ -3,7 +3,8 @@ import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
-import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
+import { makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import { importRawSessionRecord } from './raw-session-import.js';
 import {
@@ -64,7 +65,9 @@ describePostgres('session safety', () => {
   });
 
   test('redacts the active raw snapshot without exposing the prior sensitive snapshot', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createWorkspace(service, 'session-safety-redact');
     const secretOrigin = 'origin-secret-token';
     const secretReason = 'reason-secret-token';
@@ -232,7 +235,9 @@ describePostgres('session safety', () => {
   });
 
   test('rejects invalid regex patterns without echoing sensitive pattern text', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createWorkspace(service, 'session-safety-invalid-regex');
     const secretNeedle = 'regex-secret-token';
     const rawPattern = `${secretNeedle}(`;
@@ -279,7 +284,9 @@ describePostgres('session safety', () => {
   });
 
   test('deletes a session and all recall-derived rows', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createWorkspace(service, 'session-safety-delete');
     const secretReason = 'delete-reason-secret-token';
     const imported = await seedRawSession(service, {
@@ -322,7 +329,9 @@ describePostgres('session safety', () => {
       .from(sessionSegments)
       .where(eq(sessionSegments.sessionId, imported.session.id))
       .limit(1);
-    if (segment === undefined) throw new Error('session segment was not inserted');
+    if (segment === undefined) {
+      throw new Error('session segment was not inserted');
+    }
     await service.sql`
       insert into session_segment_embeddings (
         workspace_id,
@@ -379,13 +388,15 @@ describePostgres('session safety', () => {
         }),
       ),
     ).rejects.toThrow('not found');
-    expect(await countRows(service, 'sessions', imported.session.id)).toBe(0);
-    expect(await countRows(service, 'raw_session_records', imported.session.id)).toBe(0);
-    expect(await countRows(service, 'session_turns', imported.session.id)).toBe(0);
-    expect(await countRows(service, 'session_segments', imported.session.id)).toBe(0);
-    expect(await countRows(service, 'session_segment_embeddings', imported.session.id)).toBe(0);
-    expect(await countRawEvents(service, rawEvent.id)).toBe(0);
-    expect(await countRawEvents(service, turnLinkedRawEvent.id)).toBe(0);
+    await expect(countRows(service, 'sessions', imported.session.id)).resolves.toBe(0);
+    await expect(countRows(service, 'raw_session_records', imported.session.id)).resolves.toBe(0);
+    await expect(countRows(service, 'session_turns', imported.session.id)).resolves.toBe(0);
+    await expect(countRows(service, 'session_segments', imported.session.id)).resolves.toBe(0);
+    await expect(
+      countRows(service, 'session_segment_embeddings', imported.session.id),
+    ).resolves.toBe(0);
+    await expect(countRawEvents(service, rawEvent.id)).resolves.toBe(0);
+    await expect(countRawEvents(service, turnLinkedRawEvent.id)).resolves.toBe(0);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {
@@ -397,7 +408,9 @@ describePostgres('session safety', () => {
   });
 
   test('rejects stale expected active raw record guards before replacing a newer snapshot', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createWorkspace(service, 'session-safety-expected-active');
     const first = await seedRawSession(service, {
       harnessSessionId: 'safety-expected-active',
@@ -457,11 +470,13 @@ describePostgres('session safety', () => {
   });
 
   test('redacts local paths from session segment read models', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const workspaceId = await createWorkspace(service, 'session-read-model-redaction');
     const rawPath = '/Users/Drew Smith/.codex/transcripts/session.jsonl';
-    const windowsPath = 'C:\\Users\\Drew Smith\\.codex\\transcripts\\session.jsonl';
-    const uncPath = '\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session.jsonl';
+    const windowsPath = String.raw`C:\Users\Drew Smith\.codex\transcripts\session.jsonl`;
+    const uncPath = String.raw`\\server\share\Users\drew\.codex\transcripts\session.jsonl`;
     const imported = await seedRawSession(service, {
       harnessSessionId: 'read-model-redaction',
       rawContent: `${JSON.stringify({
@@ -484,8 +499,8 @@ describePostgres('session safety', () => {
     expect(detailSegments[0]?.searchText).toContain('[local-path-redacted]');
     expect(detailSegments[0]?.snippet).toContain('[local-path-redacted]');
     expect(JSON.stringify(detailSegments)).not.toContain(rawPath);
-    expect(JSON.stringify(detailSegments)).not.toContain('C:\\Users\\Drew Smith');
-    expect(JSON.stringify(detailSegments)).not.toContain('\\\\server\\share');
+    expect(JSON.stringify(detailSegments)).not.toContain(String.raw`C:\Users\Drew Smith`);
+    expect(JSON.stringify(detailSegments)).not.toContain(String.raw`\\server\share`);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {
@@ -497,10 +512,12 @@ describePostgres('session safety', () => {
     expect(match?.snippet).toContain('[local-path-redacted]');
     expect(match?.segment.snippet).toContain('[local-path-redacted]');
     expect(JSON.stringify(recall)).not.toContain(rawPath);
-    expect(JSON.stringify(recall)).not.toContain('C:\\Users\\Drew Smith');
-    expect(JSON.stringify(recall)).not.toContain('\\\\server\\share');
+    expect(JSON.stringify(recall)).not.toContain(String.raw`C:\Users\Drew Smith`);
+    expect(JSON.stringify(recall)).not.toContain(String.raw`\\server\share`);
 
-    if (match === undefined) throw new Error('recall match was not returned');
+    if (match === undefined) {
+      throw new Error('recall match was not returned');
+    }
     const context = await Effect.runPromise(
       expandRecallContext(service, {
         segmentId: match.segment.id,
@@ -512,8 +529,8 @@ describePostgres('session safety', () => {
     expect(expandedSegments[0]?.searchText).toContain('[local-path-redacted]');
     expect(expandedSegments[0]?.snippet).toContain('[local-path-redacted]');
     expect(JSON.stringify(context)).not.toContain(rawPath);
-    expect(JSON.stringify(context)).not.toContain('C:\\Users\\Drew Smith');
-    expect(JSON.stringify(context)).not.toContain('\\\\server\\share');
+    expect(JSON.stringify(context)).not.toContain(String.raw`C:\Users\Drew Smith`);
+    expect(JSON.stringify(context)).not.toContain(String.raw`\\server\share`);
   });
 });
 
@@ -524,7 +541,9 @@ async function createWorkspace(service: DatabaseService, handlePrefix: string): 
       handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     })
     .returning();
-  if (workspace === undefined) throw new Error('workspace insert returned no row');
+  if (workspace === undefined) {
+    throw new Error('workspace insert returned no row');
+  }
   return workspace.id;
 }
 
@@ -646,7 +665,9 @@ async function countRows(
     .select({ id: rawSessionRecords.id })
     .from(rawSessionRecords)
     .where(eq(rawSessionRecords.sessionId, sessionId));
-  if (rawRecords.length === 0) return 0;
+  if (rawRecords.length === 0) {
+    return 0;
+  }
   const rows = await service.sql<{ count: number | string }[]>`
     select count(*)::int as count
     from session_segment_embeddings

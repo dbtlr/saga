@@ -4,9 +4,11 @@ import {
   DEFAULT_OPENAI_EMBEDDING_PROVIDER,
   inspectEmbeddingWorkflow,
   resolveCodexAuth,
-  type CodexAuthResolutionOptions,
-  type EmbeddingPolicyResolutionOptions,
-  type EmbeddingProviderBoundary,
+} from '@saga/runtime';
+import type {
+  CodexAuthResolutionOptions,
+  EmbeddingPolicyResolutionOptions,
+  EmbeddingProviderBoundary,
 } from '@saga/runtime';
 import { sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
@@ -21,36 +23,36 @@ const OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings';
 
 type JsonRecord = Record<string, unknown>;
 
-interface OpenAiEmbeddingResponseEntry {
+type OpenAiEmbeddingResponseEntry = {
   embedding: number[];
   index: number;
-}
+};
 
-export interface SessionEmbeddingGeneratorInput {
+export type SessionEmbeddingGeneratorInput = {
   inputHash: string;
   segmentId: string;
   text: string;
-}
+};
 
-export interface SessionEmbeddingGeneratorOutput {
+export type SessionEmbeddingGeneratorOutput = {
   embedding: readonly number[];
   segmentId: string;
-}
+};
 
-export interface SessionEmbeddingGenerator {
+export type SessionEmbeddingGenerator = {
   embedSegments: (
     inputs: readonly SessionEmbeddingGeneratorInput[],
   ) => Promise<readonly SessionEmbeddingGeneratorOutput[]>;
   provider: EmbeddingProviderBoundary;
-}
+};
 
-export interface OpenAiSessionEmbeddingGeneratorOptions {
+export type OpenAiSessionEmbeddingGeneratorOptions = {
   apiKey: string;
   fetch?: typeof fetch | undefined;
   provider?: EmbeddingProviderBoundary | undefined;
-}
+};
 
-export interface IndexSessionSegmentEmbeddingsInput {
+export type IndexSessionSegmentEmbeddingsInput = {
   activityIntervalId?: string | undefined;
   authOptions?: CodexAuthResolutionOptions | undefined;
   generator?: SessionEmbeddingGenerator | undefined;
@@ -60,9 +62,9 @@ export interface IndexSessionSegmentEmbeddingsInput {
   rawSessionRecordId?: string | undefined;
   sessionId?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface SessionEmbeddingIndexResult {
+export type SessionEmbeddingIndexResult = {
   eligibleCount: number;
   existingCount: number;
   indexedCount: number;
@@ -80,23 +82,23 @@ export interface SessionEmbeddingIndexResult {
   staleCount: number;
   status: 'completed' | 'skipped';
   workspaceId: string;
-}
+};
 
 export class SessionEmbeddingIndexError extends Data.TaggedError('SessionEmbeddingIndexError')<{
   readonly cause?: unknown;
   readonly message: string;
 }> {}
 
-interface SegmentCandidateRow {
+type SegmentCandidateRow = {
   existing_embedding_id: string | null;
   existing_input_hash: string | null;
   raw_session_record_id: string;
   search_text: string;
   segment_id: string;
   workspace_id: string;
-}
+};
 
-interface ResolvedEmbeddingGenerator {
+type ResolvedEmbeddingGenerator = {
   generator?: SessionEmbeddingGenerator | undefined;
   lexicalFallback: SessionEmbeddingIndexResult['lexicalFallback'];
   provider: EmbeddingProviderBoundary;
@@ -105,7 +107,7 @@ interface ResolvedEmbeddingGenerator {
     guidance: string;
     reason: string;
   };
-}
+};
 
 export function indexSessionSegmentEmbeddings(
   service: DatabaseService,
@@ -244,7 +246,9 @@ export function createOpenAiSessionEmbeddingGenerator(
   return {
     provider,
     embedSegments: async (inputs) => {
-      if (inputs.length === 0) return [];
+      if (inputs.length === 0) {
+        return [];
+      }
       const response = await fetchImpl(OPENAI_EMBEDDINGS_URL, {
         body: JSON.stringify({
           dimensions: provider.dimensions,
@@ -442,22 +446,29 @@ function openAiHttpFailureMessage(status: number): string {
 function openAiHttpFailureCategory(status: number): string {
   switch (status) {
     case 400:
-    case 422:
+    case 422: {
       return 'invalid request';
-    case 401:
+    }
+    case 401: {
       return 'authentication failed';
-    case 403:
+    }
+    case 403: {
       return 'authorization failed';
-    case 408:
+    }
+    case 408: {
       return 'request timeout';
-    case 409:
+    }
+    case 409: {
       return 'request conflict';
-    case 429:
+    }
+    case 429: {
       return 'rate limited';
-    default:
+    }
+    default: {
       if (status >= 400 && status < 500) return 'client error';
       if (status >= 500 && status < 600) return 'server error';
       return 'unexpected status';
+    }
   }
 }
 
@@ -535,7 +546,9 @@ function validateEmbedding(
 }
 
 function normalizeLimit(limit: number | undefined): number {
-  if (limit === undefined) return DEFAULT_LIMIT;
+  if (limit === undefined) {
+    return DEFAULT_LIMIT;
+  }
   if (!Number.isInteger(limit) || limit < 1) {
     throw new SessionEmbeddingIndexError({
       message: 'embedding index limit must be a positive integer',

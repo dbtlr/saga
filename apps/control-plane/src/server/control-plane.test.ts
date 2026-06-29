@@ -15,9 +15,9 @@ describe('readControlPlaneSnapshot', () => {
     expect(snapshot.binding).toBeUndefined();
     expect(snapshot.activeContext).toBeUndefined();
     expect(snapshot.profile).toBeUndefined();
-    expect(snapshot.recentActivity).toEqual([]);
-    expect(snapshot.sourceBindings).toEqual([]);
-    expect(snapshot.issues).toEqual(
+    expect(snapshot.recentActivity).toStrictEqual([]);
+    expect(snapshot.sourceBindings).toStrictEqual([]);
+    expect(snapshot.issues).toStrictEqual(
       expect.arrayContaining([
         expect.objectContaining({
           key: '.saga.local.json',
@@ -44,10 +44,10 @@ describe('readControlPlaneSnapshot', () => {
     expect(snapshot.status).toBe('offline');
     expect(snapshot.binding?.workspace.handle).toBe('demo');
     expect(snapshot.profile).toBeUndefined();
-    expect(snapshot.recentActivity).toEqual([]);
+    expect(snapshot.recentActivity).toStrictEqual([]);
     expect(snapshot.runtime.database).toBe('missing');
-    expect(snapshot.sourceBindings).toEqual([]);
-    expect(snapshot.issues).toEqual(
+    expect(snapshot.sourceBindings).toStrictEqual([]);
+    expect(snapshot.issues).toStrictEqual(
       expect.arrayContaining([
         expect.objectContaining({
           key: 'DATABASE_URL',
@@ -66,7 +66,7 @@ describe('claim review attributes', () => {
         adrPromoted: true,
         adrTitle: 'Use event-backed claim reviews',
       }),
-    ).toEqual({
+    ).toStrictEqual({
       pinned: true,
       promoted: true,
       promotionTitle: 'Use event-backed claim reviews',

@@ -1,13 +1,7 @@
-import {
-  resolveCodexAuth,
-  type CodexAuthResolutionOptions,
-  type CodexAuthStatus,
-} from './codex-auth.js';
-import {
-  resolveEmbeddingPolicy,
-  type EmbeddingPolicy,
-  type EmbeddingPolicyResolutionOptions,
-} from './embedding-policy.js';
+import { resolveCodexAuth } from './codex-auth.js';
+import type { CodexAuthResolutionOptions, CodexAuthStatus } from './codex-auth.js';
+import { resolveEmbeddingPolicy } from './embedding-policy.js';
+import type { EmbeddingPolicy, EmbeddingPolicyResolutionOptions } from './embedding-policy.js';
 
 export type EmbeddingProviderId = 'openai';
 export type EmbeddingAvailabilityState = 'available' | 'skipped';
@@ -17,27 +11,27 @@ export type EmbeddingEffectiveMode = 'vector-aware' | 'lexical-only-by-policy' |
 
 export const DISABLED_BY_POLICY_REASON = 'disabled-by-policy';
 
-export interface EmbeddingProviderBoundary {
+export type EmbeddingProviderBoundary = {
   dimensions: number;
   id: EmbeddingProviderId;
   model: string;
-}
+};
 
-export interface EmbeddingCredentialStatus {
+export type EmbeddingCredentialStatus = {
   authMode: CodexAuthStatus['mode'];
   detail: string;
   source: 'codex-auth';
-}
+};
 
-export interface EmbeddingWorkflowAvailability {
+export type EmbeddingWorkflowAvailability = {
   credential: EmbeddingCredentialStatus;
   detail: string;
   guidance: string;
   reason: string;
   state: EmbeddingAvailabilityState;
-}
+};
 
-export interface EmbeddingWorkflowBoundary {
+export type EmbeddingWorkflowBoundary = {
   availability: EmbeddingWorkflowAvailability;
   lexicalFallback: {
     detail: string;
@@ -46,7 +40,7 @@ export interface EmbeddingWorkflowBoundary {
   mode: EmbeddingEffectiveMode;
   policy: EmbeddingPolicy;
   provider: EmbeddingProviderBoundary;
-}
+};
 
 export const DEFAULT_OPENAI_EMBEDDING_PROVIDER: EmbeddingProviderBoundary = {
   dimensions: 1536,

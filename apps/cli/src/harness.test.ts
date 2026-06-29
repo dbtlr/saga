@@ -21,8 +21,8 @@ import {
   listHarnessAdapters,
   runHarnessCommand,
   uninstallHarness,
-  type HarnessActivationStatus,
 } from './harness.js';
+import type { HarnessActivationStatus } from './harness.js';
 import { readBindingFile, writeBindingFile } from './init.js';
 
 function boundProject(): string {
@@ -58,7 +58,7 @@ describe('listHarnessAdapters', () => {
         sourceUri: adapter.sourceUri('host-id'),
         target: adapter.target,
       })),
-    ).toEqual([
+    ).toStrictEqual([
       {
         hooksPath: join(projectRoot, '.codex', 'hooks.json'),
         ingestCommand: 'codex-hook',
@@ -103,7 +103,7 @@ describe('installHarness', () => {
     expect(readFileSync(join(projectRoot, '.gitignore'), 'utf8')).toContain('.codex/\n');
 
     const hooks = JSON.parse(readFileSync(status.hooksPath, 'utf8')) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }>; matcher?: string }>>;
+      hooks: Record<string, { hooks: Array<{ command: string }>; matcher?: string }[]>;
     };
     expect(hooks.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(hooks.hooks.SessionStart?.[0]?.matcher).toBe('startup|resume|clear|compact');
@@ -146,7 +146,7 @@ describe('installHarness', () => {
     );
 
     const settings = JSON.parse(readFileSync(status.hooksPath, 'utf8')) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }>; matcher?: string }>>;
+      hooks: Record<string, { hooks: Array<{ command: string }>; matcher?: string }[]>;
     };
     expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toBe(status.hookCommand);
     expect(settings.hooks.SessionStart?.[0]?.matcher).toBe('startup|resume|clear|compact');
@@ -185,7 +185,7 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'codex' });
 
     const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
-      hooks: { Stop?: Array<{ hooks: Array<{ command: string }> }> };
+      hooks: { Stop?: { hooks: Array<{ command: string }> }[] };
     };
     expect(hooks.hooks.Stop?.[0]?.hooks[0]?.command).toBe('echo keep');
     expect(inspectHarness({ cwd: projectRoot, target: 'codex' }).hooks).toBe('missing');
@@ -217,7 +217,7 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'claude' });
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      hooks: { Stop?: Array<{ hooks: Array<{ command: string }> }> };
+      hooks: { Stop?: { hooks: Array<{ command: string }> }[] };
     };
     expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toBe('echo keep');
     expect(inspectHarness({ cwd: projectRoot, target: 'claude' }).hooks).toBe('missing');
@@ -254,9 +254,9 @@ describe('installHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'claude' });
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      hooks: { Stop?: Array<{ hooks: Array<{ type: string }> }> };
+      hooks: { Stop?: { hooks: Array<{ type: string }> }[] };
     };
-    expect(settings.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toEqual([
+    expect(settings.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toStrictEqual([
       'prompt',
       'mcp_tool',
       'agent',
@@ -743,8 +743,8 @@ describe('classifyCodexActivationEvidence', () => {
 
     expect(status.state).toBe('active');
     expect(status.detail).toContain('recent Codex hook raw_event found');
-    expect(status.sessionStartSources.observed).toEqual(['resume']);
-    expect(status.sessionStartSources.unproven).toEqual(['startup', 'clear', 'compact']);
+    expect(status.sessionStartSources.observed).toStrictEqual(['resume']);
+    expect(status.sessionStartSources.unproven).toStrictEqual(['startup', 'clear', 'compact']);
   });
 
   test('distinguishes stale real hook evidence', () => {
@@ -851,8 +851,8 @@ describe('classifyClaudeActivationEvidence', () => {
 
     expect(status.state).toBe('active');
     expect(status.detail).toContain('recent Claude Code hook raw_event found');
-    expect(status.sessionStartSources.observed).toEqual(['startup']);
-    expect(status.sessionStartSources.unproven).toEqual(['resume', 'clear', 'compact']);
+    expect(status.sessionStartSources.observed).toStrictEqual(['startup']);
+    expect(status.sessionStartSources.unproven).toStrictEqual(['resume', 'clear', 'compact']);
   });
 
   test('distinguishes stale Claude Code hook evidence', () => {
@@ -1165,9 +1165,9 @@ describe('runHarnessCommand', () => {
       ),
     );
 
-    const statuses = JSON.parse(output) as Array<{ state: string; target: string }>;
-    expect(statuses.map((status) => status.target)).toEqual(['codex', 'claude']);
-    expect(statuses.map((status) => status.state)).toEqual(['missing', 'missing']);
+    const statuses = JSON.parse(output) as { state: string; target: string }[];
+    expect(statuses.map((status) => status.target)).toStrictEqual(['codex', 'claude']);
+    expect(statuses.map((status) => status.state)).toStrictEqual(['missing', 'missing']);
   });
 });
 
@@ -1203,9 +1203,9 @@ describe('uninstallHarness', () => {
     uninstallHarness({ cwd: projectRoot, target: 'codex' });
 
     const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
-      hooks: { Stop?: Array<{ hooks: Array<{ type: string }> }> };
+      hooks: { Stop?: { hooks: Array<{ type: string }> }[] };
     };
-    expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toEqual(['prompt']);
+    expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toStrictEqual(['prompt']);
   });
 });
 

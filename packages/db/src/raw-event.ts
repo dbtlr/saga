@@ -3,7 +3,8 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import { rawEvents, sourceBindings, type RawEvent } from './schema.js';
+import { rawEvents, sourceBindings } from './schema.js';
+import type { RawEvent } from './schema.js';
 
 export class RawEventInsertError extends Data.TaggedError('RawEventInsertError')<{
   readonly message: string;
@@ -49,7 +50,9 @@ export function insertRawEvent(
         })
         .returning();
 
-      if (row !== undefined) return row;
+      if (row !== undefined) {
+        return row;
+      }
 
       const [existing] = await service.db
         .select()

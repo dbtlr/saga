@@ -37,7 +37,9 @@ describePostgres('initProject postgres integration', () => {
   });
 
   test('registers a git workspace from a nested cwd and writes the local binding', async () => {
-    if (testDatabaseUrl === undefined) throw new Error('test database URL was not initialized');
+    if (testDatabaseUrl === undefined) {
+      throw new Error('test database URL was not initialized');
+    }
     const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'saga-init-e2e-')));
     const nested = join(projectRoot, 'packages', 'app');
     mkdirSync(nested, { recursive: true });

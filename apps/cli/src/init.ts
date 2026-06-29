@@ -5,25 +5,22 @@ import { hostname } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  makeDatabase,
-  registerWorkspace,
-  runMigrationsSafely,
-  type RegisterWorkspaceResult,
-} from '@saga/db';
+import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
+import type { RegisterWorkspaceResult } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 
 export const BINDING_FILE_NAME = '.saga.local.json';
 
-export interface InitResult {
+export type InitResult = {
   bindingPath: string;
   projectRoot: string;
   registration: RegisterWorkspaceResult;
-}
+};
 
 type WorkspaceHarnessTarget = 'codex' | 'claude';
 type WorkspaceHarnessSourceUri =
@@ -32,7 +29,7 @@ type WorkspaceHarnessSourceUri =
   | `claude://host/${string}`
   | `codex://host/${string}`;
 
-interface WorkspaceHarnessBinding {
+type WorkspaceHarnessBinding = {
   hookCommand: string;
   hookTrust: 'requires-review';
   hooksPath: string;
@@ -40,9 +37,9 @@ interface WorkspaceHarnessBinding {
   sourceBindingId: string;
   sourceUri: WorkspaceHarnessSourceUri;
   target: WorkspaceHarnessTarget;
-}
+};
 
-export interface WorkspaceBindingFile {
+export type WorkspaceBindingFile = {
   harnesses?: Partial<Record<WorkspaceHarnessTarget, WorkspaceHarnessBinding>>;
   host?: {
     generatedAt: string;
@@ -64,7 +61,7 @@ export interface WorkspaceBindingFile {
     handle: string;
     id: string;
   };
-}
+};
 
 export type WorkspaceBindingFileWithHost = WorkspaceBindingFile & {
   host: NonNullable<WorkspaceBindingFile['host']>;
@@ -226,6 +223,8 @@ export function bindingPathFor(projectRoot: string): string {
 
 export function readBindingFile(projectRoot: string): WorkspaceBindingFile | undefined {
   const bindingPath = bindingPathFor(projectRoot);
-  if (!existsSync(bindingPath)) return undefined;
+  if (!existsSync(bindingPath)) {
+    return undefined;
+  }
   return JSON.parse(readFileSync(bindingPath, 'utf8')) as WorkspaceBindingFile;
 }

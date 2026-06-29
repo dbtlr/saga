@@ -3,24 +3,28 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { RuntimeConfigTag, type RuntimeConfig } from '@saga/runtime';
-import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { RuntimeConfigTag } from '@saga/runtime';
+import type { RuntimeConfig } from '@saga/runtime';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { Context, Data, Effect, Layer } from 'effect';
-import postgres, { type Options, type PostgresType, type Sql } from 'postgres';
+import postgres from 'postgres';
+import type { Options, PostgresType, Sql } from 'postgres';
 
-import { schema, type SagaSchema } from './schema.js';
+import { schema } from './schema.js';
+import type { SagaSchema } from './schema.js';
 
 export type SagaDatabase = PostgresJsDatabase<SagaSchema>;
 export type SagaSql = Sql<Record<string, PostgresType>>;
 
-export interface DatabaseService {
+export type DatabaseService = {
   db: SagaDatabase;
   sql: SagaSql;
   close: () => Effect.Effect<void, DatabaseError>;
-}
+};
 
-export interface MigrationStatus {
+export type MigrationStatus = {
   applied: number;
   compatible: boolean;
   expected: number;
@@ -32,7 +36,7 @@ export interface MigrationStatus {
         tag: string;
       }
     | undefined;
-}
+};
 
 export class DatabaseError extends Data.TaggedError('DatabaseError')<{
   readonly message: string;
@@ -45,9 +49,9 @@ export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL('../drizzle', imp
 export const EXPECTED_MIGRATION_COUNT =
   readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).length;
 
-export interface MakeDatabaseOptions {
+export type MakeDatabaseOptions = {
   postgres?: Options<Record<string, PostgresType>>;
-}
+};
 
 export function makeDatabase(
   config: RuntimeConfig,
@@ -109,7 +113,9 @@ export function runMigrationsSafely(
       if (!status.compatible) {
         return Effect.fail(incompatibleMigrationError(status));
       }
-      if (status.applied === status.expected) return Effect.succeed(status);
+      if (status.applied === status.expected) {
+        return Effect.succeed(status);
+      }
       return runMigrations(service, migrationsFolder).pipe(
         Effect.flatMap(() => getMigrationStatus(service, migrationsFolder)),
       );
@@ -146,7 +152,7 @@ export function getMigrationStatus(
         return expected !== undefined && hash !== expected.hash;
       });
       const mismatch =
-        mismatchIndex < 0 || expectedMigrations[mismatchIndex] === undefined
+        mismatchIndex === -1 || expectedMigrations[mismatchIndex] === undefined
           ? undefined
           : {
               appliedHash: appliedHashes[mismatchIndex] ?? '',
@@ -208,7 +214,7 @@ function incompatibleMigrationError(status: MigrationStatus): DatabaseError {
 
 export function readExpectedMigrationHashes(
   migrationsFolder: string,
-): Array<{ hash: string; tag: string }> {
+): { hash: string; tag: string }[] {
   const journal = JSON.parse(readFileSync(join(migrationsFolder, 'meta', '_journal.json'), 'utf8'));
   if (!isMigrationJournal(journal)) {
     throw new Error(`invalid Drizzle migration journal: ${migrationsFolder}`);
@@ -223,7 +229,7 @@ export function readExpectedMigrationHashes(
   });
 }
 
-function isMigrationJournal(value: unknown): value is { entries: Array<{ tag: string }> } {
+function isMigrationJournal(value: unknown): value is { entries: { tag: string }[] } {
   return (
     value !== null &&
     typeof value === 'object' &&

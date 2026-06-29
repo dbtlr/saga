@@ -37,10 +37,18 @@ const WINDOWS_UNC_LOCAL_PATH_PATTERN =
   /(^|[\s"'([{=,:])(\\\\[^\\\s"',}\])]+\\[^\\\s"',}\])]+\\[^\s"',}\])]+)/gu;
 
 export function redactAgentFacingSessionValue(value: unknown): unknown {
-  if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((entry) => redactAgentFacingSessionValue(entry));
-  if (typeof value === 'string') return redactLocalPathString(value);
-  if (!isRecord(value)) return value;
+  if (value instanceof Date) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactAgentFacingSessionValue(entry));
+  }
+  if (typeof value === 'string') {
+    return redactLocalPathString(value);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
 
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [key, redactAgentFacingSessionValue(entry)]),
@@ -58,10 +66,14 @@ export function redactAgentFacingSessionText(value: string): string {
 }
 
 export function redactAgentFacingSourceLocator(value: string | null): string | null {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
 
   const redacted = redactLocalPathString(value);
-  if (redacted !== value) return null;
+  if (redacted !== value) {
+    return null;
+  }
 
   return SAFE_SOURCE_LOCATOR_PATTERN.test(value) ? value : null;
 }

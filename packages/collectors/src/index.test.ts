@@ -25,7 +25,7 @@ describe('rawEventFromCodexHook', () => {
       new Date('2026-06-19T20:00:00.000Z'),
     );
 
-    expect(event).toEqual({
+    expect(event).toStrictEqual({
       actorId: 'codex',
       eventType: 'codex.UserPromptSubmit',
       externalEventId:
@@ -107,7 +107,7 @@ describe('rawEventFromClaudeHook', () => {
       new Date('2026-06-19T20:00:00.000Z'),
     );
 
-    expect(event).toEqual({
+    expect(event).toStrictEqual({
       actorId: 'claude',
       eventType: 'claude.UserPromptSubmit',
       externalEventId:

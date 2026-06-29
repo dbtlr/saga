@@ -80,7 +80,9 @@ describe('runStartCommand', () => {
       runStartCommand([], renderOptions, () => undefined, {
         checkHealth: async () => {
           healthChecks += 1;
-          if (healthChecks === 1) return 'unreachable';
+          if (healthChecks === 1) {
+            return 'unreachable';
+          }
           throw new Error('health check failed');
         },
         cwd: process.cwd(),
@@ -100,7 +102,9 @@ describe('runStartCommand', () => {
     const exitCode = await runStartCommand([], renderOptions, () => undefined, {
       checkHealth: async () => {
         healthChecks += 1;
-        if (healthChecks === 1) return 'unreachable';
+        if (healthChecks === 1) {
+          return 'unreachable';
+        }
         process.emit('SIGTERM', 'SIGTERM');
         return 'unreachable';
       },
@@ -117,7 +121,7 @@ describe('runStartCommand', () => {
 
 describe('process command builders', () => {
   test('builds the control-plane dev command through pnpm', () => {
-    expect(controlPlaneCommand({})).toEqual({
+    expect(controlPlaneCommand({})).toStrictEqual({
       args: ['--filter', '@saga/control-plane', 'dev'],
       command: 'pnpm',
     });

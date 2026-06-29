@@ -3,7 +3,8 @@ import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
-import { makeDatabase, runMigrations, type DatabaseService } from './database.js';
+import { makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -18,8 +19,8 @@ import {
 import {
   indexSessionSegmentEmbeddings,
   sessionSegmentEmbeddingInputHash,
-  type SessionEmbeddingGenerator,
 } from './session-embeddings.js';
+import type { SessionEmbeddingGenerator } from './session-embeddings.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -67,7 +68,9 @@ describePostgres('session segment embeddings', () => {
   });
 
   test('indexes eligible active segments idempotently and refreshes stale embeddings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const fixture = await seedEmbeddingFixture(service, 'idempotent');
     const embeddedTexts: string[] = [];
     const generator = fakeGenerator(embeddedTexts);
@@ -90,7 +93,10 @@ describePostgres('session segment embeddings', () => {
       staleCount: 0,
       status: 'completed',
     });
-    expect(embeddedTexts).toEqual(['Alpha vector recall target', 'Beta lexical fallback target']);
+    expect(embeddedTexts).toStrictEqual([
+      'Alpha vector recall target',
+      'Beta lexical fallback target',
+    ]);
     await expectEmbeddingRows(service, {
       count: 2,
       provider: generator.provider.id,
@@ -160,7 +166,9 @@ describePostgres('session segment embeddings', () => {
   });
 
   test('skips pending embeddings when default OpenAI credentials are unavailable', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const fixture = await seedEmbeddingFixture(service, 'missing-credentials');
 
     const result = await Effect.runPromise(
@@ -205,7 +213,9 @@ describePostgres('session segment embeddings', () => {
   });
 
   test('skips remote embedding generation when installation policy disables it, even with valid auth', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const fixture = await seedEmbeddingFixture(service, 'disabled-by-policy');
 
     const result = await Effect.runPromise(
@@ -242,19 +252,19 @@ describePostgres('session segment embeddings', () => {
   });
 });
 
-interface EmbeddingFixture {
+type EmbeddingFixture = {
   segmentIds: {
     alpha: string;
     beta: string;
   };
   workspaceId: string;
-}
+};
 
-interface FixtureBundle {
+type FixtureBundle = {
   authorUserId: string;
   sourceBindingId: string;
   workspaceId: string;
-}
+};
 
 function fakeGenerator(embeddedTexts: string[]): SessionEmbeddingGenerator {
   return {
@@ -333,7 +343,9 @@ async function createBundle(
         })
         .returning()
     )[0]?.id;
-  if (workspaceId === undefined) throw new Error('workspace insert returned no row');
+  if (workspaceId === undefined) {
+    throw new Error('workspace insert returned no row');
+  }
 
   const [sourceBinding] = await service.db
     .insert(sourceBindings)
@@ -348,7 +360,9 @@ async function createBundle(
       workspaceId,
     })
     .returning();
-  if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+  if (sourceBinding === undefined) {
+    throw new Error('source binding insert returned no row');
+  }
 
   const [author] = await service.db
     .insert(users)
@@ -363,7 +377,9 @@ async function createBundle(
       workspaceId,
     })
     .returning();
-  if (author === undefined) throw new Error('user insert returned no row');
+  if (author === undefined) {
+    throw new Error('user insert returned no row');
+  }
 
   return {
     authorUserId: author.id,
@@ -397,7 +413,9 @@ async function insertSessionWithSegments(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (session === undefined) throw new Error('session insert returned no row');
+  if (session === undefined) {
+    throw new Error('session insert returned no row');
+  }
 
   const [interval] = await service.db
     .insert(activityIntervals)
@@ -412,7 +430,9 @@ async function insertSessionWithSegments(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (interval === undefined) throw new Error('activity interval insert returned no row');
+  if (interval === undefined) {
+    throw new Error('activity interval insert returned no row');
+  }
 
   const [rawRecord] = await service.db
     .insert(rawSessionRecords)
@@ -434,7 +454,9 @@ async function insertSessionWithSegments(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (rawRecord === undefined) throw new Error('raw record insert returned no row');
+  if (rawRecord === undefined) {
+    throw new Error('raw record insert returned no row');
+  }
 
   const [turn] = await service.db
     .insert(sessionTurns)
@@ -453,7 +475,9 @@ async function insertSessionWithSegments(
       workspaceId: bundle.workspaceId,
     })
     .returning();
-  if (turn === undefined) throw new Error('turn insert returned no row');
+  if (turn === undefined) {
+    throw new Error('turn insert returned no row');
+  }
 
   const segmentIds: string[] = [];
   for (const [ordinal, searchText] of input.searchTexts.entries()) {
@@ -471,7 +495,9 @@ async function insertSessionWithSegments(
         workspaceId: bundle.workspaceId,
       })
       .returning();
-    if (segment === undefined) throw new Error('segment insert returned no row');
+    if (segment === undefined) {
+      throw new Error('segment insert returned no row');
+    }
     segmentIds.push(segment.id);
   }
 
@@ -486,7 +512,7 @@ async function expectEmbeddingRows(
     workspaceId: string;
   },
 ): Promise<void> {
-  const rows = await service.sql<Array<{ count: string }>>`
+  const rows = await service.sql<{ count: string }[]>`
     select count(*)::text as count
     from session_segment_embeddings
     where workspace_id = ${input.workspaceId}

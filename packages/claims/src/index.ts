@@ -4,7 +4,7 @@ export const packageName = '@saga/claims';
 
 export type ClaimKind = 'decision' | 'follow_up' | 'observation' | 'preference';
 
-export interface ClaimEvidence {
+export type ClaimEvidence = {
   eventType: string;
   externalEventId: string;
   occurredAt: string;
@@ -14,18 +14,18 @@ export interface ClaimEvidence {
   sourceId: string;
   sourceType: string;
   traceId?: string | undefined;
-}
+};
 
-export interface CandidateClaim {
+export type CandidateClaim = {
   attributes: Record<string, unknown>;
   confidence: number;
   evidence: ClaimEvidence;
   kind: ClaimKind;
   text: string;
   workspaceId: string;
-}
+};
 
-export interface ClaimExtractionRawEvent {
+export type ClaimExtractionRawEvent = {
   eventType: string;
   externalEventId: string;
   id: string;
@@ -36,13 +36,13 @@ export interface ClaimExtractionRawEvent {
   sourceType: string;
   traceId?: string | null | undefined;
   workspaceId: string;
-}
+};
 
-const CLASSIFIERS: Array<{
+const CLASSIFIERS: {
   confidence: number;
   kind: ClaimKind;
   pattern: RegExp;
-}> = [
+}[] = [
   { confidence: 0.72, kind: 'decision', pattern: /\b(agreed|sounds good|that makes sense)\b/i },
   {
     confidence: 0.7,
@@ -71,11 +71,15 @@ export function extractCandidateClaimsFromRawEvent(
   event: ClaimExtractionRawEvent,
 ): CandidateClaim[] {
   const prompt = promptFromRawEvent(event);
-  if (prompt === undefined) return [];
+  if (prompt === undefined) {
+    return [];
+  }
 
   return candidateStatements(prompt).flatMap((statement) => {
     const classifier = CLASSIFIERS.find((entry) => entry.pattern.test(statement));
-    if (classifier === undefined) return [];
+    if (classifier === undefined) {
+      return [];
+    }
 
     return [
       {
@@ -122,14 +126,18 @@ export function detectClaimContradiction(
 ): { score: number } | undefined {
   const leftStatement = normalizeContradictionStatement(left);
   const rightStatement = normalizeContradictionStatement(right);
-  if (leftStatement.negated === rightStatement.negated) return undefined;
+  if (leftStatement.negated === rightStatement.negated) {
+    return undefined;
+  }
 
   const overlap = jaccard(leftStatement.tokens, rightStatement.tokens);
   return overlap >= 0.55 ? { score: overlap } : undefined;
 }
 
 function promptFromRawEvent(event: ClaimExtractionRawEvent): string | undefined {
-  if (!event.eventType.endsWith('.UserPromptSubmit')) return undefined;
+  if (!event.eventType.endsWith('.UserPromptSubmit')) {
+    return undefined;
+  }
   const prompt = event.payload.prompt;
   return typeof prompt === 'string' && prompt.trim() !== '' ? prompt : undefined;
 }
@@ -145,7 +153,9 @@ function candidateStatements(prompt: string): string[] {
       prefix = line;
       continue;
     }
-    if (line.length < 12) continue;
+    if (line.length < 12) {
+      continue;
+    }
     statements.push(prefix === '' ? line : `${prefix} ${line}`);
     prefix = '';
   }
@@ -200,17 +210,21 @@ const CONTRADICTION_STOP_WORDS = new Set([
 ]);
 
 function jaccard(left: Set<string>, right: Set<string>): number {
-  if (left.size === 0 || right.size === 0) return 0;
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
   const intersection = [...left].filter((token) => right.has(token)).length;
   const union = new Set([...left, ...right]).size;
   return intersection / union;
 }
 
 function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  }
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
       .join(',')}}`;
   }

@@ -26,8 +26,12 @@ try {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    if (logs.stdout.trim() !== '') console.error(logs.stdout.trim());
-    if (logs.stderr.trim() !== '') console.error(logs.stderr.trim());
+    if (logs.stdout.trim() !== '') {
+      console.error(logs.stdout.trim());
+    }
+    if (logs.stderr.trim() !== '') {
+      console.error(logs.stderr.trim());
+    }
   }
   throw error;
 } finally {
@@ -41,7 +45,9 @@ async function assertPortAvailable(url) {
       `service smoke requires port 4766, but ${url} already responded with ${String(response.status)}`,
     );
   } catch (error) {
-    if (error instanceof Error && error.message.includes('already responded')) throw error;
+    if (error instanceof Error && error.message.includes('already responded')) {
+      throw error;
+    }
   }
 }
 
@@ -52,7 +58,9 @@ async function waitForHealth(url) {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) return response.json();
+      if (response.ok) {
+        return response.json();
+      }
       lastError = new Error(`health returned HTTP ${String(response.status)}`);
     } catch (error) {
       lastError = error;
@@ -74,7 +82,9 @@ function run(command, args, options = {}) {
   });
 
   if (result.error !== undefined) {
-    if (options.allowFailure === true) return result;
+    if (options.allowFailure === true) {
+      return result;
+    }
     throw result.error;
   }
 

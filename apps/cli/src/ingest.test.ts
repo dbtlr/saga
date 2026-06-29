@@ -76,7 +76,7 @@ describe('ingestCodexHook', () => {
       },
     );
 
-    expect(JSON.parse(output)).toEqual({
+    expect(JSON.parse(output)).toStrictEqual({
       accepted: true,
       eventId: 'event-id',
       mode: 'captured',
@@ -111,7 +111,7 @@ describe('ingestCodexHook', () => {
       },
     );
 
-    expect(JSON.parse(output)).toEqual({
+    expect(JSON.parse(output)).toStrictEqual({
       accepted: true,
       eventId: 'event-id',
       mode: 'captured',

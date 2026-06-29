@@ -23,13 +23,13 @@ const testInputs = [
   },
 ];
 
-interface OpenAiHttpFailureCase {
+type OpenAiHttpFailureCase = {
   body: unknown;
   expectedMessage: string;
   leakedDetails: readonly string[];
   name: string;
   status: number;
-}
+};
 
 const openAiHttpFailureCases = [
   {
@@ -61,11 +61,11 @@ const openAiHttpFailureCases = [
   },
 ] satisfies readonly OpenAiHttpFailureCase[];
 
-interface MalformedOpenAiPayloadCase {
+type MalformedOpenAiPayloadCase = {
   body: unknown;
   message: string;
   name: string;
-}
+};
 
 const malformedOpenAiPayloadCases = [
   {
@@ -125,7 +125,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
 
     const outputs = await generator.embedSegments(testInputs);
 
-    expect(outputs).toEqual([
+    expect(outputs).toStrictEqual([
       {
         embedding: [1, 0, 0],
         segmentId: 'segment-first',
@@ -135,7 +135,7 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
         segmentId: 'segment-second',
       },
     ]);
-    expect(JSON.parse(requestBodyText(requests[0]))).toEqual({
+    expect(JSON.parse(requestBodyText(requests[0]))).toStrictEqual({
       dimensions: 3,
       input: ['first segment', 'second segment'],
       model: 'test-embedding-model',

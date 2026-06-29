@@ -13,24 +13,24 @@ import { runStartCommand } from './start.js';
 export type OutputFormat = 'records' | 'json' | 'jsonl' | 'ids';
 export type ColorMode = 'auto' | 'always' | 'never';
 
-export interface GlobalOptions {
+export type GlobalOptions = {
   ascii: boolean;
   color: ColorMode;
   format: OutputFormat;
   help: boolean;
   version: boolean;
-}
+};
 
-export interface ParsedCommand {
+export type ParsedCommand = {
   args: string[];
   command: string | undefined;
   options: GlobalOptions;
-}
+};
 
-export interface CommandDefinition {
+export type CommandDefinition = {
   description: string;
   subcommands?: readonly string[];
-}
+};
 
 export const COMMANDS = {
   init: { description: 'bind this project to a Saga Workspace' },
@@ -84,7 +84,7 @@ export class UsageError extends Error {
 
 export const VERSION = '0.0.0';
 
-export interface CommandHandlers {
+export type CommandHandlers = {
   doctor: typeof runDoctor;
   context: typeof runContextCommand;
   harness: typeof runHarnessCommand;
@@ -95,7 +95,7 @@ export interface CommandHandlers {
   service: typeof runServiceCommand;
   sessions: typeof runSessionsCommand;
   start: typeof runStartCommand;
-}
+};
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
   context: runContextCommand,
@@ -135,7 +135,9 @@ export function getCommand(name: string): CommandDefinition | undefined {
 
 export function validateCommand(parsed: ParsedCommand): void {
   const name = parsed.command;
-  if (name === undefined) return;
+  if (name === undefined) {
+    return;
+  }
 
   const command = getCommand(name);
   if (command === undefined) {
@@ -143,7 +145,9 @@ export function validateCommand(parsed: ParsedCommand): void {
   }
 
   const subcommands = command.subcommands;
-  if (subcommands === undefined) return;
+  if (subcommands === undefined) {
+    return;
+  }
 
   const subcommand = parsed.args[0];
   if (subcommand === undefined) {
@@ -162,7 +166,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === undefined) continue;
+    if (arg === undefined) {
+      continue;
+    }
 
     if (arg === '--') {
       positionals.push(...argv.slice(index + 1));
@@ -186,7 +192,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
 
     if (arg === '-f' || arg === '--format') {
       const value = argv[index + 1];
-      if (value === undefined) throw new UsageError(`${arg} expects a value`);
+      if (value === undefined) {
+        throw new UsageError(`${arg} expects a value`);
+      }
       if (!OUTPUT_FORMATS.has(value as OutputFormat)) {
         throw new UsageError(`unsupported format: ${value}`);
       }
@@ -197,7 +205,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
 
     if (arg === '--color') {
       const value = argv[index + 1];
-      if (value === undefined) throw new UsageError('--color expects a value');
+      if (value === undefined) {
+        throw new UsageError('--color expects a value');
+      }
       if (!COLOR_MODES.has(value as ColorMode)) {
         throw new UsageError(`unsupported color mode: ${value}`);
       }
@@ -262,7 +272,9 @@ export async function run(
     }
     if (parsed.command === 'mcp') {
       const output = await handlers.mcp(parsed.args, renderOptions, write);
-      if (output !== undefined && output !== '') write(output);
+      if (output !== undefined && output !== '') {
+        write(output);
+      }
       return 0;
     }
     if (parsed.command === 'recall') {

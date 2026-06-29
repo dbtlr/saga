@@ -168,7 +168,7 @@ describe('runSessionsCommand', () => {
       {
         cwd: projectRoot,
         deleteSession: async (input) => {
-          expect(input).toEqual({
+          expect(input).toStrictEqual({
             id: 'raw-record-id',
             origin: 'saga sessions delete',
             reason: secretReason,
@@ -206,7 +206,7 @@ describe('runSessionsCommand', () => {
         'secret-token',
         '--literal=second-secret',
         '--regex',
-        'API_KEY=[^\\s]+',
+        String.raw`API_KEY=[^\s]+`,
         '--replacement',
         '[REMOVED]',
         '--origin',
@@ -227,7 +227,7 @@ describe('runSessionsCommand', () => {
             reason: secretReason,
             workspaceId: 'workspace-id',
           });
-          expect(input.patterns).toEqual([
+          expect(input.patterns).toStrictEqual([
             { kind: 'literal', pattern: 'secret-token', replacement: '[REMOVED]' },
             { kind: 'literal', pattern: 'second-secret', replacement: '[REMOVED]' },
             {
@@ -260,7 +260,7 @@ describe('runSessionsCommand', () => {
       runSessionsCommand(['redact', 'session-id', '--regex', rawPattern], renderOptions, {
         cwd: projectRoot,
         redactSession: async (input) => {
-          expect(input.patterns).toEqual([
+          expect(input.patterns).toStrictEqual([
             {
               flags: undefined,
               kind: 'regex',
@@ -494,7 +494,9 @@ describe('runSessionsCommand', () => {
       const projectRoot = boundProject();
       const detail = sessionDetail({ includeRawBody: true });
       const rawRecord = detail.rawSessionRecords[0];
-      if (rawRecord === undefined) throw new Error('missing raw session record');
+      if (rawRecord === undefined) {
+        throw new Error('missing raw session record');
+      }
       rawRecord.rawBodyExposure = rawBodyExposure as NonNullable<
         SessionRawSessionRecordMetadata['rawBodyExposure']
       >;
@@ -959,7 +961,9 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
 
 function sessionDetailWithRawRecords(): SessionDetail {
   const detail = sessionDetail();
-  if (detail.activeRawSessionRecord === null) throw new Error('missing active raw record');
+  if (detail.activeRawSessionRecord === null) {
+    throw new Error('missing active raw record');
+  }
   const olderRawRecord = {
     ...detail.activeRawSessionRecord,
     capturedAt: new Date('2026-06-22T09:55:00.000Z'),

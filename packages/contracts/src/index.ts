@@ -2,7 +2,7 @@ export const packageName = '@saga/contracts';
 
 export type TrustLevel = 'raw' | 'trusted';
 
-export interface RawEventEnvelope {
+export type RawEventEnvelope = {
   actorId: string;
   eventType: string;
   externalEventId: string;
@@ -17,4 +17,4 @@ export interface RawEventEnvelope {
   traceId?: string | undefined;
   trustLevel: TrustLevel;
   workspaceId: string;
-}
+};

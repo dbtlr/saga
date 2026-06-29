@@ -23,12 +23,8 @@ import {
   sourceBindings,
   users,
   workspaces,
-  type ActivityInterval,
-  type RawSessionRecord,
-  type Session,
-  type SourceBinding,
-  type User,
 } from './schema.js';
+import type { ActivityInterval, RawSessionRecord, Session, SourceBinding, User } from './schema.js';
 import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from './session-segments.js';
 import type {
   NormalizedTranscriptTurn,
@@ -45,7 +41,7 @@ type ActivityIntervalSettlementReason = 'clear_context' | 'idle_timeout' | 'manu
 
 const ACTIVITY_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-export interface RawSessionImportInput {
+export type RawSessionImportInput = {
   activity?: RawSessionImportActivityInput | undefined;
   author: {
     displayName?: string | undefined;
@@ -85,15 +81,15 @@ export interface RawSessionImportInput {
   status?: 'active' | 'completed' | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface RawSessionImportActivityInput {
+export type RawSessionImportActivityInput = {
   hookEventName?: string | undefined;
   sessionStartSource?: string | undefined;
   settlementTriggerRawEventId?: string | undefined;
-}
+};
 
-export interface RawSessionImportResult {
+export type RawSessionImportResult = {
   activityInterval: ActivityInterval;
   authorUser: User;
   contentHash: string;
@@ -101,7 +97,7 @@ export interface RawSessionImportResult {
   rawSessionRecord: RawSessionRecord;
   session: Session;
   sourceBinding: SourceBinding;
-}
+};
 
 // operation: "opened" = new interval opened (incl. fresh SessionStart shell);
 //            "settled" = active interval settled (Stop); "settled_opened" = settle old + open new (clear/compact/idle);
@@ -113,7 +109,7 @@ export type LifecycleBoundaryOperation =
   | 'updated'
   | 'unchanged';
 
-export interface LifecycleBoundaryInput {
+export type LifecycleBoundaryInput = {
   activity: {
     hookEventName?: string | undefined;
     sessionStartSource?: string | undefined;
@@ -137,16 +133,16 @@ export interface LifecycleBoundaryInput {
   status?: 'active' | 'completed' | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface LifecycleBoundaryResult {
+export type LifecycleBoundaryResult = {
   activityInterval: ActivityInterval;
   authorUser: User;
   operation: LifecycleBoundaryOperation;
   session: Session;
   sourceBinding: SourceBinding;
   // NOTE: deliberately NO rawSessionRecord field — ADR-0030.
-}
+};
 
 export class RawSessionImportError extends Data.TaggedError('RawSessionImportError')<{
   readonly message: string;
@@ -206,7 +202,9 @@ async function importRawSessionRecordWithConflictRetry(
     try {
       return await importRawSessionRecordUnsafe(service, input);
     } catch (cause) {
-      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) throw cause;
+      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) {
+        throw cause;
+      }
     }
   }
   throw new RawSessionImportError({ message: 'raw session import retry exhausted' });
@@ -493,13 +491,17 @@ async function findCurrentNoopRawSessionImport(
   },
 ): Promise<RawSessionImportResult | undefined> {
   const sourceBinding = await findCurrentRawSessionSourceBinding(tx, input.input);
-  if (sourceBinding === undefined) return undefined;
+  if (sourceBinding === undefined) {
+    return undefined;
+  }
 
   const session = await findSessionWithoutAdoption(tx, {
     input: input.input,
     sourceBindingId: sourceBinding.id,
   });
-  if (session === undefined) return undefined;
+  if (session === undefined) {
+    return undefined;
+  }
 
   const [activeRecord] = await tx
     .select()
@@ -541,7 +543,9 @@ async function findCurrentNoopRawSessionImport(
       workspaceId: input.input.workspaceId,
     })) ?? activityInterval;
   const authorUser = await findCurrentHostUser(tx, input.input);
-  if (authorUser === undefined || session.authorUserId !== authorUser.id) return undefined;
+  if (authorUser === undefined || session.authorUserId !== authorUser.id) {
+    return undefined;
+  }
 
   if (
     session.sourceBindingId !== sourceBinding.id ||
@@ -757,7 +761,9 @@ async function deriveSessionRelationships(
     input: input.input,
   });
 
-  if (input.session.harnessSessionId === null) return input.session;
+  if (input.session.harnessSessionId === null) {
+    return input.session;
+  }
 
   const peerSessions = await tx
     .select()
@@ -770,7 +776,9 @@ async function deriveSessionRelationships(
       ),
     );
   for (const peerSession of peerSessions) {
-    if (peerSession.id === input.session.id) continue;
+    if (peerSession.id === input.session.id) {
+      continue;
+    }
     const parentCandidates = relationshipParentCandidates(peerSession);
     if (
       !parentCandidates.some(
@@ -814,7 +822,9 @@ async function deriveChildRelationshipsForSession(
       input: input.input,
       parentHarnessSessionId: candidate.parentHarnessSessionId,
     });
-    if (parentSession === undefined) continue;
+    if (parentSession === undefined) {
+      continue;
+    }
     desiredRelationships.push({
       parentSession,
       relationshipEvidence: relationshipEvidenceForCandidate(candidate, input.childSession),
@@ -859,7 +869,9 @@ async function findParentSessionForRelationship(
       ),
     )
     .limit(1);
-  if (parentSession === undefined || parentSession.id === input.childSession.id) return undefined;
+  if (parentSession === undefined || parentSession.id === input.childSession.id) {
+    return undefined;
+  }
   return parentSession;
 }
 
@@ -913,7 +925,9 @@ async function insertOrRefreshChildRelationship(
     return;
   }
 
-  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) return;
+  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) {
+    return;
+  }
 
   if (
     existingRelationship.sourceTurnId === sourceTurnId &&
@@ -983,10 +997,14 @@ async function findRelationshipSourceTurnId(
         ),
       )
       .limit(1);
-    if (turn !== undefined) return turn.id;
+    if (turn !== undefined) {
+      return turn.id;
+    }
   }
 
-  if (parentTurnId === undefined) return undefined;
+  if (parentTurnId === undefined) {
+    return undefined;
+  }
   const [codexTurn] = await tx
     .select({ id: sessionTurns.id })
     .from(sessionTurns)
@@ -1001,10 +1019,10 @@ async function findRelationshipSourceTurnId(
   return codexTurn?.id;
 }
 
-interface RelationshipParentCandidate {
+type RelationshipParentCandidate = {
   evidence: Record<string, unknown>;
   parentHarnessSessionId: string;
-}
+};
 
 function relationshipParentCandidates(session: Session): RelationshipParentCandidate[] {
   const metadata = asRecord(session.metadata);
@@ -1080,7 +1098,9 @@ function dedupeRelationshipCandidates(
 ): RelationshipParentCandidate[] {
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
-    if (seen.has(candidate.parentHarnessSessionId)) return false;
+    if (seen.has(candidate.parentHarnessSessionId)) {
+      return false;
+    }
     seen.add(candidate.parentHarnessSessionId);
     return true;
   });
@@ -1256,7 +1276,9 @@ function sessionMetadataBaseForRefresh(input: {
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): Record<string, unknown> {
   const metadata = asRecord(input.existingMetadata);
-  if (input.transcriptNormalization === undefined) return metadata;
+  if (input.transcriptNormalization === undefined) {
+    return metadata;
+  }
 
   const refreshedMetadata = { ...metadata };
   delete refreshedMetadata.parentHarnessSessionId;
@@ -1280,7 +1302,9 @@ async function rawSessionRecordIsCurrent(
       input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
     (input.transcriptNormalization === undefined ||
       jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata));
-  if (!rawRecordCurrent) return false;
+  if (!rawRecordCurrent) {
+    return false;
+  }
 
   if (input.transcriptNormalization !== undefined) {
     return transcriptDerivedRowsAreCurrent(tx, {
@@ -1322,7 +1346,9 @@ async function repairActiveRawSessionRecordDerivedRows(
       input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
     jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata);
 
-  if (derivedRowsCurrent && rawRecordCurrent) return input.existingRecord;
+  if (derivedRowsCurrent && rawRecordCurrent) {
+    return input.existingRecord;
+  }
 
   if (!derivedRowsCurrent) {
     await regenerateDerivedSessionRecords(tx, {
@@ -1374,11 +1400,15 @@ async function transcriptDerivedRowsAreCurrent(
       ),
     )
     .orderBy(sessionTurns.ordinal);
-  if (turnRows.length !== input.transcriptNormalization.turns.length) return false;
+  if (turnRows.length !== input.transcriptNormalization.turns.length) {
+    return false;
+  }
 
   const turnsAreCurrent = input.transcriptNormalization.turns.every((normalizedTurn, turnIndex) => {
     const turn = turnRows[turnIndex];
-    if (turn === undefined) return false;
+    if (turn === undefined) {
+      return false;
+    }
 
     return (
       turn.activityIntervalId === input.activityIntervalId &&
@@ -1400,7 +1430,9 @@ async function transcriptDerivedRowsAreCurrent(
       turn.workspaceId === input.input.workspaceId
     );
   });
-  if (!turnsAreCurrent) return false;
+  if (!turnsAreCurrent) {
+    return false;
+  }
 
   return sessionSegmentsAreCurrent(tx, {
     rawSessionRecordId: input.rawSessionRecordId,
@@ -1409,25 +1441,25 @@ async function transcriptDerivedRowsAreCurrent(
   });
 }
 
-interface NormalizedRawSessionImportInput extends RawSessionImportInput {
+type NormalizedRawSessionImportInput = {
   capturedAt: Date;
   contentBytes: number;
   contentHash: string;
   sourceLocatorHash: string | undefined;
-}
+} & RawSessionImportInput;
 
-interface ActivityIntervalSettlement {
+type ActivityIntervalSettlement = {
   endedAt: Date;
   metadata?: Record<string, unknown> | undefined;
   reason: ActivityIntervalSettlementReason;
   settledAt: Date;
   triggerRawEventId?: string | undefined;
-}
+};
 
-interface ActivityIntervalResolution {
+type ActivityIntervalResolution = {
   activityInterval: ActivityInterval;
   settlement?: ActivityIntervalSettlement | undefined;
-}
+};
 
 function normalizeTranscript(
   input: NormalizedRawSessionImportInput,
@@ -1473,17 +1505,23 @@ function extractTranscriptImportHints(
 
 function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSessionImportInput {
   const workspaceId = input.workspaceId.trim();
-  if (workspaceId === '') throw new RawSessionImportError({ message: 'workspaceId is required' });
+  if (workspaceId === '') {
+    throw new RawSessionImportError({ message: 'workspaceId is required' });
+  }
   const hostId = input.host.id.trim();
-  if (hostId === '') throw new RawSessionImportError({ message: 'host.id is required' });
+  if (hostId === '') {
+    throw new RawSessionImportError({ message: 'host.id is required' });
+  }
   const authorHandle = input.author.handle.trim();
-  if (authorHandle === '')
+  if (authorHandle === '') {
     throw new RawSessionImportError({ message: 'author.handle is required' });
+  }
   const triggerId = input.activity.settlementTriggerRawEventId.trim();
-  if (triggerId === '')
+  if (triggerId === '') {
     throw new RawSessionImportError({
       message: 'activity.settlementTriggerRawEventId is required',
     });
+  }
 
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
@@ -1523,7 +1561,9 @@ async function findLifecycleNoop(
   input: { input: NormalizedRawSessionImportInput; session: Session },
 ): Promise<ActivityInterval | undefined> {
   const trigger = input.input.activity?.settlementTriggerRawEventId;
-  if (trigger === undefined) return undefined;
+  if (trigger === undefined) {
+    return undefined;
+  }
   const [interval] = await tx
     .select()
     .from(activityIntervals)
@@ -1551,10 +1591,11 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     .from(workspaces)
     .where(eq(workspaces.id, input.workspaceId))
     .limit(1);
-  if (workspace === undefined)
+  if (workspace === undefined) {
     throw new RawSessionImportError({
       message: 'workspace binding is required before lifecycle import',
     });
+  }
 
   const now = new Date();
   const authorUser = await upsertHostAuthor(tx, { input, now });
@@ -1688,8 +1729,9 @@ async function applyLifecycleSessionUpdate(
     })
     .where(eq(sessions.id, input.session.id))
     .returning();
-  if (updated === undefined)
+  if (updated === undefined) {
     throw new RawSessionImportError({ message: 'session update returned no row' });
+  }
   return updated;
 }
 
@@ -1768,10 +1810,14 @@ async function findSessionWithoutAdoption(
         ),
       )
       .limit(1);
-    if (session !== undefined) return session;
+    if (session !== undefined) {
+      return session;
+    }
   }
 
-  if (input.input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) {
+    return undefined;
+  }
   const [session] = await tx
     .select()
     .from(sessions)
@@ -1808,10 +1854,14 @@ async function findSession(
         ),
       )
       .limit(1);
-    if (session !== undefined) return session;
+    if (session !== undefined) {
+      return session;
+    }
   }
 
-  if (input.input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) {
+    return undefined;
+  }
   const [session] = await tx
     .select()
     .from(sessions)
@@ -1915,7 +1965,9 @@ async function insertSession(
             where: sql`${sessions.harnessSessionId} is not null`,
           })
           .returning();
-  if (insertedSession !== undefined) return insertedSession;
+  if (insertedSession !== undefined) {
+    return insertedSession;
+  }
 
   const session = await findSession(tx, {
     input: input.input,
@@ -2009,7 +2061,9 @@ async function findCurrentRawSessionSourceBinding(
         ),
       )
       .limit(1);
-    if (sourceBinding === undefined) return undefined;
+    if (sourceBinding === undefined) {
+      return undefined;
+    }
     return sourceBinding.displayName === displayName && jsonEqual(sourceBinding.config, config)
       ? sourceBinding
       : undefined;
@@ -2026,7 +2080,9 @@ async function findCurrentRawSessionSourceBinding(
       ),
     )
     .limit(1);
-  if (sourceBinding === undefined) return undefined;
+  if (sourceBinding === undefined) {
+    return undefined;
+  }
   return sourceBinding.enabled &&
     sourceBinding.displayName === displayName &&
     jsonEqual(sourceBinding.config, config)
@@ -2166,7 +2222,9 @@ function activityIntervalBoundaryRequiredForExistingRawSessionRecord(input: {
   session: Session;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): boolean {
-  if (input.activityInterval.status !== 'active') return false;
+  if (input.activityInterval.status !== 'active') {
+    return false;
+  }
 
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
@@ -2191,14 +2249,18 @@ function repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRe
   input: NormalizedRawSessionImportInput;
   session: Session;
 }): boolean {
-  if (input.activityInterval.status !== 'active') return false;
+  if (input.activityInterval.status !== 'active') {
+    return false;
+  }
   if (input.activityInterval.startedAt.getTime() !== input.input.capturedAt.getTime()) {
     return false;
   }
 
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
-  if (hookEventName === 'Stop') return false;
+  if (hookEventName === 'Stop') {
+    return false;
+  }
 
   if (
     hookEventName === 'SessionStart' &&
@@ -2241,7 +2303,9 @@ async function insertActivityInterval(
       target: [activityIntervals.sessionId, activityIntervals.ordinal],
     })
     .returning();
-  if (interval !== undefined) return interval;
+  if (interval !== undefined) {
+    return interval;
+  }
 
   const [existingInterval] = await tx
     .select()
@@ -2378,9 +2442,13 @@ function idleTimeoutSettlement(input: {
   observedStart: Date;
   triggerRawEventId?: string | undefined;
 }): ActivityIntervalSettlement | undefined {
-  if (input.lastActivityAt === null) return undefined;
+  if (input.lastActivityAt === null) {
+    return undefined;
+  }
   const idleMs = input.observedStart.getTime() - input.lastActivityAt.getTime();
-  if (idleMs <= ACTIVITY_IDLE_TIMEOUT_MS) return undefined;
+  if (idleMs <= ACTIVITY_IDLE_TIMEOUT_MS) {
+    return undefined;
+  }
   const endedAt = new Date(input.lastActivityAt.getTime() + ACTIVITY_IDLE_TIMEOUT_MS);
   return {
     endedAt,
@@ -2399,8 +2467,12 @@ function settlementForExistingRawSessionRecord(input: {
   now: Date;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): ActivityIntervalSettlement | undefined {
-  if (input.activityInterval.status !== 'active') return undefined;
-  if (cleanOptional(input.input.activity?.hookEventName) !== 'Stop') return undefined;
+  if (input.activityInterval.status !== 'active') {
+    return undefined;
+  }
+  if (cleanOptional(input.input.activity?.hookEventName) !== 'Stop') {
+    return undefined;
+  }
   return {
     endedAt:
       input.transcriptNormalization?.session.lastActivityAt ??
@@ -2439,8 +2511,12 @@ function assertExpectedActiveRawSessionRecord(
   const expectedActiveRawSessionRecordId = cleanOptional(
     input.rawRecord?.expectedActiveRawSessionRecordId,
   );
-  if (expectedActiveRawSessionRecordId === undefined) return;
-  if (activeRecord?.id === expectedActiveRawSessionRecordId) return;
+  if (expectedActiveRawSessionRecordId === undefined) {
+    return;
+  }
+  if (activeRecord?.id === expectedActiveRawSessionRecordId) {
+    return;
+  }
   throw new RawSessionImportError({
     message: 'active raw session record changed during import',
   });
@@ -2509,7 +2585,9 @@ async function regenerateDerivedSessionRecords(
   }
 
   const searchText = deriveSearchText(input.input);
-  if (searchText === '') return;
+  if (searchText === '') {
+    return;
+  }
 
   const [turn] = await tx
     .insert(sessionTurns)
@@ -2611,9 +2689,13 @@ function parseJsonlBody(rawContent: string): JsonBody[] | undefined {
   const values: JsonBody[] = [];
   for (const line of rawContent.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (trimmed === '') continue;
+    if (trimmed === '') {
+      continue;
+    }
     const parsed = parseJsonBody(trimmed);
-    if (parsed === undefined) return undefined;
+    if (parsed === undefined) {
+      return undefined;
+    }
     values.push(parsed);
   }
   return values;
@@ -2621,7 +2703,9 @@ function parseJsonlBody(rawContent: string): JsonBody[] | undefined {
 
 function deriveSearchText(input: NormalizedRawSessionImportInput): string {
   const normalized = input.rawContent.replaceAll(/\s+/g, ' ').trim();
-  if (normalized.length <= 4000) return normalized;
+  if (normalized.length <= 4000) {
+    return normalized;
+  }
   return normalized.slice(0, 4000);
 }
 
@@ -2697,7 +2781,9 @@ async function findCurrentHostUser(
       ),
     )
     .limit(1);
-  if (user === undefined) return undefined;
+  if (user === undefined) {
+    return undefined;
+  }
 
   const metadata = compactRecord({
     hostId: input.host.id,
@@ -2743,11 +2829,15 @@ function optionalRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function arrayRecords(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
   const records: Record<string, unknown>[] = [];
   for (const entry of value) {
     const record = optionalRecord(entry);
-    if (record !== undefined) records.push(record);
+    if (record !== undefined) {
+      records.push(record);
+    }
   }
   return records;
 }
@@ -2763,12 +2853,16 @@ function compactRecord(value: Record<string, unknown>): Record<string, unknown> 
 }
 
 function datesEqual(actual: Date | null, expected: Date | undefined): boolean {
-  if (actual === null || expected === undefined) return actual === null && expected === undefined;
+  if (actual === null || expected === undefined) {
+    return actual === null && expected === undefined;
+  }
   return actual.getTime() === expected.getTime();
 }
 
 function nullableDatesEqual(actual: Date | null, expected: Date | null): boolean {
-  if (actual === null || expected === null) return actual === null && expected === null;
+  if (actual === null || expected === null) {
+    return actual === null && expected === null;
+  }
   return actual.getTime() === expected.getTime();
 }
 
@@ -2777,12 +2871,18 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 }
 
 function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value !== 'object' || value === null) return value;
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),
   );
 }
@@ -2797,8 +2897,12 @@ function isRetryableImportConflict(cause: unknown): boolean {
   }
 
   const conflict = asRecord(cause);
-  if (conflict.code === '40001' || conflict.code === '40P01') return true;
-  if (conflict.code !== '23505') return false;
+  if (conflict.code === '40001' || conflict.code === '40P01') {
+    return true;
+  }
+  if (conflict.code !== '23505') {
+    return false;
+  }
 
   return (
     conflict.constraint === 'activity_intervals_session_ordinal_unique' ||

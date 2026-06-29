@@ -15,8 +15,8 @@ import {
   listHarnessActivationRawEvents,
   makeDatabase,
   registerSourceBinding,
-  type RawEvent,
 } from '@saga/db';
+import type { RawEvent } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
@@ -25,10 +25,11 @@ import {
   findProjectRoot,
   readBindingFile,
   writeBindingFile,
-  type WorkspaceBindingFile,
 } from './init.js';
+import type { WorkspaceBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 
 export type HarnessTarget = 'codex' | 'claude';
 export type HookCoverage = 'complete' | 'partial' | 'none';
@@ -51,7 +52,7 @@ export type HarnessActivationState =
   | 'stale'
   | 'unavailable';
 
-export interface HarnessActivationStatus {
+export type HarnessActivationStatus = {
   checkedAt: string;
   detail: string;
   lastEvent?: {
@@ -65,9 +66,9 @@ export interface HarnessActivationStatus {
     unproven: readonly string[];
   };
   state: HarnessActivationState;
-}
+};
 
-export interface HarnessStatus {
+export type HarnessStatus = {
   activation: HarnessActivationStatus;
   binding: 'installed' | 'missing';
   displayName: string;
@@ -85,13 +86,13 @@ export interface HarnessStatus {
   sessionStartDetail: string;
   skills: 'deferred';
   target: HarnessTarget;
-}
+};
 
 export type CodexHarnessStatus = HarnessStatus & { target: 'codex' };
 
 type HarnessSourceUri = `codex://host/${string}` | `claude://host/${string}`;
 
-export interface HarnessAdapter {
+export type HarnessAdapter = {
   displayName: string;
   gitignoreEntries: readonly string[];
   hooksPath(projectRoot: string): string;
@@ -102,9 +103,9 @@ export interface HarnessAdapter {
   sourceUri(hostId: string): HarnessSourceUri;
   sourceType: HarnessTarget;
   target: HarnessTarget;
-}
+};
 
-interface HarnessBindingSnapshot {
+type HarnessBindingSnapshot = {
   hookCommand: string;
   hookTrust: string;
   hooksPath: string;
@@ -112,29 +113,29 @@ interface HarnessBindingSnapshot {
   sourceBindingId: string;
   sourceUri: string;
   target: string;
-}
+};
 
-interface HookCommand {
+type HookCommand = {
   command: string;
   statusMessage?: string;
   timeout?: number;
   type: 'command';
-}
+};
 
-interface HookMatcher {
+type HookMatcher = {
   hooks?: HookCommand[];
   matcher?: string;
-}
+};
 
-interface HooksSettingsFile {
+type HooksSettingsFile = {
   hooks?: Record<string, HookMatcher[]>;
-}
+};
 
-interface HooksSettingsParseError {
+type HooksSettingsParseError = {
   message: string;
   path: string;
   target: HarnessTarget;
-}
+};
 
 type HooksSettingsReadResult =
   | { file: HooksSettingsFile; ok: true }
@@ -426,7 +427,9 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
 function validateHarnessBindingSnapshot(
   binding: Partial<HarnessBindingSnapshot> | undefined,
 ): string | undefined {
-  if (binding === undefined) return undefined;
+  if (binding === undefined) {
+    return undefined;
+  }
   const requiredStrings = [
     'hookCommand',
     'hooksPath',
@@ -438,8 +441,12 @@ function validateHarnessBindingSnapshot(
   const invalidField = requiredStrings.find(
     (field) => typeof binding[field] !== 'string' || binding[field].trim() === '',
   );
-  if (invalidField !== undefined) return `${invalidField} must be a non-empty string`;
-  if (binding.hookTrust !== 'requires-review') return 'hookTrust must be requires-review';
+  if (invalidField !== undefined) {
+    return `${invalidField} must be a non-empty string`;
+  }
+  if (binding.hookTrust !== 'requires-review') {
+    return 'hookTrust must be requires-review';
+  }
   return undefined;
 }
 
@@ -494,13 +501,16 @@ function classifyHarnessState(input: {
 }
 
 function activeHooksWithoutBindingDetail(coverage: HookCoverage): string {
-  if (coverage === 'complete') return 'hooks are installed but local binding is missing';
+  if (coverage === 'complete') {
+    return 'hooks are installed but local binding is missing';
+  }
   return 'Saga hooks are partially installed but local binding is missing';
 }
 
 function bindingHookDivergenceDetail(coverage: HookCoverage): string {
-  if (coverage === 'partial')
+  if (coverage === 'partial') {
     return 'local binding exists but Saga hooks are only partially installed';
+  }
   return 'local binding exists but hooks are missing';
 }
 
@@ -509,8 +519,12 @@ function hookTrustDisplay(
   hooksInstalled: boolean,
   state: HarnessIntegrationState,
 ): HarnessStatus['hookTrust'] {
-  if (!hooksInstalled) return 'not installed';
-  if (target === 'codex' && state === 'pending-trust') return 'pending user trust';
+  if (!hooksInstalled) {
+    return 'not installed';
+  }
+  if (target === 'codex' && state === 'pending-trust') {
+    return 'pending user trust';
+  }
   return 'requires review';
 }
 
@@ -670,7 +684,7 @@ function classifyHarnessActivationEvidence(input: {
   const recentWindowMs = input.recentWindowMs ?? ACTIVATION_RECENT_WINDOW_MS;
   const recentWithinHours = Math.round(recentWindowMs / (60 * 60 * 1000));
   const adapter = getHarnessAdapter(input.target);
-  const ordered = [...input.events].sort(
+  const ordered = [...input.events].toSorted(
     (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
   );
   const realHookEvents = ordered.filter((event) => isRealActivationEvent(event, input.target));
@@ -823,7 +837,9 @@ function applyActivationStatus(
 }
 
 function isRealActivationEvent(event: RawEvent, target: HarnessTarget): boolean {
-  if (event.sourceType !== target) return false;
+  if (event.sourceType !== target) {
+    return false;
+  }
   if (
     event.eventType !== `${target}.SessionStart` &&
     event.eventType !== `${target}.UserPromptSubmit`
@@ -841,11 +857,13 @@ function isRealActivationEvent(event: RawEvent, target: HarnessTarget): boolean 
 
 function hasManualSyntheticMarker(value: Record<string, unknown>): boolean {
   const markerKeys = ['manual', 'synthetic', 'isManual', 'isSynthetic', 'sagaManualIngest'];
-  if (markerKeys.some((key) => value[key] === true)) return true;
-  const markerValues = ['manual', 'synthetic'];
+  if (markerKeys.some((key) => value[key] === true)) {
+    return true;
+  }
+  const markerValues = new Set(['manual', 'synthetic']);
   return ['origin', 'source', 'mode', 'captureMode'].some((key) => {
     const marker = stringValue(value[key]);
-    return marker !== undefined && markerValues.includes(marker.toLowerCase());
+    return marker !== undefined && markerValues.has(marker.toLowerCase());
   });
 }
 
@@ -855,7 +873,9 @@ function sessionStartSourcesFor(
 ): readonly string[] {
   const observed = new Set<string>();
   for (const event of events) {
-    if (event.eventType !== `${target}.SessionStart`) continue;
+    if (event.eventType !== `${target}.SessionStart`) {
+      continue;
+    }
     const source =
       stringValue(event.payload.source) ??
       stringValue(event.payload.session_start_source) ??
@@ -907,7 +927,9 @@ function staleHarnessBindingReasons(input: {
   harnessBinding: HarnessBindingSnapshot | undefined;
 }): string[] {
   const binding = input.harnessBinding;
-  if (binding === undefined) return [];
+  if (binding === undefined) {
+    return [];
+  }
 
   const reasons: string[] = [];
   if (binding.target !== input.adapter.target) {
@@ -980,8 +1002,12 @@ function statusesTitle(title: string, status: HarnessStatus): string {
 }
 
 function parseTarget(value: string | undefined): HarnessTarget {
-  if (value === 'codex' || value === 'claude') return value;
-  if (value === undefined) throw new Error('harness target is required');
+  if (value === 'codex' || value === 'claude') {
+    return value;
+  }
+  if (value === undefined) {
+    throw new Error('harness target is required');
+  }
   throw new Error(`unsupported harness target: ${value}`);
 }
 
@@ -1021,7 +1047,9 @@ function registerHarnessSourceBinding(input: {
   hostId: string,
   hostLabel: string,
 ) => Promise<{ id: string }> {
-  if (input.target === 'claude') return input.registerClaudeSource ?? registerClaudeSourceBinding;
+  if (input.target === 'claude') {
+    return input.registerClaudeSource ?? registerClaudeSourceBinding;
+  }
   return input.registerCodexSource ?? registerCodexSourceBinding;
 }
 
@@ -1076,12 +1104,16 @@ async function registerAgentSourceBinding(
 
 function readHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsFile {
   const result = tryReadHooksSettingsFile(path, adapter);
-  if (result.ok) return result.file;
+  if (result.ok) {
+    return result.file;
+  }
   throw new Error(formatHooksSettingsParseError(result.error));
 }
 
 function tryReadHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsReadResult {
-  if (!existsSync(path)) return { file: {}, ok: true };
+  if (!existsSync(path)) {
+    return { file: {}, ok: true };
+  }
   try {
     return { file: parseHooksSettingsFile(JSON.parse(readFileSync(path, 'utf8'))), ok: true };
   } catch (error) {
@@ -1106,7 +1138,9 @@ function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
     throw new Error('expected a JSON object');
   }
 
-  if (value.hooks === undefined) return value as HooksSettingsFile;
+  if (value.hooks === undefined) {
+    return value as HooksSettingsFile;
+  }
   if (!isRecord(value.hooks)) {
     throw new Error('expected hooks to be an object');
   }
@@ -1121,7 +1155,9 @@ function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
         throw new Error(`expected hooks.${event}[${matcherIndex}] to be an object`);
       }
 
-      if (matcher.hooks === undefined) continue;
+      if (matcher.hooks === undefined) {
+        continue;
+      }
       if (!Array.isArray(matcher.hooks)) {
         throw new Error(`expected hooks.${event}[${matcherIndex}].hooks to be an array`);
       }
@@ -1163,9 +1199,11 @@ function writeJsonFile(path: string, value: unknown): void {
 function ensureGitignoreEntry(projectRoot: string, entries: readonly string[]): void {
   const gitignorePath = join(projectRoot, '.gitignore');
   const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
-  const lines = existing.split(/\r?\n/).filter((line) => line.length > 0);
-  const missingEntries = entries.filter((entry) => !lines.includes(entry));
-  if (missingEntries.length === 0) return;
+  const lines = new Set(existing.split(/\r?\n/).filter((line) => line.length > 0));
+  const missingEntries = entries.filter((entry) => !lines.has(entry));
+  if (missingEntries.length === 0) {
+    return;
+  }
 
   const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
   writeFileSync(gitignorePath, `${existing}${prefix}${missingEntries.join('\n')}\n`);
@@ -1261,7 +1299,9 @@ function inspectSessionStartSourceCoverage(
     const hasSagaHook = (matcher.hooks ?? []).some((hook) =>
       isSagaHookCommand(hook, input.hookCommand, input.legacyCommands, input.hookScripts),
     );
-    if (!hasSagaHook) continue;
+    if (!hasSagaHook) {
+      continue;
+    }
 
     for (const source of sourcesCoveredBySessionStartMatcher(matcher.matcher)) {
       coveredSources.add(source);
@@ -1291,7 +1331,9 @@ function inspectSessionStartSourceCoverage(
 }
 
 function sourcesCoveredBySessionStartMatcher(matcher: string | undefined): readonly string[] {
-  if (matcher === undefined || matcher.trim() === '') return SESSION_START_SOURCES;
+  if (matcher === undefined || matcher.trim() === '') {
+    return SESSION_START_SOURCES;
+  }
 
   try {
     const expression = new RegExp(`^(?:${matcher})$`, 'u');
@@ -1314,7 +1356,9 @@ function withoutSagaHooks(
       : [getHarnessAdapter(target).shimScriptName];
   return matchers
     .map((matcher) => {
-      if (matcher.hooks === undefined) return matcher;
+      if (matcher.hooks === undefined) {
+        return matcher;
+      }
       return {
         ...matcher,
         hooks: matcher.hooks.filter(
@@ -1331,7 +1375,9 @@ function isSagaHookCommand(
   legacyCommands: readonly string[],
   hookScripts: readonly string[],
 ): boolean {
-  if (typeof hook.command !== 'string') return false;
+  if (typeof hook.command !== 'string') {
+    return false;
+  }
   return (
     hook.command === hookCommand ||
     hook.command === LEGACY_CODEX_HOOK_COMMAND ||
@@ -1346,7 +1392,7 @@ function isSagaHookCommand(
 }
 
 function quoteShellArg(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 export function relativeHooksPath(projectRoot: string, hooksPath: string): string {

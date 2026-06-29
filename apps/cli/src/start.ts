@@ -1,38 +1,41 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { loadRuntimeConfig, type RuntimeConfig } from '@saga/runtime';
+import { loadRuntimeConfig } from '@saga/runtime';
+import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 import { checkHealth } from './service.js';
 
-export interface SagaStartReport {
+export type SagaStartReport = {
   controlPlaneUrl: string;
   healthUrl: string;
   service: 'already running' | 'started';
-}
+};
 
-export interface StartDependencies {
+export type StartDependencies = {
   checkHealth?: (url: string) => Promise<string>;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   spawnControlPlane?: (input: SpawnControlPlaneInput) => Promise<number>;
   spawnService?: (input: SpawnServiceInput) => ChildProcess;
-}
+};
 
-export interface SpawnControlPlaneInput {
+export type SpawnControlPlaneInput = {
   cleanupChildren?: readonly ChildProcess[];
   cwd: string;
   env: NodeJS.ProcessEnv;
-}
+};
 
-export interface SpawnServiceInput {
+export type SpawnServiceInput = {
   cwd: string;
   env: NodeJS.ProcessEnv;
-}
+};
 
 const CONTROL_PLANE_HOST = '127.0.0.1';
 const CONTROL_PLANE_PORT = 4767;
@@ -78,7 +81,9 @@ export async function runStartCommand(
         config,
         healthUrl,
       });
-      if (startupExitCode !== undefined) return startupExitCode;
+      if (startupExitCode !== undefined) {
+        return startupExitCode;
+      }
     }
 
     const report: SagaStartReport = {
@@ -150,7 +155,7 @@ export function controlPlaneCommand(env: NodeJS.ProcessEnv): { args: string[]; c
 
 export function cliServiceCommand(): { args: string[]; command: string } {
   const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
-  const main = fileURLToPath(new URL('./main.ts', import.meta.url));
+  const main = fileURLToPath(new URL('main.ts', import.meta.url));
   return {
     args: [tsxCli, main, 'service', 'run'],
     command: process.execPath,
@@ -206,7 +211,9 @@ async function waitForServiceHealth(input: {
     });
     return undefined;
   } catch (error) {
-    if (error instanceof StartInterrupted) return error.exitCode;
+    if (error instanceof StartInterrupted) {
+      return error.exitCode;
+    }
     throw error;
   } finally {
     signalCleanup.remove();
@@ -236,7 +243,9 @@ async function pollServiceHealth(input: {
     }
 
     const health = await input.checkHealth(input.healthUrl);
-    if (health.startsWith('ok ')) return;
+    if (health.startsWith('ok ')) {
+      return;
+    }
     await delay(SERVICE_HEALTH_INTERVAL_MS);
   }
 
@@ -255,13 +264,17 @@ export function waitForForegroundChild(
       process.off('SIGTERM', onSignal);
     };
     const settle = (code: number) => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       removeSignalHandlers();
       resolve(code);
     };
     const fail = (error: Error) => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       removeSignalHandlers();
       reject(error);
@@ -323,13 +336,19 @@ function terminateChild(child: ChildProcess): Promise<void> {
 }
 
 function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
   child.kill(signal);
 }
 
 function exitCodeForSignal(signal: NodeJS.Signals): number {
-  if (signal === 'SIGINT') return 130;
-  if (signal === 'SIGTERM') return 143;
+  if (signal === 'SIGINT') {
+    return 130;
+  }
+  if (signal === 'SIGTERM') {
+    return 143;
+  }
   return 128;
 }
 

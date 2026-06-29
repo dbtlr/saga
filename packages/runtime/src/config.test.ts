@@ -24,8 +24,8 @@ describe('parseRuntimeConfig', () => {
       SAGA_LOG_LEVEL: 'debug',
     });
 
-    expect(issues).toEqual([]);
-    expect(config).toEqual({
+    expect(issues).toStrictEqual([]);
+    expect(config).toStrictEqual({
       databaseUrl: 'postgres://localhost/saga',
       environment: 'test',
       logLevel: 'debug',
@@ -45,8 +45,8 @@ describe('parseRuntimeConfig', () => {
       SAGA_SERVICE_PORT: '5000',
     });
 
-    expect(issues).toEqual([]);
-    expect(config.service).toEqual({
+    expect(issues).toStrictEqual([]);
+    expect(config.service).toStrictEqual({
       host: '0.0.0.0',
       port: 5000,
     });
@@ -64,7 +64,7 @@ describe('parseRuntimeConfig', () => {
       OPENAI_API_KEY_FILE: openAiKeyFile,
     });
 
-    expect(issues).toEqual([]);
+    expect(issues).toStrictEqual([]);
     expect(config.databaseUrl).toBe('postgres://file/saga');
     expect(config.secrets.openaiApiKey).toBe('sk-file');
   });
@@ -79,7 +79,7 @@ describe('parseRuntimeConfig', () => {
       DATABASE_URL_FILE: databaseUrlFile,
     });
 
-    expect(issues).toEqual([]);
+    expect(issues).toStrictEqual([]);
     expect(config.databaseUrl).toBe('postgres://direct/saga');
   });
 
@@ -89,7 +89,7 @@ describe('parseRuntimeConfig', () => {
     });
 
     expect(config.secrets.openaiApiKey).toBeUndefined();
-    expect(issues).toEqual([
+    expect(issues).toStrictEqual([
       expect.objectContaining({
         key: 'OPENAI_API_KEY_FILE',
       }),
@@ -106,7 +106,7 @@ describe('parseRuntimeConfig', () => {
     });
 
     expect(config.secrets.openaiApiKey).toBeUndefined();
-    expect(issues).toEqual([
+    expect(issues).toStrictEqual([
       {
         key: 'OPENAI_API_KEY_FILE',
         message: `secret file ${openAiKeyFile} is empty`,
@@ -123,7 +123,7 @@ describe('parseRuntimeConfig', () => {
 
     expect(config.environment).toBe('development');
     expect(config.logLevel).toBe('info');
-    expect(issues).toEqual([
+    expect(issues).toStrictEqual([
       { key: 'SAGA_ENV', message: 'expected one of development, test, production' },
       { key: 'SAGA_LOG_LEVEL', message: 'expected one of debug, info, warn, error' },
       { key: 'SAGA_SERVICE_PORT', message: 'expected an integer from 1 to 65535' },
@@ -138,7 +138,7 @@ describe('redactRuntimeConfig', () => {
       OPENAI_API_KEY: 'sk-test',
     });
 
-    expect(redactRuntimeConfig(config)).toEqual({
+    expect(redactRuntimeConfig(config)).toStrictEqual({
       databaseUrl: '<redacted>',
       environment: 'development',
       logLevel: 'info',
@@ -159,7 +159,7 @@ describe('loadLocalEnv', () => {
     writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\nDATABASE_URL=postgres://env\n');
     writeFileSync(join(cwd, '.env.local'), 'SAGA_LOG_LEVEL=warn\nOPENAI_API_KEY=local\n');
 
-    expect(loadLocalEnv(cwd)).toEqual({
+    expect(loadLocalEnv(cwd)).toStrictEqual({
       DATABASE_URL: 'postgres://env',
       OPENAI_API_KEY: 'local',
       SAGA_LOG_LEVEL: 'warn',
@@ -197,9 +197,9 @@ describe('loadRuntimeConfig', () => {
   });
 });
 
-describe('RuntimeConfigLive', () => {
+describe('runtimeConfigLive', () => {
   test('provides runtime config through an Effect layer', async () => {
-    const program = Effect.gen(function* () {
+    const program = Effect.gen(function* program() {
       return yield* RuntimeConfigTag;
     }).pipe(
       Effect.provide(
@@ -216,8 +216,8 @@ describe('RuntimeConfigLive', () => {
   });
 });
 
-test('ConfigError carries structured issues', () => {
+test('configError carries structured issues', () => {
   const error = new ConfigError({ issues: [{ key: 'SAGA_ENV', message: 'bad' }] });
 
-  expect(error.issues).toEqual([{ key: 'SAGA_ENV', message: 'bad' }]);
+  expect(error.issues).toStrictEqual([{ key: 'SAGA_ENV', message: 'bad' }]);
 });

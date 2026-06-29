@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useRouter } from '@tanstack/react-router';
 import { useServerFn } from '@tanstack/react-start';
-import { useState, useTransition, type FormEvent } from 'react';
+import { useState, useTransition } from 'react';
+import type { FormEvent } from 'react';
 
 import type { ControlPlaneSnapshot } from '../server/control-plane.js';
 import {
@@ -108,7 +109,9 @@ function ClaimReviewItem({
   function runReview(
     action: 'accept' | 'pin' | 'promote' | 'reject' | 'unpin' | 'unwatch' | 'watch',
   ) {
-    if (!canEdit) return;
+    if (!canEdit) {
+      return;
+    }
     startTransition(async () => {
       await review({
         data: {
@@ -191,7 +194,9 @@ function ClaimReviewItem({
 
 function ActiveContextPreview({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
   const context = snapshot.activeContext;
-  if (context === undefined) return null;
+  if (context === undefined) {
+    return null;
+  }
 
   return (
     <div className="context-preview">
@@ -271,7 +276,9 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canEdit) return;
+    if (!canEdit) {
+      return;
+    }
     startTransition(async () => {
       await saveProfile({ data: { displayName, summary } });
       setMessage('Saved');
@@ -359,7 +366,9 @@ function SourceBindingForm({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canEdit) return;
+    if (!canEdit) {
+      return;
+    }
     startTransition(async () => {
       await saveBinding({
         data: {
@@ -439,15 +448,25 @@ function EmptyState({ message }: { message: string }) {
 }
 
 function labelForStatus(status: ControlPlaneSnapshot['status']): string {
-  if (status === 'ready') return 'Ready';
-  if (status === 'unbound') return 'Unbound';
-  if (status === 'misconfigured') return 'Misconfigured';
+  if (status === 'ready') {
+    return 'Ready';
+  }
+  if (status === 'unbound') {
+    return 'Unbound';
+  }
+  if (status === 'misconfigured') {
+    return 'Misconfigured';
+  }
   return 'Offline';
 }
 
 function toneForStatus(status: ControlPlaneSnapshot['status']): 'ok' | 'warn' | 'error' {
-  if (status === 'ready') return 'ok';
-  if (status === 'unbound') return 'warn';
+  if (status === 'ready') {
+    return 'ok';
+  }
+  if (status === 'unbound') {
+    return 'warn';
+  }
   return 'error';
 }
 

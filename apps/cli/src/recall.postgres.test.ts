@@ -45,7 +45,9 @@ describePostgres('recall CLI postgres integration', () => {
   });
 
   test('searches imported session segments and expands a matched segment', async () => {
-    if (projectRoot === undefined) throw new Error('project root was not initialized');
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
     const inputPath = join(projectRoot, 'recall-session.jsonl');
     writeFileSync(
       inputPath,

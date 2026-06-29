@@ -1,22 +1,22 @@
 export const packageName = '@saga/active-context';
 
-export interface ActiveContextClaimInput {
+export type ActiveContextClaimInput = {
   claimKind: string;
   claimKey: string;
   claimText: string;
   confidence: number;
   observedAt: Date | string;
   state: string;
-}
+};
 
-export interface ActiveContextRecentEventInput {
+export type ActiveContextRecentEventInput = {
   eventType: string;
   occurredAt: Date | string;
   sessionId?: string | null | undefined;
   sourceType: string;
-}
+};
 
-export interface ActiveContextIndexEntryInput {
+export type ActiveContextIndexEntryInput = {
   connector: string;
   description?: string | null | undefined;
   externalId: string;
@@ -25,31 +25,31 @@ export interface ActiveContextIndexEntryInput {
   key: string;
   sagaLink: string;
   title: string;
-}
+};
 
-export interface ActiveContextWorkspaceInput {
+export type ActiveContextWorkspaceInput = {
   handle: string;
   id: string;
   profile?: {
     summary?: string | null | undefined;
   };
-}
+};
 
-export interface ActiveContextInput {
+export type ActiveContextInput = {
   claims: readonly ActiveContextClaimInput[];
   contextIndex?: readonly ActiveContextIndexEntryInput[] | undefined;
   generatedAt?: Date | string | undefined;
   recentEvents: readonly ActiveContextRecentEventInput[];
   workspace: ActiveContextWorkspaceInput;
-}
+};
 
-export interface ActiveContextSection {
+export type ActiveContextSection = {
   lines: string[];
   provenance: string[];
   title: string;
-}
+};
 
-export interface ActiveContextDocument {
+export type ActiveContextDocument = {
   generatedAt: string;
   sections: ActiveContextSection[];
   summary: string;
@@ -57,23 +57,23 @@ export interface ActiveContextDocument {
     handle: string;
     id: string;
   };
-}
+};
 
 export function compileActiveContext(input: ActiveContextInput): ActiveContextDocument {
   const generatedAt = toIso(input.generatedAt ?? new Date());
-  const claims = input.claims
-    .filter((claim) => claim.state !== 'rejected' && claim.state !== 'superseded')
-    .slice()
-    .sort(
+  const claims = [
+    ...input.claims.filter((claim) => claim.state !== 'rejected' && claim.state !== 'superseded'),
+  ]
+    .toSorted(
       (left, right) =>
         right.confidence - left.confidence || left.claimText.localeCompare(right.claimText),
     )
     .slice(0, 8);
   const recentEvents = input.recentEvents.slice(0, 5);
-  const contextIndex = (input.contextIndex ?? [])
-    .filter((entry) => entry.includePolicy === 'always')
-    .slice()
-    .sort(
+  const contextIndex = [
+    ...(input.contextIndex ?? []).filter((entry) => entry.includePolicy === 'always'),
+  ]
+    .toSorted(
       (left, right) => right.importance - left.importance || left.title.localeCompare(right.title),
     )
     .slice(0, 6);
@@ -159,9 +159,15 @@ export function renderActiveContextMarkdown(document: ActiveContextDocument): st
 }
 
 function claimLabel(claim: ActiveContextClaimInput): string {
-  if (claim.state === 'supported') return '[supported]';
-  if (claim.state === 'contradicted') return '[contradicted]';
-  if (claim.state === 'decayed') return '[decayed]';
+  if (claim.state === 'supported') {
+    return '[supported]';
+  }
+  if (claim.state === 'contradicted') {
+    return '[contradicted]';
+  }
+  if (claim.state === 'decayed') {
+    return '[decayed]';
+  }
   return `[${claim.claimKind}]`;
 }
 

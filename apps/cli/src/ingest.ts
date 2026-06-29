@@ -4,13 +4,12 @@ import { extname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { extractCandidateClaimsFromRawEvents } from '@saga/claims';
-import {
-  rawEventFromClaudeHook,
-  rawEventFromCodexHook,
-  type ClaudeHookInput,
-  type CodexHookInput,
-  type HarnessHookInput,
-  type HarnessSource,
+import { rawEventFromClaudeHook, rawEventFromCodexHook } from '@saga/collectors';
+import type {
+  ClaudeHookInput,
+  CodexHookInput,
+  HarnessHookInput,
+  HarnessSource,
 } from '@saga/collectors';
 import {
   insertExtractedCandidateClaims,
@@ -19,21 +18,25 @@ import {
   importRawSessionRecord,
   listRecentRawEvents,
   makeDatabase,
-  type ClaimProjectionResult,
-  type LifecycleBoundaryInput,
-  type LifecycleBoundaryOperation,
-  type RawEvent,
-  type RawSessionContentType,
-  type RawSessionImportInput,
+} from '@saga/db';
+import type {
+  ClaimProjectionResult,
+  LifecycleBoundaryInput,
+  LifecycleBoundaryOperation,
+  RawEvent,
+  RawSessionContentType,
+  RawSessionImportInput,
 } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
-import { findProjectRoot, readBindingFile, type WorkspaceBindingFileWithHost } from './init.js';
+import { findProjectRoot, readBindingFile } from './init.js';
+import type { WorkspaceBindingFileWithHost } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 
-export interface HookIngestResult {
+export type HookIngestResult = {
   accepted: boolean;
   error?: string | undefined;
   eventId?: string | undefined;
@@ -42,22 +45,22 @@ export interface HookIngestResult {
   rawSessionImport?: 'inserted' | 'skipped' | 'unchanged' | undefined;
   rawSessionRecordId?: string | undefined;
   source: HarnessSource;
-}
+};
 
 export type CodexHookIngestResult = HookIngestResult & { source: 'codex' };
 export type ClaudeHookIngestResult = HookIngestResult & { source: 'claude' };
 
-export interface IngestHookOptions {
+export type IngestHookOptions = {
   capture?: ((input: HarnessHookInput) => Promise<HookIngestResult>) | undefined;
   inputPath?: string | undefined;
   stdin?: string | undefined;
-}
+};
 
-export interface ClaimIngestResult {
+export type ClaimIngestResult = {
   candidates: number;
   projected: number;
   rawEvents: number;
-}
+};
 
 export async function runIngestCommand(
   args: readonly string[],
@@ -370,11 +373,15 @@ function buildAmbientRawSessionImportInput(input: {
     input.hookInput.transcript_path.trim() !== ''
       ? input.hookInput.transcript_path
       : undefined;
-  if (transcriptPath === undefined) return undefined;
+  if (transcriptPath === undefined) {
+    return undefined;
+  }
   const resolvedTranscriptPath = isAbsolute(transcriptPath)
     ? transcriptPath
     : resolve(input.hookCwd ?? input.projectRoot, transcriptPath);
-  if (!existsSync(resolvedTranscriptPath)) return undefined;
+  if (!existsSync(resolvedTranscriptPath)) {
+    return undefined;
+  }
 
   const rawContent = readFileSync(resolvedTranscriptPath, 'utf8');
   const hookEventName =
@@ -476,11 +483,17 @@ function boundedErrorMessage(error: unknown): string {
 
 function inferSessionContentType(path: string, rawContent: string): RawSessionContentType {
   const extension = extname(path).toLowerCase();
-  if (extension === '.json') return 'json';
-  if (extension === '.jsonl' || extension === '.ndjson') return 'jsonl';
+  if (extension === '.json') {
+    return 'json';
+  }
+  if (extension === '.jsonl' || extension === '.ndjson') {
+    return 'jsonl';
+  }
 
   const trimmed = rawContent.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return 'json';
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return 'json';
+  }
   if (trimmed.split(/\r?\n/u).every((line) => line.trim() === '' || line.trim().startsWith('{'))) {
     return 'jsonl';
   }
@@ -522,7 +535,9 @@ function renderClaimIngest(
 
 function parseHookInput(stdin: string): HarnessHookInput {
   const trimmed = stdin.trim();
-  if (trimmed === '') return {};
+  if (trimmed === '') {
+    return {};
+  }
   const parsed = JSON.parse(trimmed) as unknown;
   return isRecord(parsed) ? parsed : { payload: parsed };
 }
@@ -538,7 +553,9 @@ function markManualHookInput(source: HarnessSource, input: HarnessHookInput): Ha
 }
 
 async function readHookInput(input: IngestHookOptions): Promise<string> {
-  if (input.stdin !== undefined) return input.stdin;
+  if (input.stdin !== undefined) {
+    return input.stdin;
+  }
   if (input.inputPath !== undefined && input.inputPath !== '-') {
     if (!existsSync(input.inputPath)) {
       throw new Error(`input file not found: ${input.inputPath}`);
@@ -549,12 +566,16 @@ async function readHookInput(input: IngestHookOptions): Promise<string> {
 }
 
 function sourceDisplayName(source: HarnessSource): string {
-  if (source === 'claude') return 'Claude Code';
+  if (source === 'claude') {
+    return 'Claude Code';
+  }
   return 'Codex';
 }
 
 function parseLimit(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const limit = Number.parseInt(value, 10);
   if (!Number.isInteger(limit) || limit < 1 || String(limit) !== value) {
     throw new Error(`invalid raw event limit: ${value}`);

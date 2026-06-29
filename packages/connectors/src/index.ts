@@ -3,29 +3,29 @@ import { fileURLToPath } from 'node:url';
 
 export const packageName = '@saga/connectors';
 
-export interface ConnectorSourceBinding {
+export type ConnectorSourceBinding = {
   config?: Record<string, unknown> | undefined;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface ConnectorReference {
+export type ConnectorReference = {
   connector: string;
   externalId: string;
   sourceBindingId: string;
   title?: string | undefined;
   url?: string | undefined;
-}
+};
 
-export interface SagaLinkIndexReference {
+export type SagaLinkIndexReference = {
   connector: string;
   externalId: string;
   sagaLink: string;
   sourceBindingId: string;
-}
+};
 
-export interface ConnectorRetrievalResult {
+export type ConnectorRetrievalResult = {
   content?: string | undefined;
   evidence?: Record<string, unknown> | undefined;
   provenance?: Record<string, unknown> | undefined;
@@ -39,57 +39,57 @@ export interface ConnectorRetrievalResult {
     sourceUri: string;
     url?: string | undefined;
   };
-}
+};
 
-export interface SagaLinkedReference extends ConnectorReference {
+export type SagaLinkedReference = {
   originalUrl?: string | undefined;
   sagaLink?: string | undefined;
   url?: string | undefined;
-}
+} & ConnectorReference;
 
-export interface SagaLinkedRetrievalResult extends Omit<ConnectorRetrievalResult, 'references'> {
+export type SagaLinkedRetrievalResult = {
   references: SagaLinkedReference[];
-}
+} & Omit<ConnectorRetrievalResult, 'references'>;
 
-export interface ResolveConnectorInput {
+export type ResolveConnectorInput = {
   externalId: string;
   metadata?: Record<string, unknown> | undefined;
   sourceBinding: ConnectorSourceBinding;
   title?: string | undefined;
-}
+};
 
-export interface ConnectorRetrieveInput extends ResolveConnectorInput {
+export type ConnectorRetrieveInput = {
   target: NonNullable<ConnectorRetrievalResult['target']>;
-}
+} & ResolveConnectorInput;
 
-export interface ConnectorRetrievedRecord {
+export type ConnectorRetrievedRecord = {
   content: string;
   evidence?: Record<string, unknown> | undefined;
   references?: readonly ConnectorReference[] | undefined;
-}
+};
 
-export interface ConnectorClient {
+export type ConnectorClient = {
   retrieve: (input: ConnectorRetrieveInput) => Promise<ConnectorRetrievedRecord>;
-}
+};
 
-export interface ConnectorClients {
+export type ConnectorClients = {
   document?: ConnectorClient | undefined;
   github?: ConnectorClient | undefined;
   mimir?: ConnectorClient | undefined;
   norn?: ConnectorClient | undefined;
-}
+};
 
-export interface ResolveConnectorContext {
+export type ResolveConnectorContext = {
   clients?: ConnectorClients | undefined;
-}
+};
 
-export interface ConnectorAdapter {
+export type ConnectorAdapter = {
   resolve: (
     input: ResolveConnectorInput,
     context: ResolveConnectorContext,
   ) => Promise<ConnectorRetrievalResult>;
   sourceTypes: readonly string[];
-}
+};
 
 export const CONNECTOR_ADAPTERS = [
   createGitHubConnector(),
@@ -129,7 +129,9 @@ export function rewriteConnectorReferencesToSagaLinks(
     const sagaLink = sagaLinks.get(
       connectorReferenceKey(reference.sourceBindingId, reference.externalId),
     );
-    if (sagaLink === undefined) return { ...reference };
+    if (sagaLink === undefined) {
+      return { ...reference };
+    }
 
     return {
       ...reference,
@@ -295,7 +297,9 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
   const configured = readString(
     sourceBinding.config?.repositoryFullName ?? sourceBinding.config?.repository,
   );
-  if (configured !== undefined) return validateGitHubRepository(configured);
+  if (configured !== undefined) {
+    return validateGitHubRepository(configured);
+  }
 
   if (sourceBinding.sourceUri.startsWith('github://')) {
     return validateGitHubRepository(
@@ -304,7 +308,9 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
   }
 
   const match = /^https:\/\/github\.com\/([^/]+\/[^/#?]+)/u.exec(sourceBinding.sourceUri);
-  if (match?.[1] !== undefined) return validateGitHubRepository(match[1]);
+  if (match?.[1] !== undefined) {
+    return validateGitHubRepository(match[1]);
+  }
 
   throw new Error(
     'GitHub connector requires repositoryFullName, repository, or github://owner/repo sourceUri',
@@ -312,7 +318,9 @@ function readRepository(sourceBinding: ConnectorSourceBinding): string {
 }
 
 function validateGitHubRepository(repository: string): string {
-  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) return repository;
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
+    return repository;
+  }
   throw new Error(`invalid GitHub repository: ${repository}`);
 }
 
@@ -331,17 +339,29 @@ function parseGitHubExternalId(externalId: string): { id: string; kind: string }
 
 function githubWebUrl(repository: string, target: { id: string; kind: string }): string {
   const base = `https://github.com/${repository}`;
-  if (target.kind === 'pr') return `${base}/pull/${target.id}`;
-  if (target.kind === 'issue') return `${base}/issues/${target.id}`;
-  if (target.kind === 'commit') return `${base}/commit/${target.id}`;
+  if (target.kind === 'pr') {
+    return `${base}/pull/${target.id}`;
+  }
+  if (target.kind === 'issue') {
+    return `${base}/issues/${target.id}`;
+  }
+  if (target.kind === 'commit') {
+    return `${base}/commit/${target.id}`;
+  }
   return `${base}/${target.id}`;
 }
 
 function githubApiUrl(repository: string, target: { id: string; kind: string }): string {
   const base = `https://api.github.com/repos/${repository}`;
-  if (target.kind === 'pr') return `${base}/pulls/${target.id}`;
-  if (target.kind === 'issue') return `${base}/issues/${target.id}`;
-  if (target.kind === 'commit') return `${base}/commits/${target.id}`;
+  if (target.kind === 'pr') {
+    return `${base}/pulls/${target.id}`;
+  }
+  if (target.kind === 'issue') {
+    return `${base}/issues/${target.id}`;
+  }
+  if (target.kind === 'commit') {
+    return `${base}/commits/${target.id}`;
+  }
   return base;
 }
 
@@ -359,7 +379,7 @@ function createDefaultGitHubClient(): ConnectorClient {
         throw new Error(`GitHub connector request failed: ${response.status.toString()}`);
       }
 
-      const payload = (await response.json()) as unknown;
+      const payload = await response.json();
       if (!isRecord(payload)) {
         throw new Error('GitHub connector returned a non-object response');
       }
@@ -439,7 +459,9 @@ function githubHeaders(sourceBinding: ConnectorSourceBinding): Headers {
     'user-agent': 'saga',
   });
   const token = readString(sourceBinding.config?.token ?? sourceBinding.config?.authToken);
-  if (token !== undefined) headers.set('authorization', `Bearer ${token}`);
+  if (token !== undefined) {
+    headers.set('authorization', `Bearer ${token}`);
+  }
   return headers;
 }
 
@@ -489,22 +511,26 @@ function encodeDocumentPath(externalId: string): string {
   return segments.map((segment) => encodeURIComponent(segment)).join('/');
 }
 
-function readMetadataReferences(
-  input: Pick<ResolveConnectorInput, 'metadata' | 'sourceBinding'>,
-): Array<{
+function readMetadataReferences(input: Pick<ResolveConnectorInput, 'metadata' | 'sourceBinding'>): {
   connector?: string | undefined;
   externalId: string;
   sourceBindingId?: string | undefined;
   title?: string | undefined;
   url?: string | undefined;
-}> {
+}[] {
   const references = input.metadata?.references;
-  if (!Array.isArray(references)) return [];
+  if (!Array.isArray(references)) {
+    return [];
+  }
 
   return references.flatMap((reference) => {
-    if (!isRecord(reference)) return [];
+    if (!isRecord(reference)) {
+      return [];
+    }
     const externalId = readString(reference.externalId);
-    if (externalId === undefined) return [];
+    if (externalId === undefined) {
+      return [];
+    }
 
     return [
       {

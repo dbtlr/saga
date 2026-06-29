@@ -87,7 +87,7 @@ describe('compileActiveContext', () => {
     });
 
     expect(document.summary).toBe('Active Context for saga');
-    expect(document.sections[0]?.lines).toEqual(['Postgres-backed workspace memory.']);
+    expect(document.sections[0]?.lines).toStrictEqual(['Postgres-backed workspace memory.']);
     expect(document.sections[1]?.lines[0]).toContain('[supported]');
     expect(document.sections[1]?.lines.join('\n')).not.toContain('Ignore this.');
     expect(document.sections[1]?.lines.join('\n')).not.toContain('This was replaced.');

@@ -32,9 +32,9 @@ describe('deriveSessionSegmentsFromTurns', () => {
 
     const segments = deriveSessionSegmentsFromTurns(turns);
 
-    expect(segments.map((segment) => segment.segmentKind)).toEqual(['turn', 'turn']);
-    expect(segments.map((segment) => segment.turnId)).toEqual(turns.map((turn) => turn.id));
-    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual(['turn', 'turn']);
+    expect(segments.map((segment) => segment.turnId)).toStrictEqual(turns.map((turn) => turn.id));
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toStrictEqual([
       undefined,
       undefined,
     ]);
@@ -76,8 +76,8 @@ describe('deriveSessionSegmentsFromTurns', () => {
 
     const segments = deriveSessionSegmentsFromTurns(turns);
 
-    expect(segments.map((segment) => segment.segmentKind)).toEqual(['turn', 'turn', 'turn']);
-    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual(['turn', 'turn', 'turn']);
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toStrictEqual([
       undefined,
       undefined,
       undefined,
@@ -112,8 +112,8 @@ describe('deriveSessionSegmentsFromTurns', () => {
 
     const segments = deriveSessionSegmentsFromTurns(turns);
 
-    expect(segments.map((segment) => segment.segmentKind)).toEqual(['turn', 'turn']);
-    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual(['turn', 'turn']);
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata))).toStrictEqual([
       undefined,
       undefined,
     ]);
@@ -157,13 +157,13 @@ describe('deriveSessionSegmentsFromTurns', () => {
 
     const segments = deriveSessionSegmentsFromTurns(turns);
 
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'tool_group_call',
       'tool_group_call',
       'tool_group_result',
       'tool_group_result',
     ]);
-    expect(segments.map((segment) => metadataToolGroup(segment.metadata)?.callId)).toEqual([
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata)?.callId)).toStrictEqual([
       'call-a',
       'call-b',
       'call-a',
@@ -209,14 +209,14 @@ describe('deriveSessionSegmentsFromTurns', () => {
     const segmentsByTurnId = new Map(segments.map((segment) => [segment.turnId, segment]));
 
     expect(segments).toHaveLength(3);
-    expect(segments.map((segment) => segment.ordinal)).toEqual([0, 1, 2]);
-    expect(segments.map((segment) => segment.turnId)).toEqual(turns.map((turn) => turn.id));
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.ordinal)).toStrictEqual([0, 1, 2]);
+    expect(segments.map((segment) => segment.turnId)).toStrictEqual(turns.map((turn) => turn.id));
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'tool_group_call',
       'turn',
       'tool_group_result',
     ]);
-    expect(segments.map((segment) => metadataToolGroup(segment.metadata)?.callId)).toEqual([
+    expect(segments.map((segment) => metadataToolGroup(segment.metadata)?.callId)).toStrictEqual([
       'call-a',
       undefined,
       'call-a',
@@ -333,7 +333,7 @@ describe('deriveSessionSegmentsFromTurns', () => {
     const segments = deriveSessionSegmentsFromTurns(turns);
 
     expect(segments).toHaveLength(2);
-    expect(segments.map((segment) => segment.segmentKind)).toEqual([
+    expect(segments.map((segment) => segment.segmentKind)).toStrictEqual([
       'tool_group_call',
       'tool_group_skipped',
     ]);
@@ -398,6 +398,8 @@ function metadataToolGroup(metadata: unknown): { callId?: string } | undefined {
     return undefined;
   }
   const toolGroup = metadata.toolGroup;
-  if (toolGroup === null || typeof toolGroup !== 'object') return undefined;
+  if (toolGroup === null || typeof toolGroup !== 'object') {
+    return undefined;
+  }
   return toolGroup;
 }

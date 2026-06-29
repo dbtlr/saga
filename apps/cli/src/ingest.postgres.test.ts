@@ -14,8 +14,8 @@ import {
   sessionTurns,
   sessions,
   sourceBindings,
-  type DatabaseService,
 } from '@saga/db';
+import type { DatabaseService } from '@saga/db';
 import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
@@ -78,7 +78,9 @@ describePostgres('ambient hook ingest postgres integration', () => {
   });
 
   test('skips ambient capture outside an initialized workspace without database writes', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-unbound-'));
     const transcriptPath = join(projectRoot, 'codex-unbound.jsonl');
     writeFileSync(
@@ -114,12 +116,16 @@ describePostgres('ambient hook ingest postgres integration', () => {
   });
 
   test('imports Codex transcript snapshots idempotently through ambient hooks', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-codex-'));
     await initProject({ cwd: projectRoot, handle: 'Ambient Codex' });
     await installHarness({ cwd: projectRoot, target: 'codex' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
     const transcriptPath = join(projectRoot, 'codex-ambient.jsonl');
     writeFileSync(
       transcriptPath,
@@ -204,14 +210,20 @@ describePostgres('ambient hook ingest postgres integration', () => {
   });
 
   test('reports raw-session import failure as captured after raw event insertion', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-stale-source-'));
     await initProject({ cwd: projectRoot, handle: 'Ambient Stale Source' });
     await installHarness({ cwd: projectRoot, target: 'codex' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
     const sourceBindingId = binding.harnesses?.codex?.sourceBindingId;
-    if (sourceBindingId === undefined) throw new Error('codex source binding was not initialized');
+    if (sourceBindingId === undefined) {
+      throw new Error('codex source binding was not initialized');
+    }
 
     await service.db
       .update(sourceBindings)
@@ -256,7 +268,7 @@ describePostgres('ambient hook ingest postgres integration', () => {
       rawSessionImport: 'skipped',
       source: 'codex',
     });
-    expect(result.eventId).toEqual(expect.any(String));
+    expect(result.eventId).toStrictEqual(expect.any(String));
     expect(result.rawSessionRecordId).toBeUndefined();
     expect(result.error).toContain('source binding does not match the requested harness and host');
     expect(result.error?.length).toBeLessThanOrEqual(500);
@@ -269,17 +281,21 @@ describePostgres('ambient hook ingest postgres integration', () => {
       .select()
       .from(rawSessionRecords)
       .where(eq(rawSessionRecords.workspaceId, binding.workspace.id));
-    expect(rawEventRows.map((event) => event.id)).toEqual([result.eventId]);
+    expect(rawEventRows.map((event) => event.id)).toStrictEqual([result.eventId]);
     expect(rawSessionRows).toHaveLength(0);
   });
 
   test('resolves relative transcript paths against the hook cwd', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-relative-'));
     await initProject({ cwd: projectRoot, handle: 'Ambient Relative Path' });
     await installHarness({ cwd: projectRoot, target: 'codex' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
     const transcriptPath = join(projectRoot, 'codex-relative.jsonl');
     writeFileSync(
       transcriptPath,
@@ -332,18 +348,22 @@ describePostgres('ambient hook ingest postgres integration', () => {
       .select()
       .from(sessionSegments)
       .where(eq(sessionSegments.workspaceId, binding.workspace.id));
-    expect(segmentRows.map((segment) => segment.searchText)).toEqual([
+    expect(segmentRows.map((segment) => segment.searchText)).toStrictEqual([
       'Resolve transcript relative to hook cwd.',
     ]);
   });
 
   test('lifecycle boundary: opens session and interval for transcript-less Codex hook', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-codex-lifecycle-'));
     await initProject({ cwd: projectRoot, handle: 'Lifecycle Codex' });
     await installHarness({ cwd: projectRoot, target: 'codex' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
 
     const result = await captureHook('codex', {
       cwd: projectRoot,
@@ -396,12 +416,16 @@ describePostgres('ambient hook ingest postgres integration', () => {
   });
 
   test('lifecycle boundary: opens session and interval for transcript-less Claude hook', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-claude-lifecycle-'));
     await initProject({ cwd: projectRoot, handle: 'Lifecycle Claude' });
     await installHarness({ cwd: projectRoot, target: 'claude' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
 
     const result = await captureHook('claude', {
       cwd: projectRoot,
@@ -454,12 +478,16 @@ describePostgres('ambient hook ingest postgres integration', () => {
   });
 
   test('imports and settles Claude transcript snapshots through ambient Stop hooks', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const projectRoot = mkdtempSync(join(tmpdir(), 'saga-ingest-claude-'));
     await initProject({ cwd: projectRoot, handle: 'Ambient Claude' });
     await installHarness({ cwd: projectRoot, target: 'claude' });
     const binding = readBindingFile(projectRoot);
-    if (binding?.host === undefined) throw new Error('binding host was not initialized');
+    if (binding?.host === undefined) {
+      throw new Error('binding host was not initialized');
+    }
     const transcriptPath = join(projectRoot, 'claude-ambient.jsonl');
     writeFileSync(
       transcriptPath,
@@ -515,7 +543,7 @@ describePostgres('ambient hook ingest postgres integration', () => {
       .select()
       .from(sessionSegments)
       .where(eq(sessionSegments.workspaceId, binding.workspace.id));
-    expect(segmentRows.map((segment) => segment.searchText)).toEqual([
+    expect(segmentRows.map((segment) => segment.searchText)).toStrictEqual([
       'Ambient Claude import sentinel.',
       'Ambient Claude captured.',
     ]);

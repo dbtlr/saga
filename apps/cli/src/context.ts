@@ -5,15 +5,15 @@ import {
   listRecentRawEvents,
   makeDatabase,
   workspaceProfiles,
-  type DatabaseService,
 } from '@saga/db';
+import type { DatabaseService } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 
 import { findProjectRoot, readBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { type RenderOptions } from './render.js';
+import type { RenderOptions } from './render.js';
 
 export async function runContextCommand(
   _args: readonly string[],

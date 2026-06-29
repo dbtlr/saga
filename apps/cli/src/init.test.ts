@@ -38,7 +38,7 @@ describe('writeBindingFile', () => {
     });
 
     expect(bindingPath).toBe(join(projectRoot, BINDING_FILE_NAME));
-    expect(JSON.parse(readFileSync(bindingPath, 'utf8'))).toEqual({
+    expect(JSON.parse(readFileSync(bindingPath, 'utf8'))).toStrictEqual({
       host: expect.objectContaining({
         generatedAt: expect.any(String),
         id: expect.any(String),

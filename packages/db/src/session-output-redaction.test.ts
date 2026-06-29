@@ -10,8 +10,8 @@ describe('session output redaction', () => {
     const redacted = redactAgentFacingSessionText(
       [
         'posix=/Users/Drew Smith/.codex/transcripts/session.jsonl',
-        'windows=C:\\Users\\Drew Smith\\.codex\\transcripts\\session.jsonl',
-        'unc=\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session.jsonl',
+        String.raw`windows=C:\Users\Drew Smith\.codex\transcripts\session.jsonl`,
+        String.raw`unc=\\server\share\Users\drew\.codex\transcripts\session.jsonl`,
         'file=file:///Users/Drew Smith/.codex/transcripts/session.jsonl',
       ].join('\n'),
     );
@@ -21,8 +21,8 @@ describe('session output redaction', () => {
     expect(redacted).toContain('unc=[local-path-redacted]');
     expect(redacted).toContain('file=[local-path-redacted]');
     expect(redacted).not.toContain('/Users/Drew Smith');
-    expect(redacted).not.toContain('C:\\Users\\Drew Smith');
-    expect(redacted).not.toContain('\\\\server\\share');
+    expect(redacted).not.toContain(String.raw`C:\Users\Drew Smith`);
+    expect(redacted).not.toContain(String.raw`\\server\share`);
     expect(redacted).not.toContain('file://');
   });
 
@@ -31,9 +31,9 @@ describe('session output redaction', () => {
       [
         'root=/Users/Drew Smith/Workspaces/saga',
         'spaced project=/Users/Drew Smith/Workspaces/My Project',
-        'win noext=C:\\Users\\Drew Smith\\.codex\\transcripts\\session',
-        'win spaced=C:\\Users\\Drew Smith\\Workspaces\\My Project',
-        'unc noext=\\\\server\\share\\Users\\drew\\.codex\\transcripts\\session',
+        String.raw`win noext=C:\Users\Drew Smith\.codex\transcripts\session`,
+        String.raw`win spaced=C:\Users\Drew Smith\Workspaces\My Project`,
+        String.raw`unc noext=\\server\share\Users\drew\.codex\transcripts\session`,
         'file root=file:///Users/Drew Smith/Workspaces/saga',
         'file spaced=file:///Users/Drew Smith/Workspaces/My Project',
       ].join('\n'),
@@ -47,8 +47,8 @@ describe('session output redaction', () => {
     expect(redacted).toContain('file root=[local-path-redacted]');
     expect(redacted).toContain('file spaced=[local-path-redacted]');
     expect(redacted).not.toContain('/Users/Drew Smith');
-    expect(redacted).not.toContain('C:\\Users\\Drew Smith');
-    expect(redacted).not.toContain('\\\\server\\share');
+    expect(redacted).not.toContain(String.raw`C:\Users\Drew Smith`);
+    expect(redacted).not.toContain(String.raw`\\server\share`);
     expect(redacted).not.toContain('file://');
   });
 
@@ -95,10 +95,10 @@ describe('session output redaction', () => {
     ).toBeNull();
     expect(redactAgentFacingSourceLocator('/Users/Drew Smith/.codex/session.jsonl')).toBeNull();
     expect(
-      redactAgentFacingSourceLocator('C:\\Users\\Drew Smith\\.codex\\session.jsonl'),
+      redactAgentFacingSourceLocator(String.raw`C:\Users\Drew Smith\.codex\session.jsonl`),
     ).toBeNull();
     expect(
-      redactAgentFacingSourceLocator('\\\\server\\share\\Users\\drew\\.codex\\session.jsonl'),
+      redactAgentFacingSourceLocator(String.raw`\\server\share\Users\drew\.codex\session.jsonl`),
     ).toBeNull();
     expect(
       redactAgentFacingSourceLocator(

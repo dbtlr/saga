@@ -10,7 +10,8 @@ import { Effect } from 'effect';
 
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 
 const execFileAsync = promisify(execFile);
 const LAUNCHD_LABEL = 'com.saga.service';
@@ -22,7 +23,7 @@ export type ServiceSupervisorState =
   | 'stopped'
   | 'unavailable';
 
-export interface ServiceStatusReport {
+export type ServiceStatusReport = {
   config: string;
   health: string;
   healthUrl: string;
@@ -30,42 +31,42 @@ export interface ServiceStatusReport {
   process: 'running' | 'not running';
   supervisor: ServiceSupervisorState;
   supervisorDetail: string;
-}
+};
 
-export interface ServiceLifecycleReport {
+export type ServiceLifecycleReport = {
   action: 'install' | 'restart' | 'start' | 'stop' | 'uninstall';
   detail: string;
   label: string;
   plistPath: string;
   state: ServiceSupervisorState;
-}
+};
 
-export interface ServiceSupervisorInspection {
+export type ServiceSupervisorInspection = {
   detail: string;
   logs: string;
   process: 'not running' | 'running';
   state: ServiceSupervisorState;
-}
+};
 
-export interface ServiceSupervisor {
+export type ServiceSupervisor = {
   inspect: () => Promise<ServiceSupervisorInspection>;
   install: () => Promise<ServiceLifecycleReport>;
   restart: () => Promise<ServiceLifecycleReport>;
   start: () => Promise<ServiceLifecycleReport>;
   stop: () => Promise<ServiceLifecycleReport>;
   uninstall: () => Promise<ServiceLifecycleReport>;
-}
+};
 
-export interface ServiceHealthProbeOptions {
+export type ServiceHealthProbeOptions = {
   attempts?: number | undefined;
   intervalMs?: number | undefined;
-}
+};
 
-export interface ServiceCommandDependencies {
+export type ServiceCommandDependencies = {
   healthCheck?: ((url: string) => Promise<string>) | undefined;
   healthProbe?: ServiceHealthProbeOptions | undefined;
   supervisor?: ServiceSupervisor | undefined;
-}
+};
 
 export async function runServiceCommand(
   args: readonly string[],
@@ -190,7 +191,9 @@ async function observeLifecycleHealth(
   report: ServiceLifecycleReport,
   dependencies: ServiceCommandDependencies,
 ): Promise<ServiceLifecycleReport> {
-  if (!shouldVerifyHealth(report)) return report;
+  if (!shouldVerifyHealth(report)) {
+    return report;
+  }
 
   const config = await Effect.runPromise(loadRuntimeConfig());
   const healthUrl = `http://${config.service.host}:${config.service.port}/health`;
@@ -250,7 +253,9 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
   return {
     inspect,
     install: async () => {
-      if (process.platform !== 'darwin') return unavailable('install');
+      if (process.platform !== 'darwin') {
+        return unavailable('install');
+      }
       ensureLaunchdDirectories(paths);
       writeFileSync(paths.plistPath, renderLaunchdPlist({ paths, projectRoot }), {
         mode: 0o600,
@@ -265,7 +270,9 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     restart: async () => {
-      if (process.platform !== 'darwin') return unavailable('restart');
+      if (process.platform !== 'darwin') {
+        return unavailable('restart');
+      }
       await launchctl([
         'kickstart',
         '-k',
@@ -280,7 +287,9 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     start: async () => {
-      if (process.platform !== 'darwin') return unavailable('start');
+      if (process.platform !== 'darwin') {
+        return unavailable('start');
+      }
       await launchctl(['kickstart', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
       return {
         action: 'start',
@@ -291,7 +300,9 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     stop: async () => {
-      if (process.platform !== 'darwin') return unavailable('stop');
+      if (process.platform !== 'darwin') {
+        return unavailable('stop');
+      }
       await launchctl(['kill', 'TERM', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
       return {
         action: 'stop',
@@ -302,7 +313,9 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
       };
     },
     uninstall: async () => {
-      if (process.platform !== 'darwin') return unavailable('uninstall');
+      if (process.platform !== 'darwin') {
+        return unavailable('uninstall');
+      }
       await launchctl([
         'bootout',
         `gui/${String(process.getuid?.() ?? '')}`,
@@ -457,7 +470,9 @@ function escapePlist(value: string): string {
 export async function checkHealth(url: string): Promise<string> {
   try {
     const response = await fetch(url);
-    if (!response.ok) return `unhealthy (${String(response.status)})`;
+    if (!response.ok) {
+      return `unhealthy (${String(response.status)})`;
+    }
     const payload = (await response.json()) as { ok?: unknown };
     return payload.ok === true ? `ok (${url})` : `unexpected response (${url})`;
   } catch (error) {
@@ -477,7 +492,9 @@ export async function waitForServiceHealth(
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     last = await healthCheck(url);
-    if (last.startsWith('ok ')) return last;
+    if (last.startsWith('ok ')) {
+      return last;
+    }
     if (attempt < attempts - 1) {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }

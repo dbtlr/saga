@@ -2,34 +2,35 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from '@saga/db';
-import {
-  inspectEmbeddingWorkflow,
-  loadRuntimeConfig,
-  type CodexAuthResolutionOptions,
-  type EmbeddingPolicyResolutionOptions,
-  type EmbeddingWorkflowBoundary,
+import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
+import type { DatabaseService } from '@saga/db';
+import { inspectEmbeddingWorkflow, loadRuntimeConfig } from '@saga/runtime';
+import type {
+  CodexAuthResolutionOptions,
+  EmbeddingPolicyResolutionOptions,
+  EmbeddingWorkflowBoundary,
 } from '@saga/runtime';
 import { Effect } from 'effect';
 
-import {
-  inspectHarnessesWithActivation,
-  type HarnessActivationState,
-  type HarnessActivationVerifier,
-  type HarnessIntegrationState,
+import { inspectHarnessesWithActivation } from './harness.js';
+import type {
+  HarnessActivationState,
+  HarnessActivationVerifier,
+  HarnessIntegrationState,
 } from './harness.js';
 import { bindingPathFor, findProjectRoot, readBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, type RenderOptions } from './render.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 import { inspectServiceStatus } from './service.js';
 
 export type DoctorStatus = 'ok' | 'warn' | 'fail';
 
-export interface DoctorCheck {
+export type DoctorCheck = {
   detail: string;
   label: string;
   status: DoctorStatus;
-}
+};
 
 export async function runDoctor(_args: readonly string[], options: RenderOptions): Promise<string> {
   const checks = await doctorProject();
@@ -162,19 +163,31 @@ function satisfiesVersionConstraint(version: string, constraint: string): boolea
   }
 
   const match = /^(>=|>|<=|<|=)?(.+)$/u.exec(constraint);
-  if (match === null) return false;
+  if (match === null) {
+    return false;
+  }
   const operator = match[1] ?? '=';
   const comparison = compareVersion(parseVersion(version), parseVersion(match[2] ?? ''));
-  if (operator === '>=') return comparison >= 0;
-  if (operator === '>') return comparison > 0;
-  if (operator === '<=') return comparison <= 0;
-  if (operator === '<') return comparison < 0;
+  if (operator === '>=') {
+    return comparison >= 0;
+  }
+  if (operator === '>') {
+    return comparison > 0;
+  }
+  if (operator === '<=') {
+    return comparison <= 0;
+  }
+  if (operator === '<') {
+    return comparison < 0;
+  }
   return comparison === 0;
 }
 
 function parseVersion(value: string): { major: number; minor: number; patch: number } {
   const match = /^v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?/u.exec(value.trim());
-  if (match === null) return { major: 0, minor: 0, patch: 0 };
+  if (match === null) {
+    return { major: 0, minor: 0, patch: 0 };
+  }
   return {
     major: Number.parseInt(match[1] ?? '0', 10),
     minor: Number.parseInt(match[2] ?? '0', 10),
@@ -311,12 +324,15 @@ function checkEmbeddings(
 function renderEmbeddingWorkflow(workflow: EmbeddingWorkflowBoundary): string {
   const provider = `${workflow.provider.id}/${workflow.provider.model} (${String(workflow.provider.dimensions)} dimensions)`;
   switch (workflow.mode) {
-    case 'vector-aware':
+    case 'vector-aware': {
       return `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
-    case 'lexical-only-by-policy':
+    }
+    case 'lexical-only-by-policy': {
       return `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`;
-    case 'lexical-fallback':
+    }
+    case 'lexical-fallback': {
       return `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
+    }
   }
 }
 
@@ -362,14 +378,24 @@ function harnessDoctorStatus(
   state: HarnessIntegrationState,
   _activation: HarnessActivationState,
 ): DoctorStatus {
-  if (state === 'configured') return 'ok';
-  if (state === 'divergent' || state === 'invalid' || state === 'stale') return 'fail';
+  if (state === 'configured') {
+    return 'ok';
+  }
+  if (state === 'divergent' || state === 'invalid' || state === 'stale') {
+    return 'fail';
+  }
   return 'warn';
 }
 
 function statusToken(status: DoctorStatus, options: RenderOptions): string {
-  if (options.ascii) return `[${status}]`;
-  if (status === 'ok') return '✓';
-  if (status === 'warn') return '⚠';
+  if (options.ascii) {
+    return `[${status}]`;
+  }
+  if (status === 'ok') {
+    return '✓';
+  }
+  if (status === 'warn') {
+    return '⚠';
+  }
   return '✗';
 }

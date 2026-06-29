@@ -23,14 +23,14 @@ const RAW_BODY_EXPOSURE_WARNING =
 type JsonRecord = Record<string, unknown>;
 type TimestampValue = Date | string | null;
 
-export interface ListRecentSessionRecordsInput {
+export type ListRecentSessionRecordsInput = {
   activeOnly?: boolean | undefined;
   harness?: string | undefined;
   limit?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface RecentSessionRecord {
+export type RecentSessionRecord = {
   activityInterval: SessionActivityIntervalMetadata | null;
   authorUser: SessionHostUserMetadata;
   counts: {
@@ -42,18 +42,18 @@ export interface RecentSessionRecord {
   rawSessionRecord: SessionRawSessionRecordMetadata;
   session: SessionMetadata;
   sourceBinding: SessionSourceBindingMetadata;
-}
+};
 
-export interface GetSessionDetailInput {
+export type GetSessionDetailInput = {
   id: string;
   includeRawBody?: boolean | undefined;
   maxRawRecords?: number | undefined;
   maxSegmentsPerTurn?: number | undefined;
   maxTurns?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface SessionDetail {
+export type SessionDetail = {
   activeRawSessionRecord: SessionRawSessionRecordMetadata | null;
   activityIntervals: SessionDetailActivityInterval[];
   authorUser: SessionHostUserMetadata;
@@ -72,14 +72,14 @@ export interface SessionDetail {
     segments: boolean;
     turns: boolean;
   };
-}
+};
 
-export interface SessionDetailActivityInterval {
+export type SessionDetailActivityInterval = {
   activityInterval: SessionActivityIntervalMetadata;
   turns: SessionDetailTurn[];
-}
+};
 
-export interface SessionDetailTurn {
+export type SessionDetailTurn = {
   contentParts: unknown[];
   endedAt: Date | null;
   metadata: JsonRecord;
@@ -88,14 +88,14 @@ export interface SessionDetailTurn {
   segments: SessionDetailSegment[];
   startedAt: Date | null;
   turn: SessionTurnMetadata;
-}
+};
 
-export interface SessionDetailSegment extends SessionSegmentMetadata {
+export type SessionDetailSegment = {
   metadata: JsonRecord;
   searchText: string;
-}
+} & SessionSegmentMetadata;
 
-export interface SessionMetadata {
+export type SessionMetadata = {
   endedAt: Date | null;
   harness: string;
   harnessSessionId: string | null;
@@ -110,27 +110,27 @@ export interface SessionMetadata {
   status: string;
   title: string | null;
   workspaceId: string;
-}
+};
 
-export interface SessionHostUserMetadata {
+export type SessionHostUserMetadata = {
   displayName: string | null;
   externalSubject: string | null;
   handle: string;
   id: string;
   identitySource: string;
   metadata: JsonRecord;
-}
+};
 
-export interface SessionSourceBindingMetadata {
+export type SessionSourceBindingMetadata = {
   config: JsonRecord;
   displayName: string | null;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface SessionActivityIntervalMetadata {
+export type SessionActivityIntervalMetadata = {
   endedAt: Date | null;
   id: string;
   metadata: JsonRecord;
@@ -140,9 +140,9 @@ export interface SessionActivityIntervalMetadata {
   settlementReason: string | null;
   startedAt: Date;
   status: string;
-}
+};
 
-export interface SessionRawSessionRecordMetadata {
+export type SessionRawSessionRecordMetadata = {
   bodyJson?: unknown;
   bodyText?: string | null;
   capturedAt: Date;
@@ -160,15 +160,15 @@ export interface SessionRawSessionRecordMetadata {
   sourceLocator: string | null;
   status: string;
   rawBodyExposure?: SessionRawBodyExposureMetadata;
-}
+};
 
-export interface SessionRawBodyExposureMetadata {
+export type SessionRawBodyExposureMetadata = {
   mode: 'raw_forensic';
   requestedBy: 'includeRawBody';
   warning: string;
-}
+};
 
-export interface SessionTurnMetadata {
+export type SessionTurnMetadata = {
   actorKind: string;
   actorLabel: string | null;
   harnessTurnId: string | null;
@@ -176,9 +176,9 @@ export interface SessionTurnMetadata {
   model: string | null;
   ordinal: number;
   role: string;
-}
+};
 
-export interface SessionSegmentMetadata {
+export type SessionSegmentMetadata = {
   charEnd: number | null;
   charStart: number | null;
   id: string;
@@ -187,13 +187,13 @@ export interface SessionSegmentMetadata {
   snippet: string | null;
   tokenEnd: number | null;
   tokenStart: number | null;
-}
+};
 
 export class SessionRecordQueryError extends Data.TaggedError('SessionRecordQueryError')<{
   readonly message: string;
 }> {}
 
-interface RecentSessionRecordRow extends CommonSessionRow {
+type RecentSessionRecordRow = {
   activity_interval_ended_at: TimestampValue;
   activity_interval_id: string | null;
   activity_interval_metadata: JsonRecord | null;
@@ -207,9 +207,9 @@ interface RecentSessionRecordRow extends CommonSessionRow {
   raw_records_count: number | string;
   segments_count: number | string;
   turns_count: number | string;
-}
+} & CommonSessionRow;
 
-interface CommonSessionRow {
+type CommonSessionRow = {
   author_display_name: string | null;
   author_external_subject: string | null;
   author_handle: string;
@@ -252,16 +252,16 @@ interface CommonSessionRow {
   source_binding_id: string;
   source_binding_source_type: string;
   source_binding_source_uri: string;
-}
+};
 
-interface SessionIdentityRow {
+type SessionIdentityRow = {
   selected_raw_record_id: string | null;
   session_id: string;
-}
+};
 
-interface SessionMetadataRow extends CommonSessionRow {}
+type SessionMetadataRow = {} & CommonSessionRow;
 
-interface ActivityIntervalRow {
+type ActivityIntervalRow = {
   activity_interval_ended_at: TimestampValue;
   activity_interval_id: string;
   activity_interval_metadata: JsonRecord;
@@ -271,9 +271,9 @@ interface ActivityIntervalRow {
   activity_interval_settlement_reason: string | null;
   activity_interval_started_at: Date | string;
   activity_interval_status: string;
-}
+};
 
-interface TurnRow extends ActivityIntervalRow {
+type TurnRow = {
   turn_actor_kind: string;
   turn_actor_label: string | null;
   turn_content_parts: unknown[];
@@ -288,9 +288,9 @@ interface TurnRow extends ActivityIntervalRow {
   turn_raw_span: JsonRecord;
   turn_role: string;
   turn_started_at: TimestampValue;
-}
+} & ActivityIntervalRow;
 
-interface SegmentRow {
+type SegmentRow = {
   segment_char_end: number | null;
   segment_char_start: number | null;
   segment_id: string;
@@ -303,7 +303,7 @@ interface SegmentRow {
   segment_token_start: number | null;
   segment_turn_id: string;
   segment_rank: number | string;
-}
+};
 
 export function listRecentSessionRecords(
   service: DatabaseService,
@@ -1020,12 +1020,18 @@ function mapRawSessionRecord(
 }
 
 function normalizeNullableTimestamp(value: TimestampValue, label: string): Date | null {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
   if (value instanceof Date) {
-    if (!Number.isNaN(value.getTime())) return value;
+    if (!Number.isNaN(value.getTime())) {
+      return value;
+    }
   } else if (typeof value === 'string') {
     const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
   }
   throw new SessionRecordQueryError({ message: `${label} must be a valid timestamp` });
 }
@@ -1078,7 +1084,9 @@ function normalizePositiveInt(
   value: number | undefined,
   input: { defaultValue: number; label: string; max: number },
 ): number {
-  if (value === undefined) return input.defaultValue;
+  if (value === undefined) {
+    return input.defaultValue;
+  }
   if (!Number.isInteger(value) || value < 1) {
     throw new SessionRecordQueryError({ message: `${input.label} must be a positive integer` });
   }

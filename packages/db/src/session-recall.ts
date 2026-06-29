@@ -18,7 +18,7 @@ const MAX_CONTEXT_WINDOW_TURNS = 20;
 
 type JsonRecord = Record<string, unknown>;
 
-export interface RecallSearchInput {
+export type RecallSearchInput = {
   activityIntervalId?: string | undefined;
   // EGRESS SEAM: when set, the query text is sent to this provider for a query embedding.
   // @saga/db is policy-agnostic, so callers MUST gate this on installation embedding policy
@@ -34,42 +34,42 @@ export interface RecallSearchInput {
   sessionId?: string | undefined;
   vectorCandidateLimit?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface RecallQueryEmbedding {
+export type RecallQueryEmbedding = {
   dimensions: number;
   model: string;
   provider: string;
   vector: readonly number[];
-}
+};
 
-export interface RecallQueryEmbeddingProvider {
+export type RecallQueryEmbeddingProvider = {
   embedQuery: (input: { query: string }) => Promise<readonly number[]>;
   provider: EmbeddingProviderBoundary;
-}
+};
 
-export interface RecallSearchResult {
+export type RecallSearchResult = {
   intervals: RecallSearchActivityIntervalGroup[];
   matchCount: number;
   query: string;
   searchedAt: string;
   sessions: RecallSearchSessionGroup[];
   workspaceId: string;
-}
+};
 
-export interface RecallSearchSessionGroup {
+export type RecallSearchSessionGroup = {
   activityIntervals: RecallSearchActivityIntervalGroup[];
   matches: RecallSegmentMatch[];
   session: RecallSessionMetadata;
-}
+};
 
-export interface RecallSearchActivityIntervalGroup {
+export type RecallSearchActivityIntervalGroup = {
   activityInterval: RecallActivityIntervalMetadata;
   matches: RecallSegmentMatch[];
   sessionId: string;
-}
+};
 
-export interface RecallSegmentMatch {
+export type RecallSegmentMatch = {
   activityInterval: RecallActivityIntervalMetadata;
   combinedScore: number;
   rawSessionRecord: RecallRawSessionRecordMetadata;
@@ -84,17 +84,17 @@ export interface RecallSegmentMatch {
     vector?: number | undefined;
   };
   turn: RecallTurnPointer;
-}
+};
 
-export interface RecallContextExpansionInput {
+export type RecallContextExpansionInput = {
   afterTurns?: number | undefined;
   beforeTurns?: number | undefined;
   segmentId: string;
   windowTurns?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface RecallContextExpansion {
+export type RecallContextExpansion = {
   activityInterval: RecallActivityIntervalMetadata;
   anchor: RecallContextAnchor;
   afterTurns: number;
@@ -105,14 +105,14 @@ export interface RecallContextExpansion {
   turns: RecallExpandedTurn[];
   windowTurns: number;
   workspaceId: string;
-}
+};
 
-export interface RecallContextAnchor {
+export type RecallContextAnchor = {
   segment: RecallSegmentPointer;
   turn: RecallTurnPointer;
-}
+};
 
-export interface RecallExpandedTurn extends RecallTurnPointer {
+export type RecallExpandedTurn = {
   contentParts: unknown[];
   endedAt: Date | null;
   metadata: JsonRecord;
@@ -120,14 +120,14 @@ export interface RecallExpandedTurn extends RecallTurnPointer {
   rawSpan: JsonRecord;
   segments: RecallExpandedSegment[];
   startedAt: Date | null;
-}
+} & RecallTurnPointer;
 
-export interface RecallExpandedSegment extends RecallSegmentPointer {
+export type RecallExpandedSegment = {
   metadata: JsonRecord;
   searchText: string;
-}
+} & RecallSegmentPointer;
 
-export interface RecallSessionMetadata {
+export type RecallSessionMetadata = {
   authorUser: RecallHostUserMetadata;
   endedAt: Date | null;
   harness: string;
@@ -143,27 +143,27 @@ export interface RecallSessionMetadata {
   status: string;
   title: string | null;
   workspaceId: string;
-}
+};
 
-export interface RecallHostUserMetadata {
+export type RecallHostUserMetadata = {
   displayName: string | null;
   externalSubject: string | null;
   handle: string;
   id: string;
   identitySource: string;
   metadata: JsonRecord;
-}
+};
 
-export interface RecallSourceBindingMetadata {
+export type RecallSourceBindingMetadata = {
   config: JsonRecord;
   displayName: string | null;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface RecallActivityIntervalMetadata {
+export type RecallActivityIntervalMetadata = {
   endedAt: Date | null;
   id: string;
   metadata: JsonRecord;
@@ -173,9 +173,9 @@ export interface RecallActivityIntervalMetadata {
   settlementReason: string | null;
   startedAt: Date;
   status: string;
-}
+};
 
-export interface RecallRawSessionRecordMetadata {
+export type RecallRawSessionRecordMetadata = {
   capturedAt: Date;
   contentHash: string;
   contentType: string;
@@ -188,9 +188,9 @@ export interface RecallRawSessionRecordMetadata {
   snapshotOrdinal: number;
   sourceLocator: string | null;
   status: string;
-}
+};
 
-export interface RecallTurnPointer {
+export type RecallTurnPointer = {
   actorKind: string;
   actorLabel: string | null;
   harnessTurnId: string | null;
@@ -198,9 +198,9 @@ export interface RecallTurnPointer {
   model: string | null;
   ordinal: number;
   role: string;
-}
+};
 
-export interface RecallSegmentPointer {
+export type RecallSegmentPointer = {
   charEnd: number | null;
   charStart: number | null;
   id: string;
@@ -209,13 +209,13 @@ export interface RecallSegmentPointer {
   snippet: string | null;
   tokenEnd: number | null;
   tokenStart: number | null;
-}
+};
 
 export class RecallSearchError extends Data.TaggedError('RecallSearchError')<{
   readonly message: string;
 }> {}
 
-interface RecallSearchRow {
+type RecallSearchRow = {
   activity_interval_ended_at: Date | null;
   activity_interval_id: string;
   activity_interval_metadata: JsonRecord;
@@ -283,9 +283,9 @@ interface RecallSearchRow {
   turn_ordinal: number;
   turn_role: string;
   vector_score: number | string | null;
-}
+};
 
-interface RecallContextRow extends RecallSearchRow {
+type RecallContextRow = {
   expanded_segment_char_end: number | null;
   expanded_segment_char_start: number | null;
   expanded_segment_id: string | null;
@@ -309,15 +309,15 @@ interface RecallContextRow extends RecallSearchRow {
   expanded_turn_raw_span: JsonRecord;
   expanded_turn_role: string;
   expanded_turn_started_at: Date | null;
-}
+} & RecallSearchRow;
 
-interface ResolvedRecallQueryEmbedding {
+type ResolvedRecallQueryEmbedding = {
   candidateLimit: number;
   dimensions: number;
   model: string;
   provider: string;
   vectorLiteral: string;
-}
+};
 
 export function searchSessionRecall(
   service: DatabaseService,
@@ -1238,7 +1238,9 @@ function normalizeQuery(query: string): string {
 }
 
 function normalizeLimit(limit: number | undefined): number {
-  if (limit === undefined) return DEFAULT_LIMIT;
+  if (limit === undefined) {
+    return DEFAULT_LIMIT;
+  }
   if (!Number.isInteger(limit) || limit < 1) {
     throw new RecallSearchError({ message: 'recall limit must be a positive integer' });
   }
@@ -1262,7 +1264,9 @@ function normalizeContextWindow(input: RecallContextExpansionInput): {
 }
 
 function normalizeWindowTurns(windowTurns: number | undefined, label: string): number | undefined {
-  if (windowTurns === undefined) return undefined;
+  if (windowTurns === undefined) {
+    return undefined;
+  }
   if (!Number.isInteger(windowTurns) || windowTurns < 0) {
     throw new RecallSearchError({
       message: `recall context ${label} window must be a non-negative integer`,
@@ -1287,7 +1291,9 @@ async function resolveRecallQueryEmbedding(
     };
   }
 
-  if (input.embeddingProvider === undefined) return undefined;
+  if (input.embeddingProvider === undefined) {
+    return undefined;
+  }
 
   const vector = await input.embeddingProvider.embedQuery({ query });
   validateRecallEmbeddingVector(vector, input.embeddingProvider.provider.dimensions);
@@ -1301,7 +1307,9 @@ async function resolveRecallQueryEmbedding(
 }
 
 function normalizeTrigramScore(score: number | undefined): number {
-  if (score === undefined) return DEFAULT_TRIGRAM_THRESHOLD;
+  if (score === undefined) {
+    return DEFAULT_TRIGRAM_THRESHOLD;
+  }
   if (!Number.isFinite(score) || score < 0 || score > 1) {
     throw new RecallSearchError({ message: 'minimum trigram score must be between 0 and 1' });
   }
@@ -1309,7 +1317,9 @@ function normalizeTrigramScore(score: number | undefined): number {
 }
 
 function normalizeVectorCandidateLimit(limit: number | undefined, searchLimit: number): number {
-  if (limit === undefined) return Math.min(Math.max(searchLimit * 5, searchLimit), 500);
+  if (limit === undefined) {
+    return Math.min(Math.max(searchLimit * 5, searchLimit), 500);
+  }
   if (!Number.isInteger(limit) || limit < 1) {
     throw new RecallSearchError({ message: 'vector candidate limit must be a positive integer' });
   }

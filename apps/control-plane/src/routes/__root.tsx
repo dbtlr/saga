@@ -10,7 +10,7 @@ export const Route = createRootRoute({
       { href: 'data:,', rel: 'icon' },
     ],
     meta: [
-      { charSet: 'utf-8' },
+      { charSet: 'utf8' },
       { content: 'width=device-width, initial-scale=1', name: 'viewport' },
       { title: 'Saga Control Plane' },
     ],

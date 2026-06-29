@@ -11,36 +11,38 @@ import {
   makeDatabase,
   redactAgentFacingSessionValue,
   redactSessionSafety,
-  type DeleteSessionSafetyInput,
-  type DeleteSessionSafetyResult,
-  type GetSessionDetailInput,
-  type ListRecentSessionRecordsInput,
-  type RawSessionContentType,
-  type RawSessionHarness,
-  type RawSessionImportInput,
-  type RawSessionImportResult,
-  type RecentSessionRecord,
-  type RedactSessionSafetyInput,
-  type RedactSessionSafetyResult,
-  type SessionDetail,
-  type SessionDetailSegment,
-  type SessionDetailTurn,
-  type SessionRawSessionRecordMetadata,
-  type SessionRedactionPattern,
+} from '@saga/db';
+import type {
+  DeleteSessionSafetyInput,
+  DeleteSessionSafetyResult,
+  GetSessionDetailInput,
+  ListRecentSessionRecordsInput,
+  RawSessionContentType,
+  RawSessionHarness,
+  RawSessionImportInput,
+  RawSessionImportResult,
+  RecentSessionRecord,
+  RedactSessionSafetyInput,
+  RedactSessionSafetyResult,
+  SessionDetail,
+  SessionDetailSegment,
+  SessionDetailTurn,
+  SessionRawSessionRecordMetadata,
+  SessionRedactionPattern,
 } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import {
-  type WorkspaceBindingFile,
-  type WorkspaceBindingFileWithHost,
   findProjectRoot,
   readBindingFile,
   writeBindingFile,
   ensureLocalHostBinding,
 } from './init.js';
+import type { WorkspaceBindingFile, WorkspaceBindingFileWithHost } from './init.js';
 import { formatCommandOutput } from './output.js';
-import { recordBlock, separator, type RenderOptions } from './render.js';
+import { recordBlock, separator } from './render.js';
+import type { RenderOptions } from './render.js';
 
 const IMPORT_FLAGS_WITH_VALUES = new Set([
   'author',
@@ -77,7 +79,7 @@ const REDACT_FLAGS_WITH_VALUES = new Set([
 ]);
 const REDACT_BOOLEAN_FLAGS = new Set<string>();
 
-export interface SessionsCommandDependencies {
+export type SessionsCommandDependencies = {
   cwd?: string | undefined;
   deleteSession?:
     | ((input: DeleteSessionSafetyInput) => Promise<DeleteSessionSafetyResult>)
@@ -91,7 +93,7 @@ export interface SessionsCommandDependencies {
   redactSession?:
     | ((input: RedactSessionSafetyInput) => Promise<RedactSessionSafetyResult>)
     | undefined;
-}
+};
 
 export async function runSessionsCommand(
   args: readonly string[],
@@ -326,15 +328,15 @@ async function showSession(
   );
 }
 
-interface BoundProject {
+type BoundProject = {
   binding: WorkspaceBindingFile;
   projectRoot: string;
-}
+};
 
-interface BoundProjectWithHost {
+type BoundProjectWithHost = {
   binding: WorkspaceBindingFileWithHost;
   projectRoot: string;
-}
+};
 
 function loadBoundProject(cwd: string | undefined): BoundProject {
   const projectRoot = findProjectRoot(cwd ?? process.cwd());
@@ -699,7 +701,9 @@ function renderRawSessionRecord(
 
 function sessionDetailValue(detail: SessionDetail): unknown {
   const redacted = redactAgentFacingSessionValue(detail);
-  if (!isRecord(redacted)) return redacted;
+  if (!isRecord(redacted)) {
+    return redacted;
+  }
   restoreRawForensicBodies(redacted, detail);
   return redacted;
 }
@@ -718,10 +722,18 @@ function restoreRawRecord(
   redactedRecord: unknown,
   originalRecord: SessionRawSessionRecordMetadata | null | undefined,
 ): void {
-  if (!isRecord(redactedRecord) || originalRecord === null || originalRecord === undefined) return;
-  if (!hasRawBodyExposure(originalRecord)) return;
-  if (Object.hasOwn(originalRecord, 'bodyText')) redactedRecord.bodyText = originalRecord.bodyText;
-  if (Object.hasOwn(originalRecord, 'bodyJson')) redactedRecord.bodyJson = originalRecord.bodyJson;
+  if (!isRecord(redactedRecord) || originalRecord === null || originalRecord === undefined) {
+    return;
+  }
+  if (!hasRawBodyExposure(originalRecord)) {
+    return;
+  }
+  if (Object.hasOwn(originalRecord, 'bodyText')) {
+    redactedRecord.bodyText = originalRecord.bodyText;
+  }
+  if (Object.hasOwn(originalRecord, 'bodyJson')) {
+    redactedRecord.bodyJson = originalRecord.bodyJson;
+  }
 }
 
 function rawBodyExposureWarning(detail: SessionDetail): string | undefined {
@@ -822,12 +834,12 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-interface LocalOptions {
+type LocalOptions = {
   booleans: Set<string>;
   flagValues: Record<string, string[]>;
   flags: Record<string, string>;
   positionals: string[];
-}
+};
 
 function parseLocalOptions(
   args: readonly string[],
@@ -840,7 +852,9 @@ function parseLocalOptions(
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === undefined) continue;
+    if (arg === undefined) {
+      continue;
+    }
     if (arg === '--') {
       positionals.push(...args.slice(index + 1));
       break;
@@ -853,7 +867,9 @@ function parseLocalOptions(
     const [rawName, inlineValue] = arg.slice(2).split('=', 2);
     const name = rawName ?? '';
     if (spec.booleanFlags.has(name)) {
-      if (inlineValue !== undefined) throw new Error(`--${name} does not take a value`);
+      if (inlineValue !== undefined) {
+        throw new Error(`--${name} does not take a value`);
+      }
       booleans.add(name);
       continue;
     }
@@ -862,10 +878,14 @@ function parseLocalOptions(
     }
 
     const value = inlineValue ?? args[index + 1];
-    if (value === undefined) throw new Error(`--${name} expects a value`);
+    if (value === undefined) {
+      throw new Error(`--${name} expects a value`);
+    }
     flags[name] = value;
     flagValues[name] = [...(flagValues[name] ?? []), value];
-    if (inlineValue === undefined) index += 1;
+    if (inlineValue === undefined) {
+      index += 1;
+    }
   }
 
   return { booleans, flagValues, flags, positionals };
@@ -895,30 +915,44 @@ function buildRedactionPatterns(parsed: LocalOptions): SessionRedactionPattern[]
 }
 
 function parseHarness(value: string | undefined): RawSessionHarness {
-  if (value === 'claude' || value === 'codex') return value;
+  if (value === 'claude' || value === 'codex') {
+    return value;
+  }
   throw new Error('sessions import requires --harness claude|codex');
 }
 
 function parseContentType(value: string): RawSessionContentType {
-  if (value === 'json' || value === 'jsonl' || value === 'text') return value;
+  if (value === 'json' || value === 'jsonl' || value === 'text') {
+    return value;
+  }
   throw new Error(`unsupported content type: ${value}`);
 }
 
 function inferContentType(inputPath: string): RawSessionContentType {
   const extension = extname(inputPath).toLowerCase();
-  if (extension === '.jsonl' || extension === '.ndjson') return 'jsonl';
-  if (extension === '.json') return 'json';
+  if (extension === '.jsonl' || extension === '.ndjson') {
+    return 'jsonl';
+  }
+  if (extension === '.json') {
+    return 'json';
+  }
   return 'text';
 }
 
 function parseStatus(value: string | undefined): 'active' | 'completed' | undefined {
-  if (value === undefined) return undefined;
-  if (value === 'active' || value === 'completed') return value;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === 'active' || value === 'completed') {
+    return value;
+  }
   throw new Error(`unsupported session status: ${value}`);
 }
 
 function parseJsonObjectFlag(value: string | undefined, label: string): Record<string, unknown> {
-  if (value === undefined) return {};
+  if (value === undefined) {
+    return {};
+  }
   const parsed = JSON.parse(value) as unknown;
   if (!isRecord(parsed)) {
     throw new Error(`--${label} must be a JSON object`);
@@ -927,7 +961,9 @@ function parseJsonObjectFlag(value: string | undefined, label: string): Record<s
 }
 
 function parsePositiveIntegerFlag(value: string | undefined, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1 || String(parsed) !== value) {
     throw new Error(`--${label} must be a positive integer`);
@@ -953,7 +989,9 @@ function safeCompactJson(value: unknown): string {
 }
 
 function safeString(value: string | null | undefined): string {
-  if (value === null || value === undefined) return 'none';
+  if (value === null || value === undefined) {
+    return 'none';
+  }
   const redacted = redactAgentFacingSessionValue(value);
   return typeof redacted === 'string' ? redacted : 'none';
 }
@@ -968,7 +1006,9 @@ function formatDate(value: Date | null): string {
 }
 
 function formatRange(start: number | null, end: number | null): string {
-  if (start === null && end === null) return 'none';
+  if (start === null && end === null) {
+    return 'none';
+  }
   return `${start === null ? '?' : String(start)}..${end === null ? '?' : String(end)}`;
 }
 
@@ -977,7 +1017,9 @@ function truncateState(value: boolean): string {
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
+  if (value.length <= maxLength) {
+    return value;
+  }
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 

@@ -1,15 +1,10 @@
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import {
-  sourceBindings,
-  workspaceProfiles,
-  workspaces,
-  type SourceBinding,
-  type Workspace,
-} from './schema.js';
+import { sourceBindings, workspaceProfiles, workspaces } from './schema.js';
+import type { SourceBinding, Workspace } from './schema.js';
 
-export interface RegisterWorkspaceInput {
+export type RegisterWorkspaceInput = {
   displayName: string | undefined;
   handle: string;
   source: {
@@ -18,20 +13,20 @@ export interface RegisterWorkspaceInput {
     type: string;
     uri: string;
   };
-}
+};
 
-export interface RegisterWorkspaceResult {
+export type RegisterWorkspaceResult = {
   sourceBinding: SourceBinding;
   workspace: Workspace;
-}
+};
 
-export interface RegisterSourceBindingInput {
+export type RegisterSourceBindingInput = {
   config?: Record<string, unknown>;
   displayName?: string | undefined;
   sourceType: string;
   sourceUri: string;
   workspaceId: string;
-}
+};
 
 export class WorkspaceRegistrationError extends Data.TaggedError('WorkspaceRegistrationError')<{
   readonly message: string;

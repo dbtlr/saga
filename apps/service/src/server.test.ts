@@ -59,7 +59,7 @@ describe('startSagaService', () => {
 
 describe('service entrypoint', () => {
   test('loads runtime config and starts the foreground service', () => {
-    const entrypoint = readFileSync(fileURLToPath(new URL('./main.ts', import.meta.url)), 'utf8');
+    const entrypoint = readFileSync(fileURLToPath(new URL('main.ts', import.meta.url)), 'utf8');
 
     expect(entrypoint).toContain('loadRuntimeConfig');
     expect(entrypoint).toContain('startSagaService');
@@ -67,10 +67,7 @@ describe('service entrypoint', () => {
   });
 
   test('exposes an explicit migration entrypoint', () => {
-    const entrypoint = readFileSync(
-      fileURLToPath(new URL('./migrate.ts', import.meta.url)),
-      'utf8',
-    );
+    const entrypoint = readFileSync(fileURLToPath(new URL('migrate.ts', import.meta.url)), 'utf8');
 
     expect(entrypoint).toContain('loadRuntimeConfig');
     expect(entrypoint).toContain('runMigrationsSafely');

@@ -22,12 +22,8 @@ import {
   resolveSagaLink,
   upsertContextIndexEntry,
 } from './context-index.js';
-import {
-  DEFAULT_MIGRATIONS_FOLDER,
-  makeDatabase,
-  runMigrations,
-  type DatabaseService,
-} from './database.js';
+import { DEFAULT_MIGRATIONS_FOLDER, makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
 import {
   insertRawEvent,
   listCodexActivationRawEvents,
@@ -100,14 +96,18 @@ describePostgres('postgres integration', () => {
   });
 
   async function createWorkspaceWithCodexSource(handlePrefix: string) {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
         handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -117,7 +117,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     return { sourceBinding, workspace };
   }
 
@@ -125,14 +127,18 @@ describePostgres('postgres integration', () => {
     handlePrefix: string,
     sourceType: 'claude' | 'codex',
   ) {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
         handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -142,7 +148,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     return { sourceBinding, workspace };
   }
 
@@ -152,7 +160,9 @@ describePostgres('postgres integration', () => {
     turn: string;
     workspaceId: string;
   }) {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     return Effect.runPromise(
       insertRawEvent(service, {
         actorId: 'codex',
@@ -176,7 +186,9 @@ describePostgres('postgres integration', () => {
   }
 
   test('runs migrations and persists workspace registration rows', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -187,7 +199,9 @@ describePostgres('postgres integration', () => {
       .returning();
 
     expect(workspace).toBeDefined();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [profile] = await service.db
       .insert(workspaceProfiles)
@@ -215,7 +229,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('enforces user identity uniqueness with nullable external subjects', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -223,7 +239,9 @@ describePostgres('postgres integration', () => {
         handle: `user-identity-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     await service.db.insert(users).values({
       handle: 'drew',
@@ -268,7 +286,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('deduplicates existing nullable external-subject users before adding the unique constraint', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     try {
       await service.sql.begin(async (tx) => {
@@ -280,28 +300,36 @@ describePostgres('postgres integration', () => {
           VALUES (${`user-identity-migration-${Date.now().toString(36)}`})
           RETURNING "id"
         `;
-        if (workspace === undefined) throw new Error('workspace insert returned no row');
+        if (workspace === undefined) {
+          throw new Error('workspace insert returned no row');
+        }
 
         const [sourceBinding] = await tx<{ id: string }[]>`
           INSERT INTO "source_bindings" ("workspace_id", "source_type", "source_uri")
           VALUES (${workspace.id}, 'codex', 'codex://migration-fixture')
           RETURNING "id"
         `;
-        if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+        if (sourceBinding === undefined) {
+          throw new Error('source binding insert returned no row');
+        }
 
         const [canonicalUser] = await tx<{ id: string }[]>`
           INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
           VALUES (${workspace.id}, 'drew', 'host', '2026-06-21T00:00:00.000Z')
           RETURNING "id"
         `;
-        if (canonicalUser === undefined) throw new Error('canonical user insert returned no row');
+        if (canonicalUser === undefined) {
+          throw new Error('canonical user insert returned no row');
+        }
 
         const [duplicateUser] = await tx<{ id: string }[]>`
           INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
           VALUES (${workspace.id}, 'drew', 'host', '2026-06-22T00:00:00.000Z')
           RETURNING "id"
         `;
-        if (duplicateUser === undefined) throw new Error('duplicate user insert returned no row');
+        if (duplicateUser === undefined) {
+          throw new Error('duplicate user insert returned no row');
+        }
 
         const [canonicalSession] = await tx<{ id: string }[]>`
           INSERT INTO "sessions" (
@@ -314,8 +342,9 @@ describePostgres('postgres integration', () => {
           VALUES (${workspace.id}, ${sourceBinding.id}, ${canonicalUser.id}, 'codex', 'canonical-session')
           RETURNING "id"
         `;
-        if (canonicalSession === undefined)
+        if (canonicalSession === undefined) {
           throw new Error('canonical session insert returned no row');
+        }
 
         const [duplicateSession] = await tx<{ id: string }[]>`
           INSERT INTO "sessions" (
@@ -328,8 +357,9 @@ describePostgres('postgres integration', () => {
           VALUES (${workspace.id}, ${sourceBinding.id}, ${duplicateUser.id}, 'codex', 'duplicate-session')
           RETURNING "id"
         `;
-        if (duplicateSession === undefined)
+        if (duplicateSession === undefined) {
           throw new Error('duplicate session insert returned no row');
+        }
 
         await tx`
           INSERT INTO "raw_session_records" (
@@ -384,21 +414,21 @@ describePostgres('postgres integration', () => {
             AND "handle" = 'drew'
             AND "external_subject" IS NULL
         `;
-        expect(nullableUsers).toEqual([{ id: canonicalUser.id }]);
+        expect(nullableUsers).toStrictEqual([{ id: canonicalUser.id }]);
 
         const sessionAuthors = await tx<{ author_user_id: string }[]>`
           SELECT DISTINCT "author_user_id"
           FROM "sessions"
           WHERE "workspace_id" = ${workspace.id}
         `;
-        expect(sessionAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
+        expect(sessionAuthors).toStrictEqual([{ author_user_id: canonicalUser.id }]);
 
         const rawRecordAuthors = await tx<{ author_user_id: string }[]>`
           SELECT DISTINCT "author_user_id"
           FROM "raw_session_records"
           WHERE "workspace_id" = ${workspace.id}
         `;
-        expect(rawRecordAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
+        expect(rawRecordAuthors).toStrictEqual([{ author_user_id: canonicalUser.id }]);
 
         throw new RollbackMigrationFixture();
       });
@@ -410,7 +440,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('persists phase-one session capture records and enforces one active raw snapshot', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -418,7 +450,9 @@ describePostgres('postgres integration', () => {
         handle: `session-schema-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -429,7 +463,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const [author] = await service.db
       .insert(users)
@@ -439,7 +475,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (author === undefined) throw new Error('user insert returned no row');
+    if (author === undefined) {
+      throw new Error('user insert returned no row');
+    }
 
     const [otherWorkspace] = await service.db
       .insert(workspaces)
@@ -447,7 +485,9 @@ describePostgres('postgres integration', () => {
         handle: `session-schema-other-${Date.now().toString(36)}`,
       })
       .returning();
-    if (otherWorkspace === undefined) throw new Error('other workspace insert returned no row');
+    if (otherWorkspace === undefined) {
+      throw new Error('other workspace insert returned no row');
+    }
 
     const [otherSourceBinding] = await service.db
       .insert(sourceBindings)
@@ -458,7 +498,9 @@ describePostgres('postgres integration', () => {
         workspaceId: otherWorkspace.id,
       })
       .returning();
-    if (otherSourceBinding === undefined) throw new Error('other source insert returned no row');
+    if (otherSourceBinding === undefined) {
+      throw new Error('other source insert returned no row');
+    }
 
     const [otherAuthor] = await service.db
       .insert(users)
@@ -468,7 +510,9 @@ describePostgres('postgres integration', () => {
         workspaceId: otherWorkspace.id,
       })
       .returning();
-    if (otherAuthor === undefined) throw new Error('other user insert returned no row');
+    if (otherAuthor === undefined) {
+      throw new Error('other user insert returned no row');
+    }
 
     await expect(
       service.db.insert(sessions).values({
@@ -502,7 +546,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (session === undefined) throw new Error('session insert returned no row');
+    if (session === undefined) {
+      throw new Error('session insert returned no row');
+    }
 
     const [interval] = await service.db
       .insert(activityIntervals)
@@ -517,7 +563,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (interval === undefined) throw new Error('interval insert returned no row');
+    if (interval === undefined) {
+      throw new Error('interval insert returned no row');
+    }
 
     const [rawRecord] = await service.db
       .insert(rawSessionRecords)
@@ -537,7 +585,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (rawRecord === undefined) throw new Error('raw session record insert returned no row');
+    if (rawRecord === undefined) {
+      throw new Error('raw session record insert returned no row');
+    }
 
     await expect(
       service.db.insert(rawSessionRecords).values({
@@ -567,7 +617,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (turn === undefined) throw new Error('turn insert returned no row');
+    if (turn === undefined) {
+      throw new Error('turn insert returned no row');
+    }
 
     const [segment] = await service.db
       .insert(sessionSegments)
@@ -581,7 +633,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (segment === undefined) throw new Error('segment insert returned no row');
+    if (segment === undefined) {
+      throw new Error('segment insert returned no row');
+    }
 
     await expect(
       service.db.insert(sessionSegments).values({
@@ -633,7 +687,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (childSession === undefined) throw new Error('child session insert returned no row');
+    if (childSession === undefined) {
+      throw new Error('child session insert returned no row');
+    }
 
     const [relationship] = await service.db
       .insert(sessionRelationships)
@@ -686,7 +742,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('persists Context Index entries and resolves Saga Links through source bindings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('context-index');
 
     const entry = await Effect.runPromise(
@@ -772,7 +830,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('rejects Context Index entries that reference another workspace source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const first = await createWorkspaceWithCodexSource('context-index-first');
     const second = await createWorkspaceWithCodexSource('context-index-second');
 
@@ -790,7 +850,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('does not list or resolve Context Index entries for disabled source bindings', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const { sourceBinding, workspace } =
       await createWorkspaceWithCodexSource('context-index-disabled');
 
@@ -816,7 +878,7 @@ describePostgres('postgres integration', () => {
           workspaceId: workspace.id,
         }),
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toStrictEqual([]);
     await expect(
       Effect.runPromise(
         resolveSagaLink(service, {
@@ -828,7 +890,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('persists raw events', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -837,7 +901,9 @@ describePostgres('postgres integration', () => {
         handle: `raw-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -847,7 +913,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const event = await Effect.runPromise(
       insertRawEvent(service, {
@@ -899,7 +967,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('lists Codex activation raw events for a workspace source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const first = await createWorkspaceWithCodexSource('activation-first');
     const second = await createWorkspaceWithCodexSource('activation-second');
 
@@ -975,11 +1045,13 @@ describePostgres('postgres integration', () => {
       }),
     );
 
-    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
+    expect(activationEvents.map((row) => row.id)).toStrictEqual([prompt.id, sessionStart.id]);
   });
 
   test('lists Claude activation raw events for a workspace source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const first = await createWorkspaceWithHarnessSource('claude-activation-first', 'claude');
     const second = await createWorkspaceWithHarnessSource('claude-activation-second', 'claude');
 
@@ -1056,11 +1128,13 @@ describePostgres('postgres integration', () => {
       }),
     );
 
-    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
+    expect(activationEvents.map((row) => row.id)).toStrictEqual([prompt.id, sessionStart.id]);
   });
 
   test('rejects raw events that reference another workspace source binding', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const first = await createWorkspaceWithCodexSource('raw-source-first');
     const second = await createWorkspaceWithCodexSource('raw-source-second');
 
@@ -1086,7 +1160,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('scopes raw event idempotency to workspace', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [firstWorkspace] = await service.db
       .insert(workspaces)
@@ -1165,7 +1241,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('rejects claim evidence that references another workspace raw event', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const first = await createWorkspaceWithCodexSource('evidence-first');
     const second = await createWorkspaceWithCodexSource('evidence-second');
@@ -1203,7 +1281,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('stores extracted claim events and projects current claims', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1211,7 +1291,9 @@ describePostgres('postgres integration', () => {
         handle: `claims-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1221,7 +1303,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const rawEvent = await Effect.runPromise(
       insertRawEvent(service, {
@@ -1339,16 +1423,18 @@ describePostgres('postgres integration', () => {
     });
     expect(current[0]?.claimText).toBe('We should compile Active Context from claims.');
     expect(current[0]?.state).toBe('supported');
-    expect(await service.db.select().from(claimEvents)).toContainEqual(
+    await expect(service.db.select().from(claimEvents)).resolves.toContainEqual(
       expect.objectContaining({ id: firstProjection.event.id }),
     );
-    expect(await service.db.select().from(currentClaims)).toContainEqual(
+    await expect(service.db.select().from(currentClaims)).resolves.toContainEqual(
       expect.objectContaining({ id: firstProjection.currentClaim.id }),
     );
   });
 
   test('excludes review flag churn from confidence recurrence', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('recurrence');
     const firstRawEvent = await insertCodexPromptEvent({
@@ -1425,12 +1511,16 @@ describePostgres('postgres integration', () => {
   });
 
   test('lists active context claims by filtering terminal states before limit', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('active-filter');
 
     async function insertClaim(text: string, turn: string) {
-      if (service === undefined) throw new Error('database service was not initialized');
+      if (service === undefined) {
+        throw new Error('database service was not initialized');
+      }
       const rawEvent = await insertCodexPromptEvent({
         prompt: text,
         sourceBindingId: sourceBinding.id,
@@ -1489,7 +1579,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('detects contradictory candidate evidence and marks existing claims contradicted', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1497,7 +1589,9 @@ describePostgres('postgres integration', () => {
         handle: `contradictions-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1507,7 +1601,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const firstRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
@@ -1609,7 +1705,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('projects claim maintenance actions for decay and supersede', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1617,7 +1715,9 @@ describePostgres('postgres integration', () => {
         handle: `maintenance-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1627,12 +1727,16 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     const maintenanceWorkspaceId = workspace.id;
     const maintenanceSourceBindingId = sourceBinding.id;
 
     async function seedClaim(text: string, turn: string) {
-      if (service === undefined) throw new Error('database service was not initialized');
+      if (service === undefined) {
+        throw new Error('database service was not initialized');
+      }
       const rawEvent = await Effect.runPromise(
         insertRawEvent(service, {
           actorId: 'codex',
@@ -1711,7 +1815,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('projects claim review actions from append-only events', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1719,7 +1825,9 @@ describePostgres('postgres integration', () => {
         handle: `review-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error('workspace insert returned no row');
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -1729,7 +1837,9 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error('source binding insert returned no row');
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const rawEvent = await Effect.runPromise(
       insertRawEvent(service, {
@@ -1989,7 +2099,7 @@ describePostgres('postgres integration', () => {
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(reviewEvents.map((event) => event.eventType)).toEqual(
+    expect(reviewEvents.map((event) => event.eventType)).toStrictEqual(
       expect.arrayContaining([
         'contradicted',
         'extracted',
@@ -2003,7 +2113,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('promotes a current claim into an event-backed decision record', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('promotion');
     const rawEvent = await insertCodexPromptEvent({
       prompt: 'Observation: Saga should expose claim promotion from the governance UI.',
@@ -2121,7 +2233,9 @@ describePostgres('postgres integration', () => {
   });
 
   test('does not promote terminal claims', async () => {
-    if (service === undefined) throw new Error('database service was not initialized');
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
     const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('terminal-promotion');
 

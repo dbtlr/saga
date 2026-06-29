@@ -1,10 +1,9 @@
 import { renderActiveContextMarkdown } from '@saga/active-context';
-import {
-  resolveConnector,
-  rewriteConnectorResultToSagaLinks,
-  type ConnectorClient,
-  type ResolveConnectorContext,
-  type SagaLinkIndexReference,
+import { resolveConnector, rewriteConnectorResultToSagaLinks } from '@saga/connectors';
+import type {
+  ConnectorClient,
+  ResolveConnectorContext,
+  SagaLinkIndexReference,
 } from '@saga/connectors';
 import {
   expandRecallContext,
@@ -17,30 +16,32 @@ import {
   redactAgentFacingSessionValue,
   resolveSagaLink as resolveDatabaseSagaLink,
   searchSessionRecall,
-  type DatabaseService,
-  type RecallContextExpansion,
-  type RecallSearchResult,
-  type RecallSegmentMatch,
-  type RecentSessionRecord,
 } from '@saga/db';
-import {
-  createSagaMcpServer,
-  type GetSessionContextInput,
-  type JsonRpcRequest,
-  type ListRecentSessionsInput,
-  type SearchMemoryInput,
-  type SearchSessionsInput,
+import type {
+  DatabaseService,
+  RecallContextExpansion,
+  RecallSearchResult,
+  RecallSegmentMatch,
+  RecentSessionRecord,
+} from '@saga/db';
+import { createSagaMcpServer } from '@saga/mcp';
+import type {
+  GetSessionContextInput,
+  JsonRpcRequest,
+  ListRecentSessionsInput,
+  SearchMemoryInput,
+  SearchSessionsInput,
 } from '@saga/mcp';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { compileActiveContextFromDatabase, compileProjectActiveContext } from './context.js';
 import { findProjectRoot, readBindingFile } from './init.js';
-import { type RenderOptions } from './render.js';
+import type { RenderOptions } from './render.js';
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
 
-export interface MemorySearchEntry {
+export type MemorySearchEntry = {
   confidence: number;
   fields: Record<string, string>;
   key: string;
@@ -48,9 +49,9 @@ export interface MemorySearchEntry {
   source: string;
   state: string;
   text: string;
-}
+};
 
-export interface RankedMemorySearchMatch {
+export type RankedMemorySearchMatch = {
   confidence: number;
   key: string;
   kind: string;
@@ -61,7 +62,7 @@ export interface RankedMemorySearchMatch {
   source: string;
   state: string;
   text: string;
-}
+};
 
 export async function runMcpCommand(
   _args: readonly string[],
@@ -73,7 +74,9 @@ export async function runMcpCommand(
   for await (const line of readJsonLines(stdin)) {
     try {
       const response = await server.handle(parseJsonRpcRequest(line));
-      if (response !== undefined) write(JSON.stringify(response));
+      if (response !== undefined) {
+        write(JSON.stringify(response));
+      }
     } catch (error) {
       write(JSON.stringify(jsonRpcInputError(error)));
     }
@@ -247,10 +250,11 @@ export async function searchProjectMemory(
 
 export function redactSearchMemoryStructuredMatches(
   matches: readonly RankedMemorySearchMatch[],
-): Array<Omit<RankedMemorySearchMatch, 'score'>> {
-  return matches.map(({ score: _score, ...match }) => {
-    return redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, 'score'>;
-  });
+): Omit<RankedMemorySearchMatch, 'score'>[] {
+  return matches.map(
+    ({ score: _score, ...match }) =>
+      redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, 'score'>,
+  );
 }
 
 export async function resolveProjectSagaLink(
@@ -394,14 +398,14 @@ export async function rewriteResolvedSagaLinkReferences(
     };
     title?: string | undefined;
   },
-  contextIndex: ReadonlyArray<{
+  contextIndex: readonly {
     externalId: string;
     sagaLink: string;
     sourceBinding: {
       id: string;
       sourceType: string;
     };
-  }>,
+  }[],
   connectorContext: ResolveConnectorContext = metadataOnlyConnectorContext(),
 ) {
   return rewriteConnectorResultToSagaLinks(
@@ -538,12 +542,14 @@ export function searchMemoryEntries(
   entries: readonly MemorySearchEntry[],
 ): RankedMemorySearchMatch[] {
   const tokens = tokenize(input.query);
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) {
+    return [];
+  }
 
   return entries
     .map((entry) => rankMemoryEntry(entry, tokens))
     .filter((match): match is RankedMemorySearchMatch => match !== undefined)
-    .sort(
+    .toSorted(
       (left, right) =>
         right.score - left.score ||
         right.confidence - left.confidence ||
@@ -561,12 +567,14 @@ function rankMemoryEntry(
     const hits = tokens.filter((token) => normalized.includes(token)).length;
     return hits === 0 ? [] : [{ field, hits, value }];
   });
-  if (fieldMatches.length === 0) return undefined;
+  if (fieldMatches.length === 0) {
+    return undefined;
+  }
 
   const matchedFields = [...new Set(fieldMatches.map((match) => match.field))];
-  const bestFieldMatch = fieldMatches
-    .slice()
-    .sort((left, right) => right.hits - left.hits || left.field.localeCompare(right.field))[0];
+  const bestFieldMatch = [...fieldMatches].toSorted(
+    (left, right) => right.hits - left.hits || left.field.localeCompare(right.field),
+  )[0];
   const exactTextBonus = tokens.every((token) => entry.text.toLowerCase().includes(token)) ? 4 : 0;
   const weightedHits = fieldMatches.reduce((score, match) => score + match.hits, 0);
   const sourceWeight = sourceSearchWeight(entry.source);
@@ -588,7 +596,9 @@ function renderSearchMemoryMarkdown(
   query: string,
   matches: readonly RankedMemorySearchMatch[],
 ): string {
-  if (matches.length === 0) return `# Saga Memory Search\n\nNo matches for ${query}.`;
+  if (matches.length === 0) {
+    return `# Saga Memory Search\n\nNo matches for ${query}.`;
+  }
 
   return [
     '# Saga Memory Search',
@@ -618,11 +628,11 @@ function renderResolvedSagaLinkMarkdown(
   retrieval: {
     content?: string | undefined;
     provenance?: Record<string, unknown> | undefined;
-    references: ReadonlyArray<{
+    references: readonly {
       externalId: string;
       sagaLink?: string | undefined;
       title?: string | undefined;
-    }>;
+    }[];
     target?:
       | {
           apiUrl?: string | undefined;
@@ -665,7 +675,9 @@ function renderResolvedSagaLinkMarkdown(
 }
 
 function renderRecentSessionsMarkdown(sessions: readonly RecentSessionRecord[]): string {
-  if (sessions.length === 0) return '# Recent Saga Sessions\n\nNo recent sessions found.';
+  if (sessions.length === 0) {
+    return '# Recent Saga Sessions\n\nNo recent sessions found.';
+  }
 
   return [
     '# Recent Saga Sessions',
@@ -818,14 +830,24 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
 }
 
 export function redactMcpStructuredOutput(value: unknown): unknown {
-  if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((entry) => redactMcpStructuredOutput(entry));
-  if (typeof value === 'string') return redactAgentFacingString(value);
-  if (!isRecord(value)) return value;
+  if (value instanceof Date) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactMcpStructuredOutput(entry));
+  }
+  if (typeof value === 'string') {
+    return redactAgentFacingString(value);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
 
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (isUnsafeMcpStructuredKey(key)) continue;
+    if (isUnsafeMcpStructuredKey(key)) {
+      continue;
+    }
     redacted[key] = redactMcpStructuredOutput(entry);
   }
   return redacted;
@@ -851,7 +873,9 @@ function formatScores(scores: RecallSegmentMatch['scores']): string {
     `lexical ${formatScore(scores.lexical)}`,
     `trigram ${formatScore(scores.trigram)}`,
   ];
-  if (scores.vector !== undefined) parts.push(`vector ${formatScore(scores.vector)}`);
+  if (scores.vector !== undefined) {
+    parts.push(`vector ${formatScore(scores.vector)}`);
+  }
   return parts.join(', ');
 }
 
@@ -860,12 +884,16 @@ function formatScore(value: number): string {
 }
 
 function formatDate(value: Date | string | null): string {
-  if (value === null) return 'none';
+  if (value === null) {
+    return 'none';
+  }
   return value instanceof Date ? value.toISOString() : value;
 }
 
 function formatRange(start: number | null, end: number | null): string {
-  if (start === null && end === null) return 'none';
+  if (start === null && end === null) {
+    return 'none';
+  }
   return `${start === null ? '?' : String(start)}..${end === null ? '?' : String(end)}`;
 }
 
@@ -888,20 +916,26 @@ function stripSearchMarkup(value: string): string {
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
+  if (value.length <= maxLength) {
+    return value;
+  }
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function matchedSnippet(value: string, tokens: readonly string[]): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized === '') return '';
+  if (normalized === '') {
+    return '';
+  }
 
   const lower = normalized.toLowerCase();
   const firstHit = tokens
     .map((token) => lower.indexOf(token))
     .filter((index) => index >= 0)
-    .sort((left, right) => left - right)[0];
-  if (firstHit === undefined) return truncateSnippet(normalized);
+    .toSorted((left, right) => left - right)[0];
+  if (firstHit === undefined) {
+    return truncateSnippet(normalized);
+  }
 
   const start = Math.max(0, firstHit - 48);
   const end = Math.min(normalized.length, firstHit + 112);
@@ -915,10 +949,18 @@ function truncateSnippet(value: string): string {
 }
 
 function sourceSearchWeight(source: string): number {
-  if (source === 'current_claim') return 2;
-  if (source === 'active_context') return 1.5;
-  if (source === 'context_index') return 1.25;
-  if (source === 'active_context_input') return 1;
+  if (source === 'current_claim') {
+    return 2;
+  }
+  if (source === 'active_context') {
+    return 1.5;
+  }
+  if (source === 'context_index') {
+    return 1.25;
+  }
+  if (source === 'active_context_input') {
+    return 1;
+  }
   return 0;
 }
 
@@ -942,11 +984,15 @@ async function* readJsonLines(stdin: AsyncIterable<Buffer | string>): AsyncGener
     buffer = lines.pop() ?? '';
     for (const line of lines) {
       const trimmed = line.trim();
-      if (trimmed !== '') yield trimmed;
+      if (trimmed !== '') {
+        yield trimmed;
+      }
     }
   }
   const trimmed = buffer.trim();
-  if (trimmed !== '') yield trimmed;
+  if (trimmed !== '') {
+    yield trimmed;
+  }
 }
 
 function parseJsonRpcRequest(line: string): JsonRpcRequest {

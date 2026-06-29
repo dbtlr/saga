@@ -23,7 +23,7 @@ describe('parseArgs', () => {
   test('parses global flags and command arguments', () => {
     expect(
       parseArgs(['--format', 'json', '--color', 'never', '--ascii', 'context', 'preview']),
-    ).toEqual({
+    ).toStrictEqual({
       args: ['preview'],
       command: 'context',
       options: {
@@ -48,7 +48,7 @@ describe('parseArgs', () => {
   });
 
   test('parses global flags after command positionals', () => {
-    expect(parseArgs(['sessions', 'recent', '--format', 'json'])).toEqual({
+    expect(parseArgs(['sessions', 'recent', '--format', 'json'])).toStrictEqual({
       args: ['recent'],
       command: 'sessions',
       options: {
@@ -73,7 +73,7 @@ describe('run', () => {
   test('help lists reserved command groups', () => {
     expect(HELP_TEXT).toContain('service');
     expect(HELP_TEXT).toContain('harness');
-    expect(Object.keys(COMMANDS)).toEqual([
+    expect(Object.keys(COMMANDS)).toStrictEqual([
       'init',
       'doctor',
       'start',
@@ -90,25 +90,25 @@ describe('run', () => {
   test('prints help without a command', async () => {
     const output: string[] = [];
     await expect(run([], (text) => output.push(text))).resolves.toBe(0);
-    expect(output).toEqual([HELP_TEXT.trimEnd()]);
+    expect(output).toStrictEqual([HELP_TEXT.trimEnd()]);
   });
 
   test('prints version', async () => {
     const output: string[] = [];
     await expect(run(['--version'], (text) => output.push(text))).resolves.toBe(0);
-    expect(output).toEqual(['saga 0.0.0']);
+    expect(output).toStrictEqual(['saga 0.0.0']);
   });
 
   test('reports unknown commands as usage errors', async () => {
     const output: string[] = [];
     await expect(run(['nope'], (text) => output.push(text))).resolves.toBe(2);
-    expect(output).toEqual(['✗ unknown command: nope']);
+    expect(output).toStrictEqual(['✗ unknown command: nope']);
   });
 
   test('renders usage errors without glyphs in ascii mode', async () => {
     const output: string[] = [];
     await expect(run(['--ascii', 'nope'], (text) => output.push(text))).resolves.toBe(2);
-    expect(output).toEqual(['[err] unknown command: nope']);
+    expect(output).toStrictEqual(['[err] unknown command: nope']);
   });
 
   test('dispatches start through the start handler', async () => {
@@ -121,7 +121,7 @@ describe('run', () => {
     });
 
     await expect(run(['start'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toEqual(['start launched']);
+    expect(output).toStrictEqual(['start launched']);
   });
 
   test('dispatches init through the init handler', async () => {
@@ -131,7 +131,7 @@ describe('run', () => {
     });
 
     await expect(run(['init', 'custom'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toEqual(['init custom']);
+    expect(output).toStrictEqual(['init custom']);
   });
 
   test('dispatches doctor through the doctor handler', async () => {
@@ -141,7 +141,7 @@ describe('run', () => {
     });
 
     await expect(run(['doctor'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toEqual(['doctor ok']);
+    expect(output).toStrictEqual(['doctor ok']);
   });
 
   test('dispatches service through the service handler', async () => {
@@ -153,7 +153,7 @@ describe('run', () => {
     await expect(run(['service', 'status'], (text) => output.push(text), handlers)).resolves.toBe(
       0,
     );
-    expect(output).toEqual(['service status']);
+    expect(output).toStrictEqual(['service status']);
   });
 
   test('dispatches harness through the harness handler', async () => {
@@ -165,7 +165,7 @@ describe('run', () => {
     await expect(
       run(['harness', 'install', 'codex'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
-    expect(output).toEqual(['harness install,codex']);
+    expect(output).toStrictEqual(['harness install,codex']);
   });
 
   test('dispatches ingest through the ingest handler', async () => {
@@ -177,7 +177,7 @@ describe('run', () => {
     await expect(
       run(['ingest', 'codex-hook'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
-    expect(output).toEqual(['ingest codex-hook']);
+    expect(output).toStrictEqual(['ingest codex-hook']);
   });
 
   test('dispatches sessions through the sessions handler', async () => {
@@ -189,7 +189,7 @@ describe('run', () => {
     await expect(
       run(['sessions', 'recent', '--limit', '5'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
-    expect(output).toEqual(['sessions recent,--limit,5']);
+    expect(output).toStrictEqual(['sessions recent,--limit,5']);
   });
 
   test('dispatches recall through the recall handler', async () => {
@@ -201,7 +201,7 @@ describe('run', () => {
     await expect(
       run(['recall', 'search', 'lexical', 'recall'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
-    expect(output).toEqual(['recall search,lexical,recall']);
+    expect(output).toStrictEqual(['recall search,lexical,recall']);
   });
 
   test('does not pass trailing global format flags to sessions handlers', async () => {
@@ -217,7 +217,7 @@ describe('run', () => {
     await expect(
       run(['sessions', 'recent', '--format', 'json'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
-    expect(JSON.parse(output[0] ?? '{}')).toEqual({
+    expect(JSON.parse(output[0] ?? '{}')).toStrictEqual({
       args: ['recent'],
       format: 'json',
     });
@@ -240,7 +240,7 @@ describe('run', () => {
         handlers,
       ),
     ).resolves.toBe(0);
-    expect(JSON.parse(output[0] ?? '{}')).toEqual({
+    expect(JSON.parse(output[0] ?? '{}')).toStrictEqual({
       args: ['search', 'needle'],
       format: 'json',
     });
@@ -253,7 +253,7 @@ describe('run', () => {
     });
 
     await expect(run(['context'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toEqual(['compiled context']);
+    expect(output).toStrictEqual(['compiled context']);
   });
 
   test('dispatches mcp through the streaming mcp handler', async () => {
@@ -266,7 +266,7 @@ describe('run', () => {
     });
 
     await expect(run(['mcp'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toEqual(['mcp response']);
+    expect(output).toStrictEqual(['mcp response']);
   });
 
   test('implemented commands can render structured output', async () => {

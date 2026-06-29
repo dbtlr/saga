@@ -145,7 +145,7 @@ describe('runRecallCommand', () => {
       {
         cwd: projectRoot,
         expandContext: async (input) => {
-          expect(input).toEqual({
+          expect(input).toStrictEqual({
             afterTurns: 3,
             beforeTurns: 1,
             segmentId: 'segment-id',
@@ -212,7 +212,7 @@ describe('runRecallCommand', () => {
           return recallContextExpansion();
         },
       });
-      expect(capturedInput).toEqual(entry.expected);
+      expect(capturedInput).toStrictEqual(entry.expected);
     }
   });
 

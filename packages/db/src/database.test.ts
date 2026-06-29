@@ -12,8 +12,8 @@ import {
   makeDatabase,
   readExpectedMigrationHashes,
   runMigrationsSafely,
-  type DatabaseService,
 } from './database.js';
+import type { DatabaseService } from './database.js';
 
 const expectedHashes = readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).map(
   (migration) => migration.hash,
@@ -70,9 +70,9 @@ describe('makeDatabase', () => {
   });
 });
 
-describe('DatabaseLive', () => {
+describe('databaseLive', () => {
   test('provides a closeable database service from runtime config', async () => {
-    const program = Effect.gen(function* () {
+    const program = Effect.gen(function* program() {
       const database = yield* DatabaseTag;
       expect(database.db).toBeDefined();
       expect(database.sql).toBeDefined();
@@ -106,7 +106,7 @@ describe('assertMigrationsCurrent', () => {
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT)),
       ),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: EXPECTED_MIGRATION_COUNT,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
@@ -142,7 +142,7 @@ describe('getMigrationStatus', () => {
   test('reports zero applied migrations when the drizzle table is missing', async () => {
     await expect(
       Effect.runPromise(getMigrationStatus(serviceWithMigrationCount(99, { tableExists: false }))),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: 0,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
@@ -154,7 +154,7 @@ describe('runMigrationsSafely', () => {
   test('skips migration execution when migrations are already current', async () => {
     await expect(
       Effect.runPromise(runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT))),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: EXPECTED_MIGRATION_COUNT,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,

@@ -9,7 +9,7 @@ import type {
 export type CodexTranscriptImportHints = TranscriptImportHints;
 export type CodexTranscriptNormalization = TranscriptNormalization;
 
-interface ParsedJsonRecord {
+type ParsedJsonRecord = {
   byteEnd: number;
   byteStart: number;
   charEnd: number;
@@ -18,23 +18,23 @@ interface ParsedJsonRecord {
   lineNumber: number;
   rawLine: string;
   value: Record<string, unknown>;
-}
+};
 
-interface ParsedJsonRecords {
+type ParsedJsonRecords = {
   parseErrors: Record<string, unknown>[];
   records: ParsedJsonRecord[];
-}
+};
 
-interface RawSpan extends Record<string, unknown> {
+type RawSpan = {
   byteEnd: number;
   byteStart: number;
   charEnd: number;
   charStart: number;
   lineEnd: number;
   lineStart: number;
-}
+} & Record<string, unknown>;
 
-interface TranscriptState {
+type TranscriptState = {
   callIdToToolName: Map<string, string>;
   callIdToTurnId: Map<string, string>;
   currentTurnId: string | undefined;
@@ -45,7 +45,7 @@ interface TranscriptState {
   responseMessageKeys: Set<string>;
   sessionMeta: Record<string, unknown> | undefined;
   turnContexts: Record<string, unknown>[];
-}
+};
 
 export function extractCodexTranscriptImportHints(input: {
   contentType: 'json' | 'jsonl' | 'text';
@@ -71,7 +71,9 @@ export function normalizeCodexTranscript(input: {
   rawContent: string;
 }): CodexTranscriptNormalization | undefined {
   const { parseErrors, records } = parseCodexJsonRecords(input);
-  if (records.length === 0 && parseErrors.length === 0) return undefined;
+  if (records.length === 0 && parseErrors.length === 0) {
+    return undefined;
+  }
 
   const state: TranscriptState = {
     callIdToToolName: new Map(),
@@ -113,7 +115,9 @@ export function normalizeCodexTranscript(input: {
 
     if (type === 'response_item' && payload !== undefined) {
       const turn = responseItemTurn(record, payload, state);
-      if (turn !== undefined) turns.push(turn);
+      if (turn !== undefined) {
+        turns.push(turn);
+      }
       continue;
     }
 
@@ -123,7 +127,9 @@ export function normalizeCodexTranscript(input: {
     }
 
     const legacyTurn = legacyTopLevelTurn(record, state);
-    if (legacyTurn !== undefined) turns.push(legacyTurn);
+    if (legacyTurn !== undefined) {
+      turns.push(legacyTurn);
+    }
   }
 
   const sortedTurns = turns.map((turn) => ({
@@ -190,9 +196,13 @@ function handleEventMessage(
   state: TranscriptState,
   turns: NormalizedTranscriptTurn[],
 ): void {
-  if (payload === undefined) return;
+  if (payload === undefined) {
+    return;
+  }
   const turnId = readString(payload.turn_id);
-  if (turnId !== undefined) state.currentTurnId = turnId;
+  if (turnId !== undefined) {
+    state.currentTurnId = turnId;
+  }
   state.lifecycleEvents.push(
     compactRecord({
       payload: lifecyclePayload(payload),
@@ -202,9 +212,13 @@ function handleEventMessage(
     }),
   );
 
-  if (payloadType !== 'agent_message' && payloadType !== 'user_message') return;
+  if (payloadType !== 'agent_message' && payloadType !== 'user_message') {
+    return;
+  }
   const message = readString(payload.message);
-  if (message === undefined) return;
+  if (message === undefined) {
+    return;
+  }
 
   const role = payloadType === 'user_message' ? 'user' : 'assistant';
   if (
@@ -238,10 +252,14 @@ function responseItemTurn(
 
   if (payloadType === 'message') {
     const role = normalizeRole(readString(payload.role));
-    if (role === undefined) return undefined;
+    if (role === undefined) {
+      return undefined;
+    }
     const contentParts = normalizeContentParts(payload.content);
     const searchText = contentPartsToSearchText(contentParts);
-    if (contentParts.length === 0 && searchText === '') return undefined;
+    if (contentParts.length === 0 && searchText === '') {
+      return undefined;
+    }
     return {
       actorKind: actorKindForRole(role),
       actorLabel: actorLabelForRole(role, payload),
@@ -266,7 +284,9 @@ function responseItemTurn(
     const name = readString(payload.name) ?? 'tool';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
-      if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
+      if (codexTurnId !== undefined) {
+        state.callIdToTurnId.set(callId, codexTurnId);
+      }
     }
     const argumentsText = readString(payload.arguments);
     const customInput = payloadType === 'custom_tool_call' ? payload.input : undefined;
@@ -304,7 +324,9 @@ function responseItemTurn(
     const name = 'web_search';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
-      if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
+      if (codexTurnId !== undefined) {
+        state.callIdToTurnId.set(callId, codexTurnId);
+      }
     }
     const action = asRecord(payload.action) ?? payload.action;
     const contentParts = [
@@ -337,7 +359,9 @@ function responseItemTurn(
     const name = 'tool_search';
     if (callId !== undefined) {
       state.callIdToToolName.set(callId, name);
-      if (codexTurnId !== undefined) state.callIdToTurnId.set(callId, codexTurnId);
+      if (codexTurnId !== undefined) {
+        state.callIdToTurnId.set(callId, codexTurnId);
+      }
     }
     const contentParts = [
       compactRecord({
@@ -427,7 +451,9 @@ function responseItemTurn(
   if (payloadType === 'reasoning') {
     const contentParts = normalizeReasoningParts(payload.summary);
     const searchText = contentPartsToSearchText(contentParts);
-    if (contentParts.length === 0 || searchText === '') return undefined;
+    if (contentParts.length === 0 || searchText === '') {
+      return undefined;
+    }
     return {
       actorKind: 'agent',
       codexTurnId,
@@ -461,9 +487,13 @@ function legacyTopLevelTurn(
   state: TranscriptState,
 ): NormalizedTranscriptTurn | undefined {
   const role = normalizeRole(readString(record.value.type));
-  if (role === undefined) return undefined;
+  if (role === undefined) {
+    return undefined;
+  }
   const text = readString(record.value.text) ?? readString(record.value.content);
-  if (text === undefined) return undefined;
+  if (text === undefined) {
+    return undefined;
+  }
   return {
     actorKind: actorKindForRole(role),
     contentParts: [{ text, type: 'text' }],
@@ -519,7 +549,9 @@ function parseCodexJsonRecords(input: {
     };
   }
 
-  if (input.contentType !== 'jsonl') return { parseErrors: [], records: [] };
+  if (input.contentType !== 'jsonl') {
+    return { parseErrors: [], records: [] };
+  }
 
   const records: ParsedJsonRecord[] = [];
   const parseErrors: Record<string, unknown>[] = [];
@@ -574,13 +606,21 @@ function parseCodexJsonRecords(input: {
 function responseMessageKeys(records: readonly ParsedJsonRecord[]): Set<string> {
   const keys = new Set<string>();
   for (const record of records) {
-    if (record.value.type !== 'response_item') continue;
+    if (record.value.type !== 'response_item') {
+      continue;
+    }
     const payload = asRecord(record.value.payload);
-    if (payload?.type !== 'message') continue;
+    if (payload?.type !== 'message') {
+      continue;
+    }
     const role = normalizeRole(readString(payload.role));
-    if (role !== 'assistant' && role !== 'user') continue;
+    if (role !== 'assistant' && role !== 'user') {
+      continue;
+    }
     const text = contentPartsToSearchText(normalizeContentParts(payload.content));
-    if (text !== '') keys.add(messageKey(role, text, readString(record.value.timestamp)));
+    if (text !== '') {
+      keys.add(messageKey(role, text, readString(record.value.timestamp)));
+    }
   }
   return keys;
 }
@@ -590,12 +630,20 @@ function messageKey(role: string, text: string, timestamp: string | undefined): 
 }
 
 function normalizeContentParts(value: unknown): Record<string, unknown>[] {
-  if (typeof value === 'string') return [{ text: value, type: 'text' }];
-  if (!Array.isArray(value)) return [];
+  if (typeof value === 'string') {
+    return [{ text: value, type: 'text' }];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
   return value.flatMap((entry) => {
-    if (typeof entry === 'string') return [{ text: entry, type: 'text' }];
+    if (typeof entry === 'string') {
+      return [{ text: entry, type: 'text' }];
+    }
     const record = asRecord(entry);
-    if (record === undefined) return [];
+    if (record === undefined) {
+      return [];
+    }
     const type = readString(record.type);
     const text = readString(record.text);
     if (text !== undefined) {
@@ -612,9 +660,13 @@ function normalizeContentParts(value: unknown): Record<string, unknown>[] {
 }
 
 function normalizeReasoningParts(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
   return value.flatMap((entry) => {
-    if (typeof entry === 'string') return [{ text: entry, type: 'summary' }];
+    if (typeof entry === 'string') {
+      return [{ text: entry, type: 'summary' }];
+    }
     const record = asRecord(entry);
     const text = readString(record?.text);
     return text === undefined ? [] : [{ text, type: 'summary' }];
@@ -647,9 +699,15 @@ function contentPartsToSearchText(parts: readonly Record<string, unknown>[]): st
           .filter(Boolean)
           .join(' ');
       }
-      if (typeof part.text === 'string') return part.text;
-      if (typeof part.output === 'string') return part.output;
-      if (typeof part.arguments === 'string') return part.arguments;
+      if (typeof part.text === 'string') {
+        return part.text;
+      }
+      if (typeof part.output === 'string') {
+        return part.output;
+      }
+      if (typeof part.arguments === 'string') {
+        return part.arguments;
+      }
       return stringifyForSearch(part);
     })
     .filter((part) => part.trim() !== '')
@@ -669,7 +727,9 @@ function lifecyclePayload(payload: Record<string, unknown>): Record<string, unkn
 function collectSubagentEvidence(records: readonly ParsedJsonRecord[]): Record<string, unknown>[] {
   return records.flatMap((record) => {
     const value = JSON.stringify(record.value);
-    if (!/(subagent|child)/iu.test(value)) return [];
+    if (!/(subagent|child)/iu.test(value)) {
+      return [];
+    }
     const payload = asRecord(record.value.payload);
     const source = asRecord(payload?.source) ?? asRecord(record.value.source);
     const sourceSubagent = asRecord(source?.subagent);
@@ -708,17 +768,31 @@ function stableHarnessTurnId(
 }
 
 function normalizeRole(value: string | undefined): NormalizedTurnRole | undefined {
-  if (value === 'assistant' || value === 'tool' || value === 'user') return value;
-  if (value === 'developer' || value === 'system') return 'system';
-  if (value === 'subagent') return 'subagent';
+  if (value === 'assistant' || value === 'tool' || value === 'user') {
+    return value;
+  }
+  if (value === 'developer' || value === 'system') {
+    return 'system';
+  }
+  if (value === 'subagent') {
+    return 'subagent';
+  }
   return undefined;
 }
 
 function actorKindForRole(role: NormalizedTurnRole): NormalizedActorKind {
-  if (role === 'assistant') return 'agent';
-  if (role === 'subagent') return 'subagent';
-  if (role === 'tool') return 'tool';
-  if (role === 'user') return 'host_user';
+  if (role === 'assistant') {
+    return 'agent';
+  }
+  if (role === 'subagent') {
+    return 'subagent';
+  }
+  if (role === 'tool') {
+    return 'tool';
+  }
+  if (role === 'user') {
+    return 'host_user';
+  }
   return 'harness';
 }
 
@@ -726,24 +800,34 @@ function actorLabelForRole(
   role: NormalizedTurnRole,
   payload: Record<string, unknown>,
 ): string | undefined {
-  if (role === 'system') return readString(payload.role) ?? 'codex';
-  if (role === 'assistant') return 'codex';
+  if (role === 'system') {
+    return readString(payload.role) ?? 'codex';
+  }
+  if (role === 'assistant') {
+    return 'codex';
+  }
   return undefined;
 }
 
 function parseOptionalDate(value: string | undefined): Date | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function earliest(values: readonly Date[]): Date | undefined {
-  if (values.length === 0) return undefined;
+  if (values.length === 0) {
+    return undefined;
+  }
   return new Date(Math.min(...values.map((value) => value.getTime())));
 }
 
 function latest(values: readonly Date[]): Date | undefined {
-  if (values.length === 0) return undefined;
+  if (values.length === 0) {
+    return undefined;
+  }
   return new Date(Math.max(...values.map((value) => value.getTime())));
 }
 
@@ -752,25 +836,39 @@ function isDate(value: Date | undefined): value is Date {
 }
 
 function stringifyForSearch(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
   return JSON.stringify(value);
 }
 
 function normalizeToolOutput(value: unknown): unknown {
-  if (typeof value === 'string') return parseJsonValue(value) ?? value;
-  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    return parseJsonValue(value) ?? value;
+  }
+  if (value === undefined) {
+    return undefined;
+  }
   return value;
 }
 
 function normalizeToolArguments(value: unknown): unknown {
-  if (typeof value === 'string') return parseJsonValue(value) ?? value;
-  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    return parseJsonValue(value) ?? value;
+  }
+  if (value === undefined) {
+    return undefined;
+  }
   return value;
 }
 
 function parseJsonValue(value: string | undefined): unknown {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   try {
     return JSON.parse(value) as unknown;
   } catch {

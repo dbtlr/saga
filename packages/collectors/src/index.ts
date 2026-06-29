@@ -7,7 +7,7 @@ export const packageName = '@saga/collectors';
 
 export type HarnessSource = 'claude' | 'codex';
 
-export interface HarnessHookInput {
+export type HarnessHookInput = {
   cwd?: string | undefined;
   hook_event_name?: string | undefined;
   model?: string | undefined;
@@ -16,19 +16,19 @@ export interface HarnessHookInput {
   transcript_path?: string | null | undefined;
   turn_id?: string | undefined;
   [key: string]: unknown;
-}
+};
 
 export type CodexHookInput = HarnessHookInput;
 export type ClaudeHookInput = HarnessHookInput;
 
-export interface HarnessWorkspaceBinding {
+export type HarnessWorkspaceBinding = {
   sourceBinding: {
     id: string;
   };
   workspace: {
     id: string;
   };
-}
+};
 
 export function rawEventFromCodexHook(
   input: CodexHookInput,
@@ -117,8 +117,12 @@ function harnessExternalEventId(
 }
 
 function transcriptOccurrenceKey(input: HarnessHookInput, source: HarnessSource): string {
-  if (source !== 'claude' || typeof input.transcript_path !== 'string') return '';
-  if (!existsSync(input.transcript_path)) return '';
+  if (source !== 'claude' || typeof input.transcript_path !== 'string') {
+    return '';
+  }
+  if (!existsSync(input.transcript_path)) {
+    return '';
+  }
 
   const transcript = readFileSync(input.transcript_path, 'utf8');
   const prompt = typeof input.prompt === 'string' ? input.prompt : undefined;
@@ -144,12 +148,20 @@ function transcriptOccurrenceKey(input: HarnessHookInput, source: HarnessSource)
 }
 
 function transcriptEntryText(entry: Record<string, unknown>): string | undefined {
-  if (typeof entry.text === 'string') return entry.text;
+  if (typeof entry.text === 'string') {
+    return entry.text;
+  }
   const message = entry.message;
-  if (!isRecord(message)) return undefined;
+  if (!isRecord(message)) {
+    return undefined;
+  }
   const content = message.content;
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return undefined;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
   return content
     .map((item) => (isRecord(item) && typeof item.text === 'string' ? item.text : ''))
     .join('');
@@ -164,10 +176,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  }
   if (value !== null && typeof value === 'object') {
     return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
       .join(',')}}`;
   }

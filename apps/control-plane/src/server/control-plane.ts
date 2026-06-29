@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { compileActiveContext, type ActiveContextDocument } from '@saga/active-context';
+import { compileActiveContext } from '@saga/active-context';
+import type { ActiveContextDocument } from '@saga/active-context';
 import {
   currentClaims,
   insertClaimPromotionEventAndProject,
@@ -14,12 +15,10 @@ import {
   sourceBindings,
   workspaceProfiles,
   workspaces,
-  type CurrentClaim,
-  type DatabaseService,
-  type RawEvent,
-  type SourceBinding,
 } from '@saga/db';
-import { loadRuntimeConfig, type SagaEnvironment } from '@saga/runtime';
+import type { CurrentClaim, DatabaseService, RawEvent, SourceBinding } from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import type { SagaEnvironment } from '@saga/runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
 
@@ -27,12 +26,12 @@ const BINDING_FILE_NAME = '.saga.local.json';
 
 export type ControlPlaneStatus = 'misconfigured' | 'offline' | 'ready' | 'unbound';
 
-export interface ControlPlaneIssue {
+export type ControlPlaneIssue = {
   key: string;
   message: string;
-}
+};
 
-export interface ControlPlaneSnapshot {
+export type ControlPlaneSnapshot = {
   activeContext: ActiveContextDocument | undefined;
   binding:
     | {
@@ -61,9 +60,9 @@ export interface ControlPlaneSnapshot {
   };
   sourceBindings: readonly ControlPlaneSourceBinding[];
   status: ControlPlaneStatus;
-}
+};
 
-export interface ControlPlaneClaim {
+export type ControlPlaneClaim = {
   confidence: number;
   key: string;
   kind: string;
@@ -73,49 +72,49 @@ export interface ControlPlaneClaim {
   state: string;
   text: string;
   watched: boolean;
-}
+};
 
-export interface UpdateClaimReviewInput {
+export type UpdateClaimReviewInput = {
   action: 'accept' | 'pin' | 'promote' | 'reject' | 'unpin' | 'unwatch' | 'watch';
   claimKey: string;
-}
+};
 
-interface ClaimReviewAttributes {
+type ClaimReviewAttributes = {
   pinned?: boolean | undefined;
   promoted?: boolean | undefined;
   promotionTitle?: string | undefined;
   watched?: boolean | undefined;
-}
+};
 
-export interface ControlPlaneSourceBinding {
+export type ControlPlaneSourceBinding = {
   displayName: string;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
   updatedAt: string;
-}
+};
 
-export interface ControlPlaneRecentActivity {
+export type ControlPlaneRecentActivity = {
   eventType: string;
   id: string;
   occurredAt: string;
   sessionId: string | undefined;
   sourceType: string;
-}
+};
 
-export interface UpdateWorkspaceProfileInput {
+export type UpdateWorkspaceProfileInput = {
   displayName: string;
   summary: string;
-}
+};
 
-export interface UpdateSourceBindingInput {
+export type UpdateSourceBindingInput = {
   displayName: string;
   enabled: boolean;
   id: string;
-}
+};
 
-interface WorkspaceBindingFile {
+type WorkspaceBindingFile = {
   schemaVersion: 1;
   sourceBinding: {
     id: string;
@@ -124,32 +123,30 @@ interface WorkspaceBindingFile {
     handle: string;
     id: string;
   };
-}
+};
 
 export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const generatedAt = new Date().toISOString();
   const runtimeExit = await Effect.runPromiseExit(loadRuntimeConfig({ cwd: projectRoot }));
-  const config =
-    Exit.isSuccess(runtimeExit) === true
-      ? runtimeExit.value
-      : {
-          databaseUrl: undefined,
-          environment: 'development' as const,
-          service: { host: '127.0.0.1', port: 4766 },
-        };
+  const config = Exit.isSuccess(runtimeExit)
+    ? runtimeExit.value
+    : {
+        databaseUrl: undefined,
+        environment: 'development' as const,
+        service: { host: '127.0.0.1', port: 4766 },
+      };
   const runtime = {
     database: config.databaseUrl === undefined ? ('missing' as const) : ('configured' as const),
     environment: config.environment,
     serviceUrl: `http://${config.service.host}:${config.service.port.toString()}`,
   };
-  const configIssues =
-    Exit.isFailure(runtimeExit) === true
-      ? runtimeExit.cause
-          .toString()
-          .split('\n')
-          .map((message) => ({ key: 'runtime', message }))
-      : [];
+  const configIssues = Exit.isFailure(runtimeExit)
+    ? runtimeExit.cause
+        .toString()
+        .split('\n')
+        .map((message) => ({ key: 'runtime', message }))
+    : [];
   const bindingResult = readBindingFile(projectRoot);
 
   if (bindingResult.issue !== undefined) {

@@ -12,8 +12,8 @@ import {
   runDoctor,
   serviceDoctorStatus,
   satisfiesEngineRange,
-  type DoctorCheck,
 } from './doctor.js';
+import type { DoctorCheck } from './doctor.js';
 import type { HarnessActivationStatus } from './harness.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));

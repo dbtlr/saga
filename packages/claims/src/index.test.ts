@@ -4,8 +4,8 @@ import {
   candidateClaimKey,
   detectClaimContradiction,
   extractCandidateClaimsFromRawEvents,
-  type ClaimExtractionRawEvent,
 } from './index.js';
+import type { ClaimExtractionRawEvent } from './index.js';
 
 function rawEvent(input: Partial<ClaimExtractionRawEvent> = {}): ClaimExtractionRawEvent {
   return {
@@ -55,7 +55,7 @@ describe('extractCandidateClaimsFromRawEvents', () => {
       }),
     ]);
 
-    expect(claims.map((claim) => claim.kind)).toEqual(['preference', 'follow_up']);
+    expect(claims.map((claim) => claim.kind)).toStrictEqual(['preference', 'follow_up']);
   });
 
   test('extracts deterministic candidates from Claude user prompts', () => {
@@ -87,12 +87,14 @@ describe('extractCandidateClaimsFromRawEvents', () => {
           payload: { hook_event_name: 'Stop' },
         }),
       ]),
-    ).toEqual([]);
+    ).toStrictEqual([]);
   });
 
   test('computes stable candidate keys', () => {
     const [claim] = extractCandidateClaimsFromRawEvents([rawEvent()]);
-    if (claim === undefined) throw new Error('expected claim');
+    if (claim === undefined) {
+      throw new Error('expected claim');
+    }
 
     expect(candidateClaimKey(claim)).toBe(candidateClaimKey({ ...claim }));
     expect(

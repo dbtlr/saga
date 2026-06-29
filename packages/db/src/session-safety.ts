@@ -4,11 +4,11 @@ import { sql as drizzleSql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import {
-  importRawSessionRecordInTransaction,
-  type RawSessionContentType,
-  type RawSessionHarness,
-  type RawSessionImportResult,
+import { importRawSessionRecordInTransaction } from './raw-session-import.js';
+import type {
+  RawSessionContentType,
+  RawSessionHarness,
+  RawSessionImportResult,
 } from './raw-session-import.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -24,14 +24,14 @@ type NormalizedSessionRedactionPattern = {
 };
 export type SessionSafetyOriginClassification = 'api' | 'cli' | 'custom' | 'test';
 
-export interface DeleteSessionSafetyInput {
+export type DeleteSessionSafetyInput = {
   id: string;
   origin?: string | undefined;
   reason?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface DeleteSessionSafetyResult {
+export type DeleteSessionSafetyResult = {
   deletedAt: Date;
   operation: 'deleted';
   originClassification: SessionSafetyOriginClassification;
@@ -45,24 +45,24 @@ export interface DeleteSessionSafetyResult {
     segments: number;
     turns: number;
   };
-}
+};
 
-export interface SessionRedactionPattern {
+export type SessionRedactionPattern = {
   flags?: string | undefined;
   kind: 'literal' | 'regex';
   pattern: string;
   replacement?: string | undefined;
-}
+};
 
-export interface RedactSessionSafetyInput {
+export type RedactSessionSafetyInput = {
   id: string;
   origin?: string | undefined;
   patterns: readonly SessionRedactionPattern[];
   reason?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface RedactSessionSafetyResult {
+export type RedactSessionSafetyResult = {
   operation: 'redacted';
   originClassification: SessionSafetyOriginClassification;
   patternCount: number;
@@ -74,21 +74,21 @@ export interface RedactSessionSafetyResult {
   rawSessionImport: RawSessionImportResult;
   sessionId: string;
   workspaceId: string;
-}
+};
 
 export class SessionSafetyError extends Data.TaggedError('SessionSafetyError')<{
   readonly message: string;
 }> {}
 
-interface SessionIdentityRow {
+type SessionIdentityRow = {
   session_id: string;
-}
+};
 
-interface CountRow {
+type CountRow = {
   count: number | string;
-}
+};
 
-interface ActiveRawSessionRow {
+type ActiveRawSessionRow = {
   author_display_name: string | null;
   author_external_subject: string | null;
   author_handle: string;
@@ -111,7 +111,7 @@ interface ActiveRawSessionRow {
   source_binding_config: JsonRecord;
   source_binding_source_type: string;
   source_binding_source_uri: string;
-}
+};
 
 export function deleteSessionSafety(
   service: DatabaseService,
@@ -547,7 +547,9 @@ async function redactAssociatedRawEventsDb(
     workspaceId: string;
   },
 ): Promise<number> {
-  if (input.rawEventIds.length === 0) return 0;
+  if (input.rawEventIds.length === 0) {
+    return 0;
+  }
 
   const rows = rowsFromExecute<{
     actor_id: string;
@@ -597,7 +599,9 @@ async function redactAssociatedRawEventsDb(
       sessionRedaction.replacementCount +
       sourceRedaction.replacementCount +
       traceRedaction.replacementCount;
-    if (replacementCount === 0) continue;
+    if (replacementCount === 0) {
+      continue;
+    }
 
     redacted += 1;
     await invalidateClaimProjectionsForRawEventDb(db, {
@@ -647,7 +651,9 @@ async function invalidateClaimProjectionsForRawEventDb(
         and raw_event_id = ${input.rawEventId}
     `),
   );
-  if (claimRows.length === 0) return;
+  if (claimRows.length === 0) {
+    return;
+  }
 
   const claimKeys = [...new Set(claimRows.map((row) => row.claim_key))];
   await db.execute(drizzleSql`
@@ -702,7 +708,9 @@ async function countRows(
   input: { rawSessionRecordIds: readonly string[] } | { sessionId: string; workspaceId: string },
 ): Promise<number> {
   if ('rawSessionRecordIds' in input) {
-    if (input.rawSessionRecordIds.length === 0) return 0;
+    if (input.rawSessionRecordIds.length === 0) {
+      return 0;
+    }
     const rows = await sql<CountRow[]>`
       select count(*)::int as count
       from session_segment_embeddings
@@ -819,7 +827,7 @@ function compileRedactionRegex(pattern: NormalizedSessionRedactionPattern, index
 }
 
 function redactionRegexFlags(value: string | undefined): string {
-  const flags = new Set((value ?? '').split(''));
+  const flags = new Set([...(value ?? '')]);
   flags.add('g');
   return [...flags].join('');
 }
@@ -843,7 +851,9 @@ function validateRedactedContent(input: {
     return;
   }
   for (const line of input.rawContent.split(/\r?\n/u)) {
-    if (line.trim() === '') continue;
+    if (line.trim() === '') {
+      continue;
+    }
     parseJson(line, 'redacted JSONL line');
   }
 }
@@ -871,17 +881,23 @@ function hostFromSourceBinding(row: ActiveRawSessionRow): {
 }
 
 function parseHarness(value: string): RawSessionHarness {
-  if (value === 'claude' || value === 'codex') return value;
+  if (value === 'claude' || value === 'codex') {
+    return value;
+  }
   throw new SessionSafetyError({ message: `unsupported raw session harness: ${value}` });
 }
 
 function parseContentType(value: string): RawSessionContentType {
-  if (value === 'json' || value === 'jsonl' || value === 'text') return value;
+  if (value === 'json' || value === 'jsonl' || value === 'text') {
+    return value;
+  }
   throw new SessionSafetyError({ message: `unsupported raw session content type: ${value}` });
 }
 
 function parseSessionStatus(value: string): 'active' | 'completed' | undefined {
-  if (value === 'active' || value === 'completed') return value;
+  if (value === 'active' || value === 'completed') {
+    return value;
+  }
   return undefined;
 }
 
@@ -899,9 +915,15 @@ function normalizeOptional(value: string | undefined): string | undefined {
 }
 
 function classifyOrigin(value: string): SessionSafetyOriginClassification {
-  if (value === 'db-api') return 'api';
-  if (value === 'test') return 'test';
-  if (value.startsWith('saga sessions ')) return 'cli';
+  if (value === 'db-api') {
+    return 'api';
+  }
+  if (value === 'test') {
+    return 'test';
+  }
+  if (value.startsWith('saga sessions ')) {
+    return 'cli';
+  }
   return 'custom';
 }
 
@@ -914,8 +936,12 @@ function isPlainRecord(value: unknown): value is JsonRecord {
 }
 
 function rowsFromExecute<T>(value: unknown): T[] {
-  if (Array.isArray(value)) return value as T[];
-  if (isPlainRecord(value) && Array.isArray(value.rows)) return value.rows as T[];
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (isPlainRecord(value) && Array.isArray(value.rows)) {
+    return value.rows as T[];
+  }
   return [];
 }
 

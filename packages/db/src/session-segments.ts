@@ -1,13 +1,8 @@
 import { and, asc, eq } from 'drizzle-orm';
 
 import type { DatabaseService } from './database.js';
-import {
-  sessionSegments,
-  sessionTurns,
-  type NewSessionSegment,
-  type SessionSegment,
-  type SessionTurn,
-} from './schema.js';
+import { sessionSegments, sessionTurns } from './schema.js';
+import type { NewSessionSegment, SessionSegment, SessionTurn } from './schema.js';
 
 const DERIVER = 'session-segments-v1';
 const MAX_UNSPLIT_TOKENS = 1_200;
@@ -18,7 +13,7 @@ const SNIPPET_CHARS = 240;
 
 type JsonRecord = Record<string, unknown>;
 
-interface SegmentDraft {
+type SegmentDraft = {
   charEnd: number | null;
   charStart: number | null;
   metadata: JsonRecord;
@@ -28,22 +23,22 @@ interface SegmentDraft {
   tokenEnd: number | null;
   tokenStart: number | null;
   turn: SessionTurn;
-}
+};
 
-interface TextExtraction {
+type TextExtraction = {
   contentPartTypes: string[];
   filters: FilterReason[];
   searchText: string;
   skippedPartCount: number;
-}
+};
 
-interface FilterReason {
+type FilterReason = {
   partIndex: number;
   reason: string;
   type?: string | undefined;
-}
+};
 
-interface ToolGroupContext {
+type ToolGroupContext = {
   callId?: string | undefined;
   contentPartTypes: string[];
   filters: FilterReason[];
@@ -51,12 +46,12 @@ interface ToolGroupContext {
   memberIndex: number;
   skippedPartCount: number;
   turns: readonly SessionTurn[];
-}
+};
 
-interface ToolEvidence {
+type ToolEvidence = {
   callId: string;
   partType: 'tool_call' | 'tool_result';
-}
+};
 
 export async function insertDerivedSessionSegments(
   tx: DatabaseService['db'],
@@ -68,7 +63,9 @@ export async function insertDerivedSessionSegments(
 ): Promise<void> {
   const turns = await selectSegmentSourceTurns(tx, input);
   const values = deriveSessionSegmentsFromTurns(turns);
-  if (values.length === 0) return;
+  if (values.length === 0) {
+    return;
+  }
   await tx.insert(sessionSegments).values(values);
 }
 
@@ -93,7 +90,9 @@ export async function sessionSegmentsAreCurrent(
     )
     .orderBy(asc(sessionSegments.ordinal));
 
-  if (actual.length !== expected.length) return false;
+  if (actual.length !== expected.length) {
+    return false;
+  }
   return expected.every((expectedSegment, index) =>
     segmentMatches(actual[index], expectedSegment, index),
   );
@@ -149,7 +148,9 @@ async function selectSegmentSourceTurns(
 function deriveDraftsForSingleTurn(turn: SessionTurn, group?: ToolGroupContext): SegmentDraft[] {
   const extraction = extractGroupSearchText([turn]);
   if (extraction.searchText === '') {
-    if (extraction.skippedPartCount === 0 && extraction.contentPartTypes.length === 0) return [];
+    if (extraction.skippedPartCount === 0 && extraction.contentPartTypes.length === 0) {
+      return [];
+    }
     return [buildSkippedDraft(turn, extraction, group)];
   }
 
@@ -197,8 +198,12 @@ function buildSkippedDraft(
 
 function toolGroupMemberKind(turn: SessionTurn): string {
   const parts = Array.isArray(turn.contentParts) ? turn.contentParts.map(asRecord) : [];
-  if (parts.some((part) => readString(part.type) === 'tool_call')) return 'tool_group_call';
-  if (parts.some((part) => readString(part.type) === 'tool_result')) return 'tool_group_result';
+  if (parts.some((part) => readString(part.type) === 'tool_call')) {
+    return 'tool_group_call';
+  }
+  if (parts.some((part) => readString(part.type) === 'tool_result')) {
+    return 'tool_group_result';
+  }
   return 'tool_group_member';
 }
 
@@ -269,9 +274,15 @@ function partToSearchText(part: JsonRecord): string {
       .join(' ');
   }
 
-  if (typeof part.text === 'string') return part.text;
-  if (typeof part.output === 'string') return part.output;
-  if (typeof part.arguments === 'string') return part.arguments;
+  if (typeof part.text === 'string') {
+    return part.text;
+  }
+  if (typeof part.output === 'string') {
+    return part.output;
+  }
+  if (typeof part.arguments === 'string') {
+    return part.arguments;
+  }
   return stringifyForSearch(part);
 }
 
@@ -285,10 +296,14 @@ function filterSearchText(rawText: string): { reason?: string | undefined; text:
     .filter((line) => !/^(Exit code:|Wall time:|Output:)\b/u.test(line.trim()))
     .join('\n');
   const text = withoutBoilerplate.trim();
-  if (text === '') return { text: '' };
+  if (text === '') {
+    return { text: '' };
+  }
 
   const coarseReason = coarseFilterReason(text);
-  if (coarseReason !== undefined) return { reason: coarseReason, text: '' };
+  if (coarseReason !== undefined) {
+    return { reason: coarseReason, text: '' };
+  }
 
   const structuredRedaction = redactStructuredSecrets(text);
   const candidateLines = structuredRedaction.text.split(/\r?\n/u);
@@ -301,7 +316,9 @@ function filterSearchText(rawText: string): { reason?: string | undefined; text:
   }
 
   const normalized = normalizeSearchText(structuredRedaction.text);
-  if (!/[A-Za-z0-9]/u.test(normalized)) return { text: '' };
+  if (!/[A-Za-z0-9]/u.test(normalized)) {
+    return { text: '' };
+  }
   return {
     reason: structuredRedaction.redacted ? 'secret' : undefined,
     text: normalized,
@@ -309,15 +326,25 @@ function filterSearchText(rawText: string): { reason?: string | undefined; text:
 }
 
 function coarseFilterReason(text: string): string | undefined {
-  if (hasBinaryShape(text) || hasLargeBase64Blob(text)) return 'binary_or_base64';
-  if (isHugeRawLog(text)) return 'huge_raw_log';
-  if (isUnboundedDiff(text)) return 'unbounded_diff';
-  if (isRepeatedGeneratedFile(text)) return 'repeated_generated_file';
+  if (hasBinaryShape(text) || hasLargeBase64Blob(text)) {
+    return 'binary_or_base64';
+  }
+  if (isHugeRawLog(text)) {
+    return 'huge_raw_log';
+  }
+  if (isUnboundedDiff(text)) {
+    return 'unbounded_diff';
+  }
+  if (isRepeatedGeneratedFile(text)) {
+    return 'repeated_generated_file';
+  }
   return undefined;
 }
 
 function hasBinaryShape(text: string): boolean {
-  if (text.includes(String.fromCharCode(0))) return true;
+  if (text.includes(String.fromCharCode(0))) {
+    return true;
+  }
   let controlCount = 0;
   for (const char of text) {
     const code = char.charCodeAt(0);
@@ -339,7 +366,9 @@ function hasLargeBase64Blob(text: string): boolean {
 
 function isHugeRawLog(text: string): boolean {
   const lines = text.split(/\r?\n/u);
-  if (text.length > 50_000 || lines.length > 800) return true;
+  if (text.length > 50_000 || lines.length > 800) {
+    return true;
+  }
   const logLikeLines = lines.filter((line) =>
     /^(?:\[[^\]]+\]|\d{4}-\d{2}-\d{2}[T ]|\w+:\s|at\s+\S+\s+\()/u.test(line.trim()),
   );
@@ -355,7 +384,9 @@ function isUnboundedDiff(text: string): boolean {
 }
 
 function isRepeatedGeneratedFile(text: string): boolean {
-  if (text.length < 8_000) return false;
+  if (text.length < 8_000) {
+    return false;
+  }
   if (
     /\b(?:generated|auto-generated|do not edit|routeTree\.gen|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)\b/iu.test(
       text,
@@ -368,7 +399,9 @@ function isRepeatedGeneratedFile(text: string): boolean {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => line !== '');
-  if (lines.length < 100) return false;
+  if (lines.length < 100) {
+    return false;
+  }
   return new Set(lines).size / lines.length < 0.25;
 }
 
@@ -395,15 +428,17 @@ function redactStructuredSecrets(text: string): { redacted: boolean; text: strin
   return { redacted, text: redactedText };
 }
 
-function splitSearchText(text: string): Array<{
+function splitSearchText(text: string): {
   charEnd: number;
   charStart: number;
   text: string;
   tokenEnd: number;
   tokenStart: number;
-}> {
+}[] {
   const tokens = tokenize(text);
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) {
+    return [];
+  }
   if (tokens.length <= MAX_UNSPLIT_TOKENS) {
     return [
       {
@@ -430,13 +465,13 @@ function splitSearchText(text: string): Array<{
     ),
   );
   const stride = chunkSize - CHUNK_OVERLAP_TOKENS;
-  const chunks: Array<{
+  const chunks: {
     charEnd: number;
     charStart: number;
     text: string;
     tokenEnd: number;
     tokenStart: number;
-  }> = [];
+  }[] = [];
 
   for (let tokenStart = 0; tokenStart < tokens.length; tokenStart += stride) {
     const tokenEnd = Math.min(tokens.length, tokenStart + chunkSize);
@@ -449,13 +484,15 @@ function splitSearchText(text: string): Array<{
       tokenEnd,
       tokenStart,
     });
-    if (tokenEnd === tokens.length) break;
+    if (tokenEnd === tokens.length) {
+      break;
+    }
   }
 
   return chunks;
 }
 
-function tokenize(text: string): Array<{ end: number; start: number }> {
+function tokenize(text: string): { end: number; start: number }[] {
   return Array.from(text.matchAll(/\S+/gu), (match) => ({
     end: (match.index ?? 0) + match[0].length,
     start: match.index ?? 0,
@@ -514,7 +551,9 @@ function buildSegmentMetadata(
     })),
     turnOrdinal: primaryTurn.ordinal,
   });
-  if (chunk.toolGroup === undefined) return metadata;
+  if (chunk.toolGroup === undefined) {
+    return metadata;
+  }
 
   return {
     ...metadata,
@@ -571,7 +610,9 @@ function buildSkippedSegmentMetadata(
     })),
     turnOrdinal: primaryTurn.ordinal,
   });
-  if (toolGroup === undefined) return metadata;
+  if (toolGroup === undefined) {
+    return metadata;
+  }
 
   return {
     ...metadata,
@@ -595,7 +636,7 @@ function contentPartTypes(turn: SessionTurn): string[] {
 }
 
 function uniqueFilterReasons(filters: readonly FilterReason[]): string[] {
-  return Array.from(new Set(filters.map((filter) => filter.reason))).sort();
+  return [...new Set(filters.map((filter) => filter.reason))].toSorted();
 }
 
 function segmentRawSpan(
@@ -609,7 +650,9 @@ function segmentRawSpan(
   }
 
   const isFullTurn = chunk.charStart === 0 && chunk.charEnd === chunk.searchTextLength;
-  if (isFullTurn) return rawSpan;
+  if (isFullTurn) {
+    return rawSpan;
+  }
 
   const estimatedStart = Math.min(rawCharStart + chunk.charStart, rawCharEnd);
   const estimatedEnd = Math.min(rawCharStart + chunk.charEnd, rawCharEnd);
@@ -649,11 +692,17 @@ function buildToolGroupContexts(turns: readonly SessionTurn[]): Map<string, Tool
     }
 
     for (const [callId, entries] of entriesByCallId) {
-      if (entries.calls.length !== 1 || entries.results.length !== 1) continue;
+      if (entries.calls.length !== 1 || entries.results.length !== 1) {
+        continue;
+      }
       const callTurn = entries.calls[0];
       const resultTurn = entries.results[0];
-      if (callTurn === undefined || resultTurn === undefined) continue;
-      if (callTurn.ordinal >= resultTurn.ordinal) continue;
+      if (callTurn === undefined || resultTurn === undefined) {
+        continue;
+      }
+      if (callTurn.ordinal >= resultTurn.ordinal) {
+        continue;
+      }
 
       const groupTurns = [callTurn, resultTurn] as const;
       const groupExtraction = extractGroupSearchText(groupTurns);
@@ -694,7 +743,9 @@ function contiguousToolStreams(turns: readonly SessionTurn[]): SessionTurn[][] {
     }
   }
 
-  if (current.length > 0) streams.push(current);
+  if (current.length > 0) {
+    streams.push(current);
+  }
   return streams;
 }
 
@@ -712,10 +763,14 @@ function unambiguousToolEvidence(turn: SessionTurn): ToolEvidence | undefined {
     const type = readString(entry.type);
     return type === 'tool_call' || type === 'tool_result';
   });
-  if (toolParts.length !== 1) return undefined;
+  if (toolParts.length !== 1) {
+    return undefined;
+  }
 
   const [part] = toolParts;
-  if (part === undefined) return undefined;
+  if (part === undefined) {
+    return undefined;
+  }
   const partType = readString(part.type);
   const callId = readString(part.callId);
   if ((partType !== 'tool_call' && partType !== 'tool_result') || callId === undefined) {
@@ -729,7 +784,9 @@ function segmentMatches(
   expected: NewSessionSegment,
   expectedOrdinal: number,
 ): boolean {
-  if (actual === undefined) return false;
+  if (actual === undefined) {
+    return false;
+  }
   return (
     actual.activityIntervalId === expected.activityIntervalId &&
     nullableEqual(actual.charEnd, expected.charEnd) &&
@@ -768,9 +825,15 @@ function normalizeSearchText(text: string): string {
 }
 
 function stringifyForSearch(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value === undefined || value === null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
   try {
     return JSON.stringify(value);
   } catch {
@@ -797,13 +860,19 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 }
 
 function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value !== 'object' || value === null) return value;
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
   return Object.fromEntries(
     Object.entries(value as JsonRecord)
       .filter(([, entryValue]) => entryValue !== undefined)
-      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),
   );
 }

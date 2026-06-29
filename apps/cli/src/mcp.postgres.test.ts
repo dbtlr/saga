@@ -53,14 +53,16 @@ describePostgres('MCP session recall postgres integration', () => {
   });
 
   test('lists, searches, and expands imported session context through MCP tools', async () => {
-    if (projectRoot === undefined) throw new Error('project root was not initialized');
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
     const inputPath = join(projectRoot, 'mcp-session.jsonl');
     const linuxCwd = '/work/saga';
     const linuxProjectRoot = '/home/drew/work/saga';
     const linuxTranscriptPath = '/work/saga/mcp-session.jsonl';
     const customRoot = '/custom-root/saga';
     const fileUri = 'file:///tmp/saga/session.jsonl';
-    const windowsTranscriptPath = 'C:\\Users\\drew\\.codex\\transcripts\\session.jsonl';
+    const windowsTranscriptPath = String.raw`C:\Users\drew\.codex\transcripts\session.jsonl`;
     const linuxUnsafePaths = [
       linuxCwd,
       linuxProjectRoot,
@@ -197,7 +199,9 @@ describePostgres('MCP session recall postgres integration', () => {
   });
 
   test('does not return redacted raw event evidence through MCP search_memory or CLI recent events', async () => {
-    if (projectRoot === undefined) throw new Error('project root was not initialized');
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
     const inputPath = join(projectRoot, 'mcp-redacted-raw-event.jsonl');
     const secret = 'mcp-raw-event-secret-token';
     writeFileSync(
@@ -295,15 +299,15 @@ describePostgres('MCP session recall postgres integration', () => {
   });
 });
 
-interface ToolResult {
+type ToolResult = {
   content: Array<{
     text: string;
     type: 'text';
   }>;
   structuredContent: unknown;
-}
+};
 
-interface ImportResult {
+type ImportResult = {
   session: {
     harnessSessionId: string;
     id: string;
@@ -312,11 +316,13 @@ interface ImportResult {
   sourceBinding: {
     id: string;
   };
-}
+};
 
 function parseImportResult(output: string): ImportResult {
   const parsed = JSON.parse(output) as unknown;
-  if (!isRecord(parsed)) throw new Error('import output was not an object');
+  if (!isRecord(parsed)) {
+    throw new Error('import output was not an object');
+  }
   const session = parsed.session;
   const sourceBinding = parsed.sourceBinding;
   if (!isRecord(session) || !isRecord(sourceBinding)) {
@@ -347,17 +353,29 @@ function parseImportResult(output: string): ImportResult {
 }
 
 function firstSegmentId(structuredContent: unknown): string {
-  if (!isRecord(structuredContent)) return '';
+  if (!isRecord(structuredContent)) {
+    return '';
+  }
   const sessions = structuredContent.sessions;
-  if (!Array.isArray(sessions)) return '';
+  if (!Array.isArray(sessions)) {
+    return '';
+  }
   const firstSession = sessions[0];
-  if (!isRecord(firstSession)) return '';
+  if (!isRecord(firstSession)) {
+    return '';
+  }
   const matches = firstSession.matches;
-  if (!Array.isArray(matches)) return '';
+  if (!Array.isArray(matches)) {
+    return '';
+  }
   const firstMatch = matches[0];
-  if (!isRecord(firstMatch)) return '';
+  if (!isRecord(firstMatch)) {
+    return '';
+  }
   const segment = firstMatch.segment;
-  if (!isRecord(segment)) return '';
+  if (!isRecord(segment)) {
+    return '';
+  }
   return typeof segment.id === 'string' ? segment.id : '';
 }
 
@@ -368,7 +386,7 @@ function expectNoUnsafeMcpStructuredContent(
   const serialized = JSON.stringify(structuredContent);
   for (const unsafePath of [input.inputPath, input.projectRoot, ...(input.extraPaths ?? [])]) {
     expect(serialized).not.toContain(unsafePath);
-    expect(serialized).not.toContain(unsafePath.replaceAll('\\', '\\\\'));
+    expect(serialized).not.toContain(unsafePath.replaceAll('\\', String.raw`\\`));
   }
   expect(serialized).not.toContain('sourceLocator');
   expect(serialized).not.toContain('"config"');

@@ -2,11 +2,12 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import { contextIndexEntries, sourceBindings, type ContextIndexEntry } from './schema.js';
+import { contextIndexEntries, sourceBindings } from './schema.js';
+import type { ContextIndexEntry } from './schema.js';
 
 export type ContextIndexIncludePolicy = 'always' | 'when_relevant' | 'never';
 
-export interface UpsertContextIndexEntryInput {
+export type UpsertContextIndexEntryInput = {
   description?: string | null | undefined;
   externalId: string;
   importance?: number | undefined;
@@ -17,33 +18,33 @@ export interface UpsertContextIndexEntryInput {
   sourceBindingId: string;
   title: string;
   workspaceId: string;
-}
+};
 
-export interface ListContextIndexEntriesInput {
+export type ListContextIndexEntriesInput = {
   includePolicies?: readonly ContextIndexIncludePolicy[] | undefined;
   limit?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface ResolveSagaLinkInput {
+export type ResolveSagaLinkInput = {
   sagaLink: string;
   workspaceId: string;
-}
+};
 
-export interface ContextIndexSourceBinding {
+export type ContextIndexSourceBinding = {
   config: Record<string, unknown>;
   displayName: string | null;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface ContextIndexEntryWithSource extends ContextIndexEntry {
+export type ContextIndexEntryWithSource = {
   sourceBinding: ContextIndexSourceBinding;
-}
+} & ContextIndexEntry;
 
-export interface ResolvedSagaLink {
+export type ResolvedSagaLink = {
   entry: ContextIndexEntryWithSource;
   provenance: {
     resolvedAt: string;
@@ -53,7 +54,7 @@ export interface ResolvedSagaLink {
     sourceUri: string;
     workspaceId: string;
   };
-}
+};
 
 export class ContextIndexError extends Data.TaggedError('ContextIndexError')<{
   readonly message: string;

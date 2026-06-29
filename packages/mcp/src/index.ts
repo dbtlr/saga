@@ -1,13 +1,13 @@
 export const packageName = '@saga/mcp';
 
-export interface JsonRpcRequest {
+export type JsonRpcRequest = {
   id?: number | string | null | undefined;
   jsonrpc: '2.0';
   method: string;
   params?: unknown;
-}
+};
 
-export interface JsonRpcResponse {
+export type JsonRpcResponse = {
   id: number | string | null;
   jsonrpc: '2.0';
   error?: {
@@ -15,19 +15,19 @@ export interface JsonRpcResponse {
     message: string;
   };
   result?: unknown;
-}
+};
 
-export interface ActiveContextToolResult {
+export type ActiveContextToolResult = {
   document: unknown;
   markdown: string;
-}
+};
 
-export interface SearchMemoryInput {
+export type SearchMemoryInput = {
   limit?: number | undefined;
   query: string;
-}
+};
 
-export interface SearchMemoryToolResult {
+export type SearchMemoryToolResult = {
   matches: Array<{
     confidence: number;
     key: string;
@@ -39,62 +39,62 @@ export interface SearchMemoryToolResult {
     text: string;
   }>;
   markdown: string;
-}
+};
 
-export interface ResolveSagaLinkInput {
+export type ResolveSagaLinkInput = {
   link: string;
-}
+};
 
-export interface ResolveSagaLinkToolResult {
+export type ResolveSagaLinkToolResult = {
   markdown: string;
   resolved: unknown;
-}
+};
 
-export interface ListRecentSessionsInput {
+export type ListRecentSessionsInput = {
   activeOnly?: boolean | undefined;
   harness?: string | undefined;
   limit?: number | undefined;
-}
+};
 
-export interface ListRecentSessionsToolResult {
+export type ListRecentSessionsToolResult = {
   markdown: string;
   sessions: unknown[];
-}
+};
 
-export interface SearchSessionsInput {
+export type SearchSessionsInput = {
   activityIntervalId?: string | undefined;
   limit?: number | undefined;
   minTrigramScore?: number | undefined;
   query: string;
   rawSessionRecordId?: string | undefined;
   sessionId?: string | undefined;
-}
+};
 
-export interface SearchSessionsToolResult {
+export type SearchSessionsToolResult = {
   markdown: string;
   recall: unknown;
-}
+};
 
-export interface GetSessionContextInput {
+export type GetSessionContextInput = {
   afterTurns?: number | undefined;
   beforeTurns?: number | undefined;
   segmentId: string;
   windowTurns?: number | undefined;
-}
+};
 
-export interface GetSessionContextToolResult {
+export type GetSessionContextToolResult = {
   context: unknown;
   markdown: string;
-}
+};
 
-export interface SagaMcpHandlers {
+export type SagaMcpHandlers = {
   getSessionContext: (input: GetSessionContextInput) => Promise<GetSessionContextToolResult>;
   getActiveContext: () => Promise<ActiveContextToolResult>;
   listRecentSessions: (input: ListRecentSessionsInput) => Promise<ListRecentSessionsToolResult>;
   resolveSagaLink: (input: ResolveSagaLinkInput) => Promise<ResolveSagaLinkToolResult>;
   searchMemory: (input: SearchMemoryInput) => Promise<SearchMemoryToolResult>;
   searchSessions: (input: SearchSessionsInput) => Promise<SearchSessionsToolResult>;
-}
+};
 
 export const SAGA_MCP_TOOLS = [
   {
@@ -233,7 +233,9 @@ export async function handleSagaMcpRequest(
   handlers: SagaMcpHandlers,
   request: JsonRpcRequest,
 ): Promise<JsonRpcResponse | undefined> {
-  if (request.id === undefined) return undefined;
+  if (request.id === undefined) {
+    return undefined;
+  }
 
   try {
     if (request.method === 'initialize') {
@@ -441,7 +443,9 @@ function parseGetSessionContextInput(
 }
 
 function parseOptionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`);
   }
@@ -449,7 +453,9 @@ function parseOptionalString(value: unknown, label: string): string | undefined 
 }
 
 function parseOptionalPositiveInteger(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive integer`);
   }
@@ -457,7 +463,9 @@ function parseOptionalPositiveInteger(value: unknown, label: string): number | u
 }
 
 function parseOptionalNonNegativeInteger(value: unknown, label: string): number | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`);
   }
