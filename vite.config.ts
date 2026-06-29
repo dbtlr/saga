@@ -59,8 +59,12 @@ const config = {
         'promise/avoid-new': 'off',
         'vitest/no-conditional-expect': 'off',
         'vitest/require-to-throw-message': 'off',
-        'vitest/require-hook': 'off',
         'vitest/valid-expect': 'off',
+        // SGA-170 GLOBAL-DISABLE CANDIDATE (for discussion): misfires on
+        // non-test entry points/scripts, and in real suites only flags the
+        // idiomatic describe-scope `const sql = postgres(...)` shared-connection
+        // pattern in DB-gated integration tests (unverifiable here, no DB).
+        'vitest/require-hook': 'off',
         'typescript/parameter-properties': 'off',
         'typescript/consistent-return': 'off',
         'typescript/no-misused-spread': 'off',
