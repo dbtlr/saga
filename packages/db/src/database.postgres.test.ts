@@ -257,6 +257,7 @@ describePostgres('postgres integration', () => {
         identitySource: 'host',
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await service.db.insert(users).values({
@@ -273,6 +274,7 @@ describePostgres('postgres integration', () => {
         identitySource: 'host',
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [otherHost] = await service.db
@@ -524,6 +526,7 @@ describePostgres('postgres integration', () => {
         sourceBindingId: otherSourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await expect(
@@ -534,6 +537,7 @@ describePostgres('postgres integration', () => {
         sourceBindingId: sourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [session] = await service.db
@@ -602,6 +606,7 @@ describePostgres('postgres integration', () => {
         sourceBindingId: otherSourceBinding.id,
         workspaceId: otherWorkspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [turn] = await service.db
@@ -649,6 +654,7 @@ describePostgres('postgres integration', () => {
         turnId: turn.id,
         workspaceId: otherWorkspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [embedding] = await service.db
@@ -677,6 +683,7 @@ describePostgres('postgres integration', () => {
         segmentId: segment.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [childSession] = await service.db
@@ -719,6 +726,7 @@ describePostgres('postgres integration', () => {
         sourceBindingId: sourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await service.db

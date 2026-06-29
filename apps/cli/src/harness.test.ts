@@ -318,7 +318,7 @@ describe('installHarness', () => {
         registerCodexSource: async () => ({ id: 'codex-source-id' }),
         target: 'codex',
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('EISDIR');
 
     expect(readBindingFile(projectRoot)?.harnesses?.codex).toBeUndefined();
     expect(existsSync(join(projectRoot, '.codex', 'hooks.json'))).toBe(false);
