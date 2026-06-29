@@ -1,7 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { useServerFn } from '@tanstack/react-start';
-import { useState, useTransition } from 'react';
-import type { FormEvent } from 'react';
+import { useCallback, useMemo, useState, useTransition } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 
 import type { ControlPlaneSnapshot } from '../server/control-plane.js';
 import {
@@ -105,22 +105,37 @@ function ClaimReviewItem({
   const review = useServerFn(reviewClaim);
   const [isPending, startTransition] = useTransition();
 
-  function runReview(
-    action: 'accept' | 'pin' | 'promote' | 'reject' | 'unpin' | 'unwatch' | 'watch',
-  ) {
-    if (!canEdit) {
-      return;
-    }
-    startTransition(async () => {
-      await review({
-        data: {
-          action,
-          claimKey: claim.key,
-        },
+  const runReview = useCallback(
+    (action: 'accept' | 'pin' | 'promote' | 'reject' | 'unpin' | 'unwatch' | 'watch') => {
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await review({
+          data: {
+            action,
+            claimKey: claim.key,
+          },
+        });
+        await router.invalidate();
       });
-      await router.invalidate();
-    });
-  }
+    },
+    [canEdit, claim.key, review, router],
+  );
+
+  const onAccept = useCallback(() => runReview('accept'), [runReview]);
+  const onReject = useCallback(() => runReview('reject'), [runReview]);
+  const onPromote = useCallback(() => runReview('promote'), [runReview]);
+  const onPinChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      runReview((event.target as HTMLInputElement).checked ? 'pin' : 'unpin'),
+    [runReview],
+  );
+  const onWatchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      runReview((event.target as HTMLInputElement).checked ? 'watch' : 'unwatch'),
+    [runReview],
+  );
 
   return (
     <li className="claim-review-item">
@@ -136,7 +151,7 @@ function ClaimReviewItem({
       <div className="claim-review-actions">
         <button
           disabled={!canEdit || isPending || claim.state === 'supported'}
-          onClick={() => runReview('accept')}
+          onClick={onAccept}
           type="button"
         >
           Accept
@@ -144,7 +159,7 @@ function ClaimReviewItem({
         <button
           className="danger-button"
           disabled={!canEdit || isPending || claim.state === 'rejected'}
-          onClick={() => runReview('reject')}
+          onClick={onReject}
           type="button"
         >
           Reject
@@ -157,7 +172,7 @@ function ClaimReviewItem({
             claim.state === 'rejected' ||
             claim.state === 'superseded'
           }
-          onClick={() => runReview('promote')}
+          onClick={onPromote}
           type="button"
         >
           Promote
@@ -168,9 +183,7 @@ function ClaimReviewItem({
           <input
             checked={claim.pinned}
             disabled={!canEdit || isPending}
-            onChange={(event) =>
-              runReview((event.target as HTMLInputElement).checked ? 'pin' : 'unpin')
-            }
+            onChange={onPinChange}
             type="checkbox"
           />
           <span>Pin</span>
@@ -179,9 +192,7 @@ function ClaimReviewItem({
           <input
             checked={claim.watched}
             disabled={!canEdit || isPending}
-            onChange={(event) =>
-              runReview((event.target as HTMLInputElement).checked ? 'watch' : 'unwatch')
-            }
+            onChange={onWatchChange}
             type="checkbox"
           />
           <span>Watch</span>
@@ -273,17 +284,37 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
   const [isPending, startTransition] = useTransition();
   const canEdit = snapshot.status === 'ready';
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canEdit) {
-      return;
-    }
-    startTransition(async () => {
-      await saveProfile({ data: { displayName, summary } });
-      setMessage('Saved');
-      await router.invalidate();
-    });
-  }
+  const submit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await saveProfile({ data: { displayName, summary } });
+        setMessage('Saved');
+        await router.invalidate();
+      });
+    },
+    [canEdit, displayName, summary, saveProfile, router],
+  );
+  const onDisplayNameChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setDisplayName((event.target as HTMLInputElement).value),
+    [],
+  );
+  const onSummaryChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) =>
+      setSummary((event.target as HTMLTextAreaElement).value),
+    [],
+  );
+  const definitionRows = useMemo<readonly (readonly [string, string])[]>(
+    () => [
+      ['Project', snapshot.projectRoot],
+      ['Workspace', snapshot.binding?.workspace.id ?? 'Not registered'],
+    ],
+    [snapshot.projectRoot, snapshot.binding?.workspace.id],
+  );
 
   return (
     <section>
@@ -296,7 +327,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           <span>Display name</span>
           <input
             disabled={!canEdit || isPending}
-            onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+            onChange={onDisplayNameChange}
             value={displayName}
           />
         </label>
@@ -304,7 +335,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           <span>Summary</span>
           <textarea
             disabled={!canEdit || isPending}
-            onChange={(event) => setSummary((event.target as HTMLTextAreaElement).value)}
+            onChange={onSummaryChange}
             rows={5}
             value={summary}
           />
@@ -313,12 +344,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           Save
         </button>
       </form>
-      <DefinitionList
-        rows={[
-          ['Project', snapshot.projectRoot],
-          ['Workspace', snapshot.binding?.workspace.id ?? 'Not registered'],
-        ]}
-      />
+      <DefinitionList rows={definitionRows} />
     </section>
   );
 }
@@ -363,23 +389,36 @@ function SourceBindingForm({
   const [message, setMessage] = useState('');
   const [isPending, startTransition] = useTransition();
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canEdit) {
-      return;
-    }
-    startTransition(async () => {
-      await saveBinding({
-        data: {
-          displayName,
-          enabled,
-          id: source.id,
-        },
+  const submit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await saveBinding({
+          data: {
+            displayName,
+            enabled,
+            id: source.id,
+          },
+        });
+        setMessage('Saved');
+        await router.invalidate();
       });
-      setMessage('Saved');
-      await router.invalidate();
-    });
-  }
+    },
+    [canEdit, displayName, enabled, source.id, saveBinding, router],
+  );
+  const onEnabledChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setEnabled((event.target as HTMLInputElement).checked),
+    [],
+  );
+  const onDisplayNameChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setDisplayName((event.target as HTMLInputElement).value),
+    [],
+  );
 
   return (
     <form className="source-binding-form" onSubmit={submit}>
@@ -392,7 +431,7 @@ function SourceBindingForm({
           <input
             checked={enabled}
             disabled={!canEdit || isPending}
-            onChange={(event) => setEnabled((event.target as HTMLInputElement).checked)}
+            onChange={onEnabledChange}
             type="checkbox"
           />
           <span>Enabled</span>
@@ -402,7 +441,7 @@ function SourceBindingForm({
         <span>Display name</span>
         <input
           disabled={!canEdit || isPending}
-          onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+          onChange={onDisplayNameChange}
           value={displayName}
         />
       </label>

@@ -28,22 +28,7 @@ const config = {
     // the smoke scripts all run on Node). control-plane is isomorphic, so it is
     // both a node and a react target.
     node: ['apps/**', 'packages/**', 'scripts/**'],
-    react: {
-      files: ['apps/control-plane/**'],
-      // react-perf rules are active only inside this scoped override, so they
-      // must be tuned here (a top-level rules disable wouldn't reach them).
-      // SGA-170 evaluated and deliberately disabled: control-plane is a
-      // low-traffic internal admin UI. Every flagged function-as-prop is an
-      // inline handler on a native DOM element (button/input/textarea/form),
-      // where a fresh closure per render triggers no extra re-render; several
-      // also close over per-item .map variables where useCallback can't help
-      // without memoizing children. The lone array-as-prop feeds a static
-      // two-row list. Memoizing here is pure churn for no measurable gain.
-      rules: {
-        'react-perf/jsx-no-new-function-as-prop': 'off',
-        'react-perf/jsx-no-new-array-as-prop': 'off',
-      },
-    },
+    react: ['apps/control-plane/**'],
     lint: {
       // routeTree.gen.ts and other generated files are generator-owned.
       ignores: ['**/*.generated.ts', '**/*.gen.ts'],
