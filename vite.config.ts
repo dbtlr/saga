@@ -82,7 +82,6 @@ export default {
         'no-underscore-dangle': 'off',
         'func-names': 'off',
         'no-new': 'off',
-        'no-duplicate-imports': 'off',
         'import/no-anonymous-default-export': 'off',
       },
       overrides: [
