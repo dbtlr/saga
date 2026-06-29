@@ -142,8 +142,11 @@ describe('waitForForegroundChild', () => {
     const service = new FakeChildProcess({ autoExitOnKill: false });
     let resolved = false;
 
+    // Intentional .then: the test asserts the promise has NOT settled yet
+    // (resolved === false) before the child exits; awaiting here would block that check.
     const result = waitForForegroundChild(foreground as unknown as ChildProcess, [
       service as unknown as ChildProcess,
+      // oxlint-disable-next-line promise/prefer-await-to-then
     ]).then((code) => {
       resolved = true;
       return code;

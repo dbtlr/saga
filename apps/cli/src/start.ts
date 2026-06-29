@@ -282,11 +282,12 @@ export function waitForForegroundChild(
       removeSignalHandlers();
       reject(error);
     };
-    const onSignal = (signal: NodeJS.Signals) => {
+    const onSignal = async (signal: NodeJS.Signals): Promise<void> => {
       for (const child of children) {
         signalChild(child, signal);
       }
-      void waitForChildExit(foreground).then(() => settle(signal === 'SIGINT' ? 130 : 143));
+      await waitForChildExit(foreground);
+      settle(signal === 'SIGINT' ? 130 : 143);
     };
 
     process.once('SIGINT', onSignal);

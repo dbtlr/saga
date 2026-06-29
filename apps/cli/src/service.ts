@@ -96,8 +96,12 @@ export async function runServiceCommand(
 export async function runService(options: RenderOptions): Promise<string> {
   const config = await Effect.runPromise(loadRuntimeConfig());
   const service = await startSagaService(config);
-  process.once('SIGINT', () => void service.close().then(() => process.exit(0)));
-  process.once('SIGTERM', () => void service.close().then(() => process.exit(0)));
+  const closeAndExit = async (): Promise<void> => {
+    await service.close();
+    process.exit(0);
+  };
+  process.once('SIGINT', () => void closeAndExit());
+  process.once('SIGTERM', () => void closeAndExit());
 
   return formatCommandOutput(
     {

@@ -63,7 +63,6 @@ const config = {
         // pattern in DB-gated integration tests (unverifiable here, no DB).
         'vitest/require-hook': 'off',
         'promise/prefer-await-to-callbacks': 'off',
-        'promise/prefer-await-to-then': 'off',
       },
       overrides: [
         forbid(
