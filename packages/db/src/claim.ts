@@ -132,6 +132,9 @@ export function insertExtractedCandidateClaims(
   service: DatabaseService,
   candidates: readonly CandidateClaim[],
 ): Effect.Effect<ClaimProjectionResult[], ClaimProjectionError | DatabaseError> {
+  // False positive: Effect.forEach(iterable, fn) is not Array.prototype.forEach;
+  // the second arg is the effectful callback, not a thisArg.
+  // oxlint-disable-next-line unicorn/no-array-method-this-argument
   return Effect.forEach(candidates, (candidate) =>
     insertExtractedCandidateClaim(service, candidate),
   );

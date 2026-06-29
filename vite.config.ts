@@ -71,7 +71,6 @@ const config = {
         'unicorn/no-nested-ternary': 'off',
         'unicorn/consistent-function-scoping': 'off',
         'unicorn/custom-error-definition': 'off',
-        'unicorn/no-array-method-this-argument': 'off',
         'oxc/no-map-spread': 'off',
         'no-underscore-dangle': 'off',
         'func-names': 'off',
