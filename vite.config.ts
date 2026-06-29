@@ -73,7 +73,6 @@ const config = {
         'unicorn/consistent-function-scoping': 'off',
         'unicorn/custom-error-definition': 'off',
         'oxc/no-map-spread': 'off',
-        'no-new': 'off',
       },
       overrides: [
         forbid(

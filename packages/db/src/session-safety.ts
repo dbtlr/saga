@@ -814,6 +814,9 @@ function redactJsonValue(
 function compileRedactionRegex(pattern: NormalizedSessionRedactionPattern, index: number): RegExp {
   const flags = redactionRegexFlags(pattern.flags);
   try {
+    // Validation probe: constructing with an empty source isolates a flags-only
+    // failure from a pattern-syntax failure; the instance is intentionally discarded.
+    // oxlint-disable-next-line no-new
     new RegExp('', flags);
   } catch {
     throw invalidRedactionRegexError(index, 'flags');
