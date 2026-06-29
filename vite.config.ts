@@ -65,7 +65,18 @@ const config = {
         'vitest/require-hook': 'off',
         // === Pending fix in the rule loop (SGA-170) ===
         'typescript/no-unsafe-type-assertion': 'off',
-        'new-cap': 'off',
+        // new-cap fires on capitalized factory idioms that are correct without
+        // `new`: Effect's Data.TaggedError / Context.GenericTag and our Effect
+        // Layer constructors (e.g. DatabaseLive, RuntimeConfigLive). Exempt those
+        // factory shapes rather than scatter per-line disables; genuine
+        // missing-`new` constructor bugs are still flagged.
+        'new-cap': [
+          'warn',
+          {
+            capIsNewExceptions: ['Data.TaggedError', 'Context.GenericTag'],
+            capIsNewExceptionPattern: 'Live$',
+          },
+        ],
       },
       overrides: [
         forbid(
