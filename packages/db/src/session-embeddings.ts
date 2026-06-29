@@ -465,8 +465,12 @@ function openAiHttpFailureCategory(status: number): string {
       return 'rate limited';
     }
     default: {
-      if (status >= 400 && status < 500) return 'client error';
-      if (status >= 500 && status < 600) return 'server error';
+      if (status >= 400 && status < 500) {
+        return 'client error';
+      }
+      if (status >= 500 && status < 600) {
+        return 'server error';
+      }
       return 'unexpected status';
     }
   }

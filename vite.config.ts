@@ -84,7 +84,6 @@ export default {
         'func-names': 'off',
         'no-new': 'off',
         'no-duplicate-imports': 'off',
-        curly: 'off',
         'import/no-duplicates': 'off',
         'import/no-anonymous-default-export': 'off',
       },
