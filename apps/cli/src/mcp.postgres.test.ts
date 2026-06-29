@@ -1,43 +1,45 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import postgres from "postgres";
-import { insertRawEvent, makeDatabase } from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { ingestClaims, inspectRecentRawEvents } from "./ingest.js";
-import { initProject } from "./init.js";
-import { createProjectMcpServer } from "./mcp.js";
-import { runSessionsCommand } from "./sessions.js";
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { insertRawEvent, makeDatabase } from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
+import { ingestClaims, inspectRecentRawEvents } from './ingest.js';
+import { initProject } from './init.js';
+import { createProjectMcpServer } from './mcp.js';
+import { runSessionsCommand } from './sessions.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 const renderOptions = {
   ascii: true,
-  color: "never",
-  format: "records",
+  color: 'never',
+  format: 'records',
   isTty: false,
 } as const;
 const jsonRenderOptions = {
   ...renderOptions,
-  format: "json",
+  format: 'json',
 } as const;
 
-describePostgres("MCP session recall postgres integration", () => {
+describePostgres('MCP session recall postgres integration', () => {
   const databaseName = `saga_mcp_recall_${Date.now().toString(36)}`;
-  const adminSql = postgres(databaseUrl ?? "", { max: 1 });
+  const adminSql = postgres(databaseUrl ?? '', { max: 1 });
   let previousDatabaseUrl: string | undefined;
   let projectRoot: string | undefined;
 
   beforeAll(async () => {
     await adminSql.unsafe(`create database "${databaseName}"`);
-    const url = new URL(databaseUrl ?? "");
+    const url = new URL(databaseUrl ?? '');
     url.pathname = `/${databaseName}`;
     previousDatabaseUrl = process.env.DATABASE_URL;
     process.env.DATABASE_URL = url.toString();
-    projectRoot = mkdtempSync(join(tmpdir(), "saga-mcp-recall-"));
-    await initProject({ cwd: projectRoot, handle: "MCP Recall" });
+    projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-recall-'));
+    await initProject({ cwd: projectRoot, handle: 'MCP Recall' });
   });
 
   afterAll(async () => {
@@ -50,15 +52,17 @@ describePostgres("MCP session recall postgres integration", () => {
     await adminSql.end({ timeout: 5 });
   });
 
-  test("lists, searches, and expands imported session context through MCP tools", async () => {
-    if (projectRoot === undefined) throw new Error("project root was not initialized");
-    const inputPath = join(projectRoot, "mcp-session.jsonl");
-    const linuxCwd = "/work/saga";
-    const linuxProjectRoot = "/home/drew/work/saga";
-    const linuxTranscriptPath = "/work/saga/mcp-session.jsonl";
-    const customRoot = "/custom-root/saga";
-    const fileUri = "file:///tmp/saga/session.jsonl";
-    const windowsTranscriptPath = "C:\\Users\\drew\\.codex\\transcripts\\session.jsonl";
+  test('lists, searches, and expands imported session context through MCP tools', async () => {
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
+    const inputPath = join(projectRoot, 'mcp-session.jsonl');
+    const linuxCwd = '/work/saga';
+    const linuxProjectRoot = '/home/drew/work/saga';
+    const linuxTranscriptPath = '/work/saga/mcp-session.jsonl';
+    const customRoot = '/custom-root/saga';
+    const fileUri = 'file:///tmp/saga/session.jsonl';
+    const windowsTranscriptPath = String.raw`C:\Users\drew\.codex\transcripts\session.jsonl`;
     const linuxUnsafePaths = [
       linuxCwd,
       linuxProjectRoot,
@@ -72,33 +76,33 @@ describePostgres("MCP session recall postgres integration", () => {
       [
         JSON.stringify({
           text: `MCP recall sentinel phrase for SGA-130 search with imported path evidence ${linuxCwd} ${linuxProjectRoot} ${customRoot} ${fileUri} ${windowsTranscriptPath} kept around plain words`,
-          type: "user",
+          type: 'user',
         }),
         JSON.stringify({
           text: `The assistant response provides MCP surrounding context from ${customRoot}/session.log and ${fileUri} plus ${windowsTranscriptPath} with non-sensitive summary intact`,
-          type: "assistant",
+          type: 'assistant',
         }),
-        "",
-      ].join("\n"),
+        '',
+      ].join('\n'),
     );
 
     await runSessionsCommand(
       [
-        "import",
+        'import',
         inputPath,
-        "--harness",
-        "codex",
-        "--harness-session-id",
-        "mcp-recall-session",
-        "--host-project-root",
+        '--harness',
+        'codex',
+        '--harness-session-id',
+        'mcp-recall-session',
+        '--host-project-root',
         linuxProjectRoot,
-        "--metadata",
+        '--metadata',
         JSON.stringify({
           cwd: linuxCwd,
           note: `cwd=${linuxCwd}`,
           windowsTranscriptPath,
         }),
-        "--provenance",
+        '--provenance',
         JSON.stringify({ transcriptPath: linuxTranscriptPath, windowsTranscriptPath }),
       ],
       renderOptions,
@@ -107,20 +111,20 @@ describePostgres("MCP session recall postgres integration", () => {
 
     const server = createProjectMcpServer({ cwd: projectRoot });
     const recent = await server.handle({
-      id: "recent",
-      jsonrpc: "2.0",
-      method: "tools/call",
+      id: 'recent',
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
         arguments: {
           limit: 5,
         },
-        name: "list_recent_sessions",
+        name: 'list_recent_sessions',
       },
     });
     const recentResult = recent?.result as ToolResult | undefined;
-    expect(recentResult?.content[0]?.text).toContain("Recent Saga Sessions");
-    expect(recentResult?.content[0]?.text).toContain("mcp-recall-session");
-    expect(recentResult?.content[0]?.text).toContain("Host user");
+    expect(recentResult?.content[0]?.text).toContain('Recent Saga Sessions');
+    expect(recentResult?.content[0]?.text).toContain('mcp-recall-session');
+    expect(recentResult?.content[0]?.text).toContain('Host user');
     expect(recentResult?.content[0]?.text).not.toContain(inputPath);
     expect(recentResult?.content[0]?.text).not.toContain(projectRoot);
     for (const unsafePath of linuxUnsafePaths) {
@@ -133,22 +137,22 @@ describePostgres("MCP session recall postgres integration", () => {
     });
 
     const search = await server.handle({
-      id: "search",
-      jsonrpc: "2.0",
-      method: "tools/call",
+      id: 'search',
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
         arguments: {
-          query: "imported path evidence",
+          query: 'imported path evidence',
         },
-        name: "search_sessions",
+        name: 'search_sessions',
       },
     });
     const searchResult = search?.result as ToolResult | undefined;
-    expect(searchResult?.content[0]?.text).toContain("Saga Session Search");
-    expect(searchResult?.content[0]?.text).toContain("Mode: lexical-only");
-    expect(searchResult?.content[0]?.text).toContain("imported path evidence");
-    expect(searchResult?.content[0]?.text).toContain("[local-path-redacted]");
-    expect(searchResult?.content[0]?.text).toContain("Retrieved Content");
+    expect(searchResult?.content[0]?.text).toContain('Saga Session Search');
+    expect(searchResult?.content[0]?.text).toContain('Mode: lexical-only');
+    expect(searchResult?.content[0]?.text).toContain('imported path evidence');
+    expect(searchResult?.content[0]?.text).toContain('[local-path-redacted]');
+    expect(searchResult?.content[0]?.text).toContain('Retrieved Content');
     expect(searchResult?.content[0]?.text).not.toContain(inputPath);
     expect(searchResult?.content[0]?.text).not.toContain(projectRoot);
     for (const unsafePath of linuxUnsafePaths) {
@@ -164,24 +168,24 @@ describePostgres("MCP session recall postgres integration", () => {
     expect(segmentId).toMatch(/[0-9a-f-]{36}/u);
 
     const context = await server.handle({
-      id: "context",
-      jsonrpc: "2.0",
-      method: "tools/call",
+      id: 'context',
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
         arguments: {
           segmentId,
           windowTurns: 1,
         },
-        name: "get_session_context",
+        name: 'get_session_context',
       },
     });
     const contextResult = context?.result as ToolResult | undefined;
-    expect(contextResult?.content[0]?.text).toContain("Saga Session Context");
-    expect(contextResult?.content[0]?.text).toContain("Segment 0 anchor");
-    expect(contextResult?.content[0]?.text).toContain("MCP recall sentinel");
-    expect(contextResult?.content[0]?.text).toContain("MCP surrounding context");
-    expect(contextResult?.content[0]?.text).toContain("imported path evidence");
-    expect(contextResult?.content[0]?.text).toContain("non-sensitive summary intact");
+    expect(contextResult?.content[0]?.text).toContain('Saga Session Context');
+    expect(contextResult?.content[0]?.text).toContain('Segment 0 anchor');
+    expect(contextResult?.content[0]?.text).toContain('MCP recall sentinel');
+    expect(contextResult?.content[0]?.text).toContain('MCP surrounding context');
+    expect(contextResult?.content[0]?.text).toContain('imported path evidence');
+    expect(contextResult?.content[0]?.text).toContain('non-sensitive summary intact');
     expect(contextResult?.content[0]?.text).not.toContain(inputPath);
     expect(contextResult?.content[0]?.text).not.toContain(projectRoot);
     for (const unsafePath of linuxUnsafePaths) {
@@ -194,23 +198,25 @@ describePostgres("MCP session recall postgres integration", () => {
     });
   });
 
-  test("does not return redacted raw event evidence through MCP search_memory or CLI recent events", async () => {
-    if (projectRoot === undefined) throw new Error("project root was not initialized");
-    const inputPath = join(projectRoot, "mcp-redacted-raw-event.jsonl");
-    const secret = "mcp-raw-event-secret-token";
+  test('does not return redacted raw event evidence through MCP search_memory or CLI recent events', async () => {
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
+    const inputPath = join(projectRoot, 'mcp-redacted-raw-event.jsonl');
+    const secret = 'mcp-raw-event-secret-token';
     writeFileSync(
       inputPath,
       [
         JSON.stringify({
           text: `The raw event safety test contains ${secret}`,
-          type: "user",
+          type: 'user',
         }),
-        "",
-      ].join("\n"),
+        '',
+      ].join('\n'),
     );
 
     const importOutput = await runSessionsCommand(
-      ["import", inputPath, "--harness", "codex", "--harness-session-id", "mcp-redacted-raw-event"],
+      ['import', inputPath, '--harness', 'codex', '--harness-session-id', 'mcp-redacted-raw-event'],
       jsonRenderOptions,
       { cwd: projectRoot },
     );
@@ -220,24 +226,24 @@ describePostgres("MCP session recall postgres integration", () => {
     try {
       await Effect.runPromise(
         insertRawEvent(service, {
-          actorId: "codex",
-          eventType: "codex.UserPromptSubmit",
-          externalEventId: "mcp-redacted-raw-event",
-          occurredAt: "2026-06-22T12:00:01.000Z",
+          actorId: 'codex',
+          eventType: 'codex.UserPromptSubmit',
+          externalEventId: 'mcp-redacted-raw-event',
+          occurredAt: '2026-06-22T12:00:01.000Z',
           payload: {
-            hook_event_name: "UserPromptSubmit",
+            hook_event_name: 'UserPromptSubmit',
             prompt: `Please remember raw hook prompt ${secret}.`,
           },
           provenance: {
-            hookEventName: "UserPromptSubmit",
+            hookEventName: 'UserPromptSubmit',
             prompt: `raw hook provenance ${secret}`,
           },
           sessionId: imported.session.harnessSessionId,
           sourceBindingId: imported.sourceBinding.id,
-          sourceId: "codex:local",
-          sourceType: "codex",
-          traceId: "mcp-redacted-raw-event-turn",
-          trustLevel: "raw",
+          sourceId: 'codex:local',
+          sourceType: 'codex',
+          traceId: 'mcp-redacted-raw-event-turn',
+          trustLevel: 'raw',
           workspaceId: imported.session.workspaceId,
         }),
       );
@@ -249,39 +255,39 @@ describePostgres("MCP session recall postgres integration", () => {
 
     const server = createProjectMcpServer({ cwd: projectRoot });
     const before = await server.handle({
-      id: "search-memory-before-redaction",
-      jsonrpc: "2.0",
-      method: "tools/call",
+      id: 'search-memory-before-redaction',
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
         arguments: {
           query: secret,
         },
-        name: "search_memory",
+        name: 'search_memory',
       },
     });
     expect(JSON.stringify((before?.result as ToolResult | undefined)?.structuredContent)).toContain(
       secret,
     );
 
-    await runSessionsCommand(["redact", imported.session.id, "--literal", secret], renderOptions, {
+    await runSessionsCommand(['redact', imported.session.id, '--literal', secret], renderOptions, {
       cwd: projectRoot,
     });
 
     const after = await server.handle({
-      id: "search-memory-after-redaction",
-      jsonrpc: "2.0",
-      method: "tools/call",
+      id: 'search-memory-after-redaction',
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
         arguments: {
           query: secret,
         },
-        name: "search_memory",
+        name: 'search_memory',
       },
     });
     const afterResult = after?.result as ToolResult | undefined;
     expect(afterResult?.content[0]?.text).toContain(`No matches for ${secret}`);
-    expect(afterResult?.content[0]?.text).not.toContain("raw hook prompt");
-    expect(afterResult?.content[0]?.text).not.toContain("raw_event");
+    expect(afterResult?.content[0]?.text).not.toContain('raw hook prompt');
+    expect(afterResult?.content[0]?.text).not.toContain('raw_event');
     expect(JSON.stringify(afterResult?.structuredContent)).not.toContain(secret);
 
     const recentRawEvents = await inspectRecentRawEvents(
@@ -289,19 +295,19 @@ describePostgres("MCP session recall postgres integration", () => {
       jsonRenderOptions,
     );
     expect(recentRawEvents).not.toContain(secret);
-    expect(recentRawEvents).toContain("[REDACTED]");
+    expect(recentRawEvents).toContain('[REDACTED]');
   });
 });
 
-interface ToolResult {
-  content: Array<{
+type ToolResult = {
+  content: {
     text: string;
-    type: "text";
-  }>;
+    type: 'text';
+  }[];
   structuredContent: unknown;
-}
+};
 
-interface ImportResult {
+type ImportResult = {
   session: {
     harnessSessionId: string;
     id: string;
@@ -310,27 +316,29 @@ interface ImportResult {
   sourceBinding: {
     id: string;
   };
-}
+};
 
 function parseImportResult(output: string): ImportResult {
   const parsed = JSON.parse(output) as unknown;
-  if (!isRecord(parsed)) throw new Error("import output was not an object");
+  if (!isRecord(parsed)) {
+    throw new Error('import output was not an object');
+  }
   const session = parsed.session;
   const sourceBinding = parsed.sourceBinding;
   if (!isRecord(session) || !isRecord(sourceBinding)) {
-    throw new Error("import output did not include session/source binding");
+    throw new Error('import output did not include session/source binding');
   }
   const harnessSessionId = session.harnessSessionId;
   const sessionId = session.id;
   const workspaceId = session.workspaceId;
   const sourceBindingId = sourceBinding.id;
   if (
-    typeof harnessSessionId !== "string" ||
-    typeof sessionId !== "string" ||
-    typeof workspaceId !== "string" ||
-    typeof sourceBindingId !== "string"
+    typeof harnessSessionId !== 'string' ||
+    typeof sessionId !== 'string' ||
+    typeof workspaceId !== 'string' ||
+    typeof sourceBindingId !== 'string'
   ) {
-    throw new Error("import output had invalid ids");
+    throw new Error('import output had invalid ids');
   }
   return {
     session: {
@@ -345,18 +353,30 @@ function parseImportResult(output: string): ImportResult {
 }
 
 function firstSegmentId(structuredContent: unknown): string {
-  if (!isRecord(structuredContent)) return "";
+  if (!isRecord(structuredContent)) {
+    return '';
+  }
   const sessions = structuredContent.sessions;
-  if (!Array.isArray(sessions)) return "";
+  if (!Array.isArray(sessions)) {
+    return '';
+  }
   const firstSession = sessions[0];
-  if (!isRecord(firstSession)) return "";
+  if (!isRecord(firstSession)) {
+    return '';
+  }
   const matches = firstSession.matches;
-  if (!Array.isArray(matches)) return "";
+  if (!Array.isArray(matches)) {
+    return '';
+  }
   const firstMatch = matches[0];
-  if (!isRecord(firstMatch)) return "";
+  if (!isRecord(firstMatch)) {
+    return '';
+  }
   const segment = firstMatch.segment;
-  if (!isRecord(segment)) return "";
-  return typeof segment.id === "string" ? segment.id : "";
+  if (!isRecord(segment)) {
+    return '';
+  }
+  return typeof segment.id === 'string' ? segment.id : '';
 }
 
 function expectNoUnsafeMcpStructuredContent(
@@ -366,12 +386,12 @@ function expectNoUnsafeMcpStructuredContent(
   const serialized = JSON.stringify(structuredContent);
   for (const unsafePath of [input.inputPath, input.projectRoot, ...(input.extraPaths ?? [])]) {
     expect(serialized).not.toContain(unsafePath);
-    expect(serialized).not.toContain(unsafePath.replaceAll("\\", "\\\\"));
+    expect(serialized).not.toContain(unsafePath.replaceAll('\\', String.raw`\\`));
   }
-  expect(serialized).not.toContain("sourceLocator");
+  expect(serialized).not.toContain('sourceLocator');
   expect(serialized).not.toContain('"config"');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -1,1 +1,1 @@
-export const packageName = "@saga/core";
+export const packageName = '@saga/core';

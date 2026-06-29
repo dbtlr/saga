@@ -1,10 +1,12 @@
-import type { RawEventEnvelope } from "@saga/contracts";
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { rawEvents, sourceBindings, type RawEvent } from "./schema.js";
+import type { RawEventEnvelope } from '@saga/contracts';
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
 
-export class RawEventInsertError extends Data.TaggedError("RawEventInsertError")<{
+import type { DatabaseError, DatabaseService } from './database.js';
+import { rawEvents, sourceBindings } from './schema.js';
+import type { RawEvent } from './schema.js';
+
+export class RawEventInsertError extends Data.TaggedError('RawEventInsertError')<{
   readonly message: string;
 }> {}
 
@@ -26,8 +28,8 @@ export function insertRawEvent(
           eventType: event.eventType,
           externalEventId: event.externalEventId,
           ingestedAt:
-            event.ingestedAt === undefined ? undefined : parseDate(event.ingestedAt, "ingestedAt"),
-          occurredAt: parseDate(event.occurredAt, "occurredAt"),
+            event.ingestedAt === undefined ? undefined : parseDate(event.ingestedAt, 'ingestedAt'),
+          occurredAt: parseDate(event.occurredAt, 'occurredAt'),
           payload: event.payload,
           provenance: event.provenance,
           sessionId: event.sessionId,
@@ -48,7 +50,9 @@ export function insertRawEvent(
         })
         .returning();
 
-      if (row !== undefined) return row;
+      if (row !== undefined) {
+        return row;
+      }
 
       const [existing] = await service.db
         .select()
@@ -64,7 +68,7 @@ export function insertRawEvent(
         .limit(1);
 
       if (existing === undefined) {
-        throw new RawEventInsertError({ message: "raw event insert returned no row" });
+        throw new RawEventInsertError({ message: 'raw event insert returned no row' });
       }
 
       return existing;
@@ -103,7 +107,7 @@ export function listCodexActivationRawEvents(
     workspaceId: string;
   },
 ): Effect.Effect<RawEvent[], RawEventInsertError> {
-  return listHarnessActivationRawEvents(service, { ...input, sourceType: "codex" });
+  return listHarnessActivationRawEvents(service, { ...input, sourceType: 'codex' });
 }
 
 export function listHarnessActivationRawEvents(
@@ -111,7 +115,7 @@ export function listHarnessActivationRawEvents(
   input: {
     limit?: number | undefined;
     sourceBindingId: string;
-    sourceType: "claude" | "codex";
+    sourceType: 'claude' | 'codex';
     workspaceId: string;
   },
 ): Effect.Effect<RawEvent[], RawEventInsertError> {
@@ -155,7 +159,7 @@ async function assertSourceBindingInWorkspace(
 
   if (sourceBinding === undefined) {
     throw new RawEventInsertError({
-      message: "raw event source binding must belong to the same workspace",
+      message: 'raw event source binding must belong to the same workspace',
     });
   }
 }

@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, test } from "vitest";
-import { SessionSafetyError } from "@saga/db";
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { SessionSafetyError } from '@saga/db';
 import type {
   DeleteSessionSafetyResult,
   RawSessionImportInput,
@@ -11,41 +11,43 @@ import type {
   RedactSessionSafetyResult,
   SessionDetail,
   SessionRawSessionRecordMetadata,
-} from "@saga/db";
-import { BINDING_FILE_NAME, writeBindingFile } from "./init.js";
-import { runSessionsCommand } from "./sessions.js";
+} from '@saga/db';
+import { describe, expect, it } from 'vitest';
+
+import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
+import { runSessionsCommand } from './sessions.js';
 
 const renderOptions = {
   ascii: true,
-  color: "never",
-  format: "json",
+  color: 'never',
+  format: 'json',
   isTty: false,
 } as const;
 
-describe("runSessionsCommand", () => {
-  test("imports a raw session file with Phase 1 metadata flags", async () => {
+describe('runSessionsCommand', () => {
+  it('imports a raw session file with Phase 1 metadata flags', async () => {
     const projectRoot = boundProject();
-    const inputPath = join(projectRoot, "session.jsonl");
+    const inputPath = join(projectRoot, 'session.jsonl');
     writeFileSync(inputPath, '{"type":"user","text":"Import this session"}\n');
     let capturedInput: RawSessionImportInput | undefined;
 
     const output = await runSessionsCommand(
       [
-        "import",
+        'import',
         inputPath,
-        "--harness",
-        "codex",
-        "--harness-session-id",
-        "codex-session-1",
-        "--model",
-        "gpt-5",
-        "--author",
-        "drew",
-        "--author-name",
-        "Drew",
-        "--metadata",
+        '--harness',
+        'codex',
+        '--harness-session-id',
+        'codex-session-1',
+        '--model',
+        'gpt-5',
+        '--author',
+        'drew',
+        '--author-name',
+        'Drew',
+        '--metadata',
         '{"ticket":"SGA-125"}',
-        "--provenance",
+        '--provenance',
         '{"source":"fixture"}',
       ],
       renderOptions,
@@ -60,54 +62,54 @@ describe("runSessionsCommand", () => {
 
     expect(capturedInput).toMatchObject({
       author: {
-        displayName: "Drew",
-        handle: "drew",
+        displayName: 'Drew',
+        handle: 'drew',
       },
-      contentType: "jsonl",
-      harness: "codex",
-      harnessSessionId: "codex-session-1",
+      contentType: 'jsonl',
+      harness: 'codex',
+      harnessSessionId: 'codex-session-1',
       host: {
-        id: "host-id",
-        label: "test-host",
+        id: 'host-id',
+        label: 'test-host',
         projectRoot,
       },
       metadata: {
-        importMode: "manual",
-        ticket: "SGA-125",
+        importMode: 'manual',
+        ticket: 'SGA-125',
       },
-      model: "gpt-5",
+      model: 'gpt-5',
       provenance: {
-        importedBy: "saga sessions import",
-        source: "fixture",
+        importedBy: 'saga sessions import',
+        source: 'fixture',
       },
       rawContent: '{"type":"user","text":"Import this session"}\n',
-      workspaceId: "workspace-id",
+      workspaceId: 'workspace-id',
     });
     expect(capturedInput?.locator).toMatch(/^file:/);
 
     expect(JSON.parse(output)).toMatchObject({
-      operation: "inserted",
+      operation: 'inserted',
       rawSessionRecord: {
-        id: "raw-record-id",
+        id: 'raw-record-id',
       },
       session: {
-        id: "session-id",
+        id: 'session-id',
       },
     });
     expect(output).not.toContain(inputPath);
     expect(output).not.toContain(projectRoot);
-    expect(output).not.toContain("file://");
+    expect(output).not.toContain('file://');
   });
 
-  test("lists recent raw session records with records and ids formats", async () => {
+  it('lists recent raw session records with records and ids formats', async () => {
     const projectRoot = boundProject();
     const rows = [recentRecord()];
 
     const records = await runSessionsCommand(
-      ["recent", "--limit", "5", "--active-only"],
+      ['recent', '--limit', '5', '--active-only'],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
@@ -115,17 +117,17 @@ describe("runSessionsCommand", () => {
           expect(input).toMatchObject({
             activeOnly: true,
             limit: 5,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return rows;
         },
       },
     );
     const ids = await runSessionsCommand(
-      ["recent"],
+      ['recent'],
       {
         ...renderOptions,
-        format: "ids",
+        format: 'ids',
       },
       {
         cwd: projectRoot,
@@ -133,44 +135,44 @@ describe("runSessionsCommand", () => {
       },
     );
 
-    expect(records).toContain("Raw Session Records");
-    expect(records).toContain("Activity Interval");
-    expect(records).toContain("host-user");
-    expect(records).toContain("provenance");
-    expect(records).toContain("[local-path-redacted]");
-    expect(records).not.toContain("/tmp/session.jsonl");
-    expect(records).not.toContain("/work/saga");
-    expect(records).not.toContain("file://");
-    expect(ids).toBe("raw-record-id");
+    expect(records).toContain('Raw Session Records');
+    expect(records).toContain('Activity Interval');
+    expect(records).toContain('host-user');
+    expect(records).toContain('provenance');
+    expect(records).toContain('[local-path-redacted]');
+    expect(records).not.toContain('/tmp/session.jsonl');
+    expect(records).not.toContain('/work/saga');
+    expect(records).not.toContain('file://');
+    expect(ids).toBe('raw-record-id');
   });
 
-  test("redacts local locators from recent structured output", async () => {
+  it('redacts local locators from recent structured output', async () => {
     const projectRoot = boundProject();
-    const output = await runSessionsCommand(["recent"], renderOptions, {
+    const output = await runSessionsCommand(['recent'], renderOptions, {
       cwd: projectRoot,
       listRecent: async () => [recentRecord()],
     });
 
-    expect(output).toContain("[local-path-redacted]");
-    expect(output).not.toContain("/tmp/session.jsonl");
-    expect(output).not.toContain("/work/saga");
-    expect(output).not.toContain("file://");
+    expect(output).toContain('[local-path-redacted]');
+    expect(output).not.toContain('/tmp/session.jsonl');
+    expect(output).not.toContain('/work/saga');
+    expect(output).not.toContain('file://');
   });
 
-  test("deletes a session by explicit id with structured safety metadata", async () => {
+  it('deletes a session by explicit id with structured safety metadata', async () => {
     const projectRoot = boundProject();
-    const secretReason = "delete-reason-secret-token";
+    const secretReason = 'delete-reason-secret-token';
     const output = await runSessionsCommand(
-      ["delete", "raw-record-id", "--reason", secretReason],
+      ['delete', 'raw-record-id', '--reason', secretReason],
       renderOptions,
       {
         cwd: projectRoot,
         deleteSession: async (input) => {
-          expect(input).toEqual({
-            id: "raw-record-id",
-            origin: "saga sessions delete",
+          expect(input).toStrictEqual({
+            id: 'raw-record-id',
+            origin: 'saga sessions delete',
             reason: secretReason,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return deleteResult();
         },
@@ -184,55 +186,55 @@ describe("runSessionsCommand", () => {
         segments: 2,
         turns: 2,
       },
-      operation: "deleted",
-      originClassification: "cli",
+      operation: 'deleted',
+      originClassification: 'cli',
       reasonProvided: true,
-      sessionId: "session-id",
+      sessionId: 'session-id',
     });
     expect(output).not.toContain(secretReason);
   });
 
-  test("redacts a session with repeated literal and regex patterns without echoing audit text", async () => {
+  it('redacts a session with repeated literal and regex patterns without echoing audit text', async () => {
     const projectRoot = boundProject();
-    const secretOrigin = "redact-origin-secret-token";
-    const secretReason = "redact-reason-secret-token";
+    const secretOrigin = 'redact-origin-secret-token';
+    const secretReason = 'redact-reason-secret-token';
     const output = await runSessionsCommand(
       [
-        "redact",
-        "session-id",
-        "--literal",
-        "secret-token",
-        "--literal=second-secret",
-        "--regex",
-        "API_KEY=[^\\s]+",
-        "--replacement",
-        "[REMOVED]",
-        "--origin",
+        'redact',
+        'session-id',
+        '--literal',
+        'secret-token',
+        '--literal=second-secret',
+        '--regex',
+        String.raw`API_KEY=[^\s]+`,
+        '--replacement',
+        '[REMOVED]',
+        '--origin',
         secretOrigin,
-        "--reason",
+        '--reason',
         secretReason,
       ],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
         redactSession: async (input) => {
           expect(input).toMatchObject({
-            id: "session-id",
+            id: 'session-id',
             origin: secretOrigin,
             reason: secretReason,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
-          expect(input.patterns).toEqual([
-            { kind: "literal", pattern: "secret-token", replacement: "[REMOVED]" },
-            { kind: "literal", pattern: "second-secret", replacement: "[REMOVED]" },
+          expect(input.patterns).toStrictEqual([
+            { kind: 'literal', pattern: 'secret-token', replacement: '[REMOVED]' },
+            { kind: 'literal', pattern: 'second-secret', replacement: '[REMOVED]' },
             {
               flags: undefined,
-              kind: "regex",
-              pattern: "API_KEY=[^\\s]+",
-              replacement: "[REMOVED]",
+              kind: 'regex',
+              pattern: 'API_KEY=[^\\s]+',
+              replacement: '[REMOVED]',
             },
           ]);
           return redactResult();
@@ -240,71 +242,73 @@ describe("runSessionsCommand", () => {
       },
     );
 
-    expect(output).toContain("Session redacted");
-    expect(output).toContain("replacements");
-    expect(output).not.toContain("secret-token");
-    expect(output).not.toContain("second-secret");
-    expect(output).not.toContain("API_KEY=");
+    expect(output).toContain('Session redacted');
+    expect(output).toContain('replacements');
+    expect(output).not.toContain('secret-token');
+    expect(output).not.toContain('second-secret');
+    expect(output).not.toContain('API_KEY=');
     expect(output).not.toContain(secretOrigin);
     expect(output).not.toContain(secretReason);
   });
 
-  test("surfaces invalid regex redaction errors without echoing the supplied pattern", async () => {
+  it('surfaces invalid regex redaction errors without echoing the supplied pattern', async () => {
     const projectRoot = boundProject();
-    const secretNeedle = "cli-regex-secret-token";
+    const secretNeedle = 'cli-regex-secret-token';
     const rawPattern = `${secretNeedle}(`;
 
     await expect(
-      runSessionsCommand(["redact", "session-id", "--regex", rawPattern], renderOptions, {
+      runSessionsCommand(['redact', 'session-id', '--regex', rawPattern], renderOptions, {
         cwd: projectRoot,
         redactSession: async (input) => {
-          expect(input.patterns).toEqual([
+          expect(input.patterns).toStrictEqual([
             {
               flags: undefined,
-              kind: "regex",
+              kind: 'regex',
               pattern: rawPattern,
-              replacement: "[REDACTED]",
+              replacement: '[REDACTED]',
             },
           ]);
           throw new SessionSafetyError({
-            message: "invalid redaction regex pattern at index 1: invalid syntax",
+            message: 'invalid redaction regex pattern at index 1: invalid syntax',
           });
         },
       }),
-    ).rejects.toThrow("invalid redaction regex pattern at index 1: invalid syntax");
+    ).rejects.toThrow('invalid redaction regex pattern at index 1: invalid syntax');
 
+    let errorText: string | undefined;
     try {
-      await runSessionsCommand(["redact", "session-id", "--regex", rawPattern], renderOptions, {
+      await runSessionsCommand(['redact', 'session-id', '--regex', rawPattern], renderOptions, {
         cwd: projectRoot,
         redactSession: async () => {
           throw new SessionSafetyError({
-            message: "invalid redaction regex pattern at index 1: invalid syntax",
+            message: 'invalid redaction regex pattern at index 1: invalid syntax',
           });
         },
       });
-      throw new Error("expected invalid regex redaction to fail");
     } catch (cause) {
-      const errorText = String(cause);
-      expect(errorText).toContain("invalid redaction regex pattern");
-      expect(errorText).not.toContain(secretNeedle);
-      expect(errorText).not.toContain(rawPattern);
-      expect(errorText).not.toContain(`/${rawPattern}/`);
+      errorText = String(cause);
     }
+
+    expect(errorText).toBeDefined();
+    expect(errorText).toContain('invalid redaction regex pattern');
+    expect(errorText).not.toContain(secretNeedle);
+    expect(errorText).not.toContain(rawPattern);
+    expect(errorText).not.toContain(`/${rawPattern}/`);
   });
 
-  test("omits free-form redaction audit text from json output", async () => {
+  it('omits free-form redaction audit text from json output', async () => {
     const projectRoot = boundProject();
-    const secretOrigin = "json-redact-origin-secret-token";
-    const secretReason = "json-redact-reason-secret-token";
+    const secretOrigin = 'json-redact-origin-secret-token';
+    const secretReason = 'json-redact-reason-secret-token';
     const output = await runSessionsCommand(
       [
-        "redact",
-        "session-id",
-        "--literal",
-        "secret-token",
-        "--origin",
+        'redact',
+        'session-id',
+        '--literal',
+        'secret-token',
+        '--origin',
         secretOrigin,
-        "--reason",
+        '--reason',
         secretReason,
       ],
       renderOptions,
@@ -315,58 +319,58 @@ describe("runSessionsCommand", () => {
     );
 
     expect(JSON.parse(output)).toMatchObject({
-      operation: "redacted",
-      originClassification: "custom",
+      operation: 'redacted',
+      originClassification: 'custom',
       reasonProvided: true,
     });
     expect(output).not.toContain(secretOrigin);
     expect(output).not.toContain(secretReason);
-    expect(output).not.toContain("secret-token");
+    expect(output).not.toContain('secret-token');
   });
 
-  test("shows a bounded session detail with Activity Intervals, turns, segments, and metadata", async () => {
+  it('shows a bounded session detail with Activity Intervals, turns, segments, and metadata', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
-      ["show", "session-id", "--turns", "1", "--segments", "1", "--raw-records", "2", "--raw-body"],
+      ['show', 'session-id', '--turns', '1', '--segments', '1', '--raw-records', '2', '--raw-body'],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
         getDetail: async (input) => {
           expect(input).toMatchObject({
-            id: "session-id",
+            id: 'session-id',
             includeRawBody: true,
             maxRawRecords: 2,
             maxSegmentsPerTurn: 1,
             maxTurns: 1,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return sessionDetail();
         },
       },
     );
 
-    expect(output).toContain("Session");
-    expect(output).toContain("Raw Session Record");
-    expect(output).toContain("Activity Interval 0");
-    expect(output).toContain("Turn 0");
-    expect(output).toContain("Segment 0");
-    expect(output).toContain("host-user");
-    expect(output).toContain("provenance");
-    expect(output).toContain("Bounds");
-    expect(output).toContain("[local-path-redacted]");
-    expect(output).not.toContain("/tmp/session.jsonl");
-    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
-    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
-    expect(output).not.toContain("/work/saga");
-    expect(output).not.toContain("file://");
+    expect(output).toContain('Session');
+    expect(output).toContain('Raw Session Record');
+    expect(output).toContain('Activity Interval 0');
+    expect(output).toContain('Turn 0');
+    expect(output).toContain('Segment 0');
+    expect(output).toContain('host-user');
+    expect(output).toContain('provenance');
+    expect(output).toContain('Bounds');
+    expect(output).toContain('[local-path-redacted]');
+    expect(output).not.toContain('/tmp/session.jsonl');
+    expect(output).not.toContain('/Users/example/.codex/transcripts/session.jsonl');
+    expect(output).not.toContain('file:///Users/example/.codex/transcripts/session.jsonl');
+    expect(output).not.toContain('/work/saga');
+    expect(output).not.toContain('file://');
   });
 
-  test("redacts local paths from sessions show structured segment text", async () => {
+  it('redacts local paths from sessions show structured segment text', async () => {
     const projectRoot = boundProject();
-    const output = await runSessionsCommand(["show", "session-id"], renderOptions, {
+    const output = await runSessionsCommand(['show', 'session-id'], renderOptions, {
       cwd: projectRoot,
       getDetail: async () => sessionDetail(),
     });
@@ -378,8 +382,8 @@ describe("runSessionsCommand", () => {
             {
               segments: [
                 {
-                  searchText: "Hello from [local-path-redacted] and [local-path-redacted]",
-                  snippet: "Hello from [local-path-redacted]",
+                  searchText: 'Hello from [local-path-redacted] and [local-path-redacted]',
+                  snippet: 'Hello from [local-path-redacted]',
                 },
               ],
             },
@@ -387,72 +391,72 @@ describe("runSessionsCommand", () => {
         },
       ],
     });
-    expect(output).toContain("[local-path-redacted]");
-    expect(output).not.toContain("/Users/example/.codex/transcripts/session.jsonl");
-    expect(output).not.toContain("file:///Users/example/.codex/transcripts/session.jsonl");
+    expect(output).toContain('[local-path-redacted]');
+    expect(output).not.toContain('/Users/example/.codex/transcripts/session.jsonl');
+    expect(output).not.toContain('file:///Users/example/.codex/transcripts/session.jsonl');
   });
 
-  test("omits raw body fields by default when showing session detail", async () => {
+  it('omits raw body fields by default when showing session detail', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
-      ["show", "session-id"],
+      ['show', 'session-id'],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
         getDetail: async (input) => {
           expect(input).toMatchObject({
-            id: "session-id",
+            id: 'session-id',
             includeRawBody: false,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return sessionDetail();
         },
       },
     );
 
-    expect(output).not.toContain("body text");
-    expect(output).not.toContain("body json");
+    expect(output).not.toContain('body text');
+    expect(output).not.toContain('body json');
   });
 
-  test("renders raw body fields only when requested", async () => {
+  it('renders raw body fields only when requested', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
-      ["show", "session-id", "--raw-body"],
+      ['show', 'session-id', '--raw-body'],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
         getDetail: async (input) => {
           expect(input).toMatchObject({
-            id: "session-id",
+            id: 'session-id',
             includeRawBody: true,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return sessionDetail({ includeRawBody: true });
         },
       },
     );
 
-    expect(output).toContain("Raw Body Exposure");
-    expect(output).toContain("WARNING");
-    expect(output).toContain("body text");
-    expect(output).toContain("raw transcript body");
-    expect(output).toContain("body json");
-    expect(output).toContain("raw-json-body");
-    expect(output).toContain("raw body warning");
-    expect(output).toContain("raw forensic body text");
-    expect(output).toContain("raw forensic body json");
-    expect(output).toContain("normal Saga surfaces hide");
+    expect(output).toContain('Raw Body Exposure');
+    expect(output).toContain('WARNING');
+    expect(output).toContain('body text');
+    expect(output).toContain('raw transcript body');
+    expect(output).toContain('body json');
+    expect(output).toContain('raw-json-body');
+    expect(output).toContain('raw body warning');
+    expect(output).toContain('raw forensic body text');
+    expect(output).toContain('raw forensic body json');
+    expect(output).toContain('normal Saga surfaces hide');
   });
 
-  test("keeps explicit raw forensic body fields raw in structured output", async () => {
+  it('keeps explicit raw forensic body fields raw in structured output', async () => {
     const projectRoot = boundProject();
-    const output = await runSessionsCommand(["show", "session-id", "--raw-body"], renderOptions, {
+    const output = await runSessionsCommand(['show', 'session-id', '--raw-body'], renderOptions, {
       cwd: projectRoot,
       getDetail: async () => sessionDetail({ includeRawBody: true }),
     });
@@ -460,131 +464,133 @@ describe("runSessionsCommand", () => {
     const parsed = JSON.parse(output);
     expect(parsed.rawSessionRecords[0]).toMatchObject({
       rawBodyExposure: {
-        mode: "raw_forensic",
-        requestedBy: "includeRawBody",
+        mode: 'raw_forensic',
+        requestedBy: 'includeRawBody',
       },
     });
     expect(parsed.rawSessionRecords[0].rawBodyExposure.warning).toContain(
-      "normal Saga surfaces hide",
+      'normal Saga surfaces hide',
     );
-    expect(parsed.rawSessionRecords[0].bodyText).toContain("/Users/example/raw/session.jsonl");
-    expect(parsed.rawSessionRecords[0].bodyJson.path).toBe("/Users/example/raw/session.jsonl");
-    expect(parsed.session.sourceLocator).toBe("[local-path-redacted]");
+    expect(parsed.rawSessionRecords[0].bodyText).toContain('/Users/example/raw/session.jsonl');
+    expect(parsed.rawSessionRecords[0].bodyJson.path).toBe('/Users/example/raw/session.jsonl');
+    expect(parsed.session.sourceLocator).toBe('[local-path-redacted]');
     expect(JSON.stringify(parsed.activityIntervals)).not.toContain(
-      "/Users/example/.codex/transcripts/session.jsonl",
+      '/Users/example/.codex/transcripts/session.jsonl',
     );
   });
 
-  test.each([
-    ["missing warning", { mode: "raw_forensic", requestedBy: "includeRawBody" }],
-    ["blank warning", { mode: "raw_forensic", requestedBy: "includeRawBody", warning: "   " }],
+  it.each([
+    ['missing warning', { mode: 'raw_forensic', requestedBy: 'includeRawBody' }],
+    ['blank warning', { mode: 'raw_forensic', requestedBy: 'includeRawBody', warning: '   ' }],
     [
-      "missing requestedBy",
+      'missing requestedBy',
       {
-        mode: "raw_forensic",
+        mode: 'raw_forensic',
         warning:
-          "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+          'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.',
       },
     ],
   ])(
-    "does not restore raw forensic body fields in structured output with %s metadata",
+    'does not restore raw forensic body fields in structured output with %s metadata',
     async (_name, rawBodyExposure) => {
       const projectRoot = boundProject();
       const detail = sessionDetail({ includeRawBody: true });
       const rawRecord = detail.rawSessionRecords[0];
-      if (rawRecord === undefined) throw new Error("missing raw session record");
+      if (rawRecord === undefined) {
+        throw new Error('missing raw session record');
+      }
       rawRecord.rawBodyExposure = rawBodyExposure as NonNullable<
-        SessionRawSessionRecordMetadata["rawBodyExposure"]
+        SessionRawSessionRecordMetadata['rawBodyExposure']
       >;
 
-      const output = await runSessionsCommand(["show", "session-id", "--raw-body"], renderOptions, {
+      const output = await runSessionsCommand(['show', 'session-id', '--raw-body'], renderOptions, {
         cwd: projectRoot,
         getDetail: async () => detail,
       });
 
       const parsed = JSON.parse(output);
-      expect(parsed.rawSessionRecords[0].bodyText).toContain("[local-path-redacted]");
-      expect(parsed.rawSessionRecords[0].bodyJson.path).toBe("[local-path-redacted]");
+      expect(parsed.rawSessionRecords[0].bodyText).toContain('[local-path-redacted]');
+      expect(parsed.rawSessionRecords[0].bodyJson.path).toBe('[local-path-redacted]');
       expect(parsed.rawSessionRecords[0].bodyText).not.toContain(
-        "/Users/example/raw/session.jsonl",
+        '/Users/example/raw/session.jsonl',
       );
       expect(parsed.rawSessionRecords[0].bodyJson.path).not.toBe(
-        "/Users/example/raw/session.jsonl",
+        '/Users/example/raw/session.jsonl',
       );
     },
   );
 
-  test("renders the bounded raw session snapshot list without duplicate active or selected blocks", async () => {
+  it('renders the bounded raw session snapshot list without duplicate active or selected blocks', async () => {
     const projectRoot = boundProject();
     const output = await runSessionsCommand(
-      ["show", "session-id", "--raw-records", "2"],
+      ['show', 'session-id', '--raw-records', '2'],
       {
         ...renderOptions,
-        format: "records",
+        format: 'records',
       },
       {
         cwd: projectRoot,
         getDetail: async (input) => {
           expect(input).toMatchObject({
-            id: "session-id",
+            id: 'session-id',
             maxRawRecords: 2,
-            workspaceId: "workspace-id",
+            workspaceId: 'workspace-id',
           });
           return sessionDetailWithRawRecords();
         },
       },
     );
 
-    expect(countOccurrences(output, "Raw Session Record")).toBe(2);
-    expect(output).not.toContain("Active Raw Session Record");
-    expect(output).not.toContain("Selected Raw Session Record");
-    expect(output).toContain("raw-record-id");
-    expect(output).toContain("raw-record-older");
+    expect(countOccurrences(output, 'Raw Session Record')).toBe(2);
+    expect(output).not.toContain('Active Raw Session Record');
+    expect(output).not.toContain('Selected Raw Session Record');
+    expect(output).toContain('raw-record-id');
+    expect(output).toContain('raw-record-older');
   });
 
-  test("does not backfill host into a no-host binding for sessions recent", async () => {
+  it('does not backfill host into a no-host binding for sessions recent', async () => {
     const projectRoot = boundProjectWithoutHost();
-    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8");
+    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8');
 
-    await runSessionsCommand(["recent"], renderOptions, {
+    await runSessionsCommand(['recent'], renderOptions, {
       cwd: projectRoot,
       listRecent: async (input) => {
         expect(input).toMatchObject({
-          workspaceId: "workspace-id",
+          workspaceId: 'workspace-id',
         });
         return [];
       },
     });
 
-    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8")).toBe(before);
+    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8')).toBe(before);
   });
 
-  test("does not backfill host into a no-host binding for sessions show", async () => {
+  it('does not backfill host into a no-host binding for sessions show', async () => {
     const projectRoot = boundProjectWithoutHost();
-    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8");
+    const before = readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8');
 
-    await runSessionsCommand(["show", "session-id"], renderOptions, {
+    await runSessionsCommand(['show', 'session-id'], renderOptions, {
       cwd: projectRoot,
       getDetail: async (input) => {
         expect(input).toMatchObject({
-          id: "session-id",
-          workspaceId: "workspace-id",
+          id: 'session-id',
+          workspaceId: 'workspace-id',
         });
         return sessionDetail();
       },
     });
 
-    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), "utf8")).toBe(before);
+    expect(readFileSync(join(projectRoot, BINDING_FILE_NAME), 'utf8')).toBe(before);
   });
 });
 
 function boundProject(): string {
-  const projectRoot = mkdtempSync(join(tmpdir(), "saga-sessions-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), 'saga-sessions-'));
   writeBindingFile(projectRoot, {
     host: {
-      generatedAt: "2026-06-22T00:00:00.000Z",
-      id: "host-id",
-      label: "test-host",
+      generatedAt: '2026-06-22T00:00:00.000Z',
+      id: 'host-id',
+      label: 'test-host',
     },
     project: {
       gitRemote: undefined,
@@ -592,21 +598,21 @@ function boundProject(): string {
     },
     schemaVersion: 1,
     service: {
-      databaseUrl: "env:DATABASE_URL",
+      databaseUrl: 'env:DATABASE_URL',
     },
     sourceBinding: {
-      id: "source-id",
+      id: 'source-id',
     },
     workspace: {
-      handle: "saga",
-      id: "workspace-id",
+      handle: 'saga',
+      id: 'workspace-id',
     },
   });
   return projectRoot;
 }
 
 function boundProjectWithoutHost(): string {
-  const projectRoot = mkdtempSync(join(tmpdir(), "saga-sessions-no-host-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), 'saga-sessions-no-host-'));
   writeFileSync(
     join(projectRoot, BINDING_FILE_NAME),
     `${JSON.stringify(
@@ -616,14 +622,14 @@ function boundProjectWithoutHost(): string {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: "env:DATABASE_URL",
+          databaseUrl: 'env:DATABASE_URL',
         },
         sourceBinding: {
-          id: "source-id",
+          id: 'source-id',
         },
         workspace: {
-          handle: "saga",
-          id: "workspace-id",
+          handle: 'saga',
+          id: 'workspace-id',
         },
       },
       null,
@@ -634,20 +640,20 @@ function boundProjectWithoutHost(): string {
 }
 
 function importResult(input: RawSessionImportInput): RawSessionImportResult {
-  const capturedAt = new Date("2026-06-22T10:00:00.000Z");
+  const capturedAt = new Date('2026-06-22T10:00:00.000Z');
   return {
     activityInterval: {
       createdAt: capturedAt,
       endedAt: null,
-      id: "activity-interval-id",
+      id: 'activity-interval-id',
       metadata: {},
       ordinal: 0,
-      sessionId: "session-id",
+      sessionId: 'session-id',
       settledAt: null,
       settlementReason: null,
       settlementTriggerRawEventId: null,
       startedAt: capturedAt,
-      status: "active",
+      status: 'active',
       updatedAt: capturedAt,
       workspaceId: input.workspaceId,
     },
@@ -656,55 +662,55 @@ function importResult(input: RawSessionImportInput): RawSessionImportResult {
       displayName: input.author.displayName ?? null,
       externalSubject: input.host.id,
       handle: input.author.handle,
-      id: "user-id",
-      identitySource: "host",
+      id: 'user-id',
+      identitySource: 'host',
       metadata: {},
       updatedAt: capturedAt,
       workspaceId: input.workspaceId,
     },
-    contentHash: "sha256:test",
-    operation: "inserted",
+    contentHash: 'sha256:test',
+    operation: 'inserted',
     rawSessionRecord: {
-      activityIntervalId: "activity-interval-id",
-      authorUserId: "user-id",
+      activityIntervalId: 'activity-interval-id',
+      authorUserId: 'user-id',
       bodyJson: null,
       bodyText: input.rawContent,
       capturedAt,
-      contentBytes: Buffer.byteLength(input.rawContent, "utf8"),
-      contentHash: "sha256:test",
+      contentBytes: Buffer.byteLength(input.rawContent, 'utf8'),
+      contentHash: 'sha256:test',
       contentType: input.contentType,
       createdAt: capturedAt,
       harness: input.harness,
       harnessSessionId: input.harnessSessionId ?? null,
-      id: "raw-record-id",
+      id: 'raw-record-id',
       isActive: true,
       metadata: input.metadata ?? {},
       provenance: input.provenance ?? {},
       redactedFromRawSessionRecordId: null,
-      sessionId: "session-id",
+      sessionId: 'session-id',
       snapshotOrdinal: 0,
-      sourceBindingId: "source-binding-id",
+      sourceBindingId: 'source-binding-id',
       sourceLocator: input.locator ?? null,
-      status: "captured",
+      status: 'captured',
       updatedAt: capturedAt,
       workspaceId: input.workspaceId,
     },
     session: {
-      authorUserId: "user-id",
+      authorUserId: 'user-id',
       createdAt: capturedAt,
       endedAt: null,
       harness: input.harness,
       harnessSessionId: input.harnessSessionId ?? null,
-      id: "session-id",
+      id: 'session-id',
       lastActivityAt: capturedAt,
       metadata: {},
       model: input.model ?? null,
       provenance: {},
-      sourceBindingId: "source-binding-id",
+      sourceBindingId: 'source-binding-id',
       sourceLocator: input.locator ?? null,
       sourceLocatorHash: null,
       startedAt: capturedAt,
-      status: input.status ?? "active",
+      status: input.status ?? 'active',
       title: input.title ?? null,
       updatedAt: capturedAt,
       workspaceId: input.workspaceId,
@@ -712,9 +718,9 @@ function importResult(input: RawSessionImportInput): RawSessionImportResult {
     sourceBinding: {
       config: {},
       createdAt: capturedAt,
-      displayName: "Codex on test-host",
+      displayName: 'Codex on test-host',
       enabled: true,
-      id: "source-binding-id",
+      id: 'source-binding-id',
       sourceType: input.harness,
       sourceUri: `${input.harness}://host/${input.host.id}`,
       updatedAt: capturedAt,
@@ -724,25 +730,25 @@ function importResult(input: RawSessionImportInput): RawSessionImportResult {
 }
 
 function recentRecord(): RecentSessionRecord {
-  const capturedAt = new Date("2026-06-22T10:00:00.000Z");
+  const capturedAt = new Date('2026-06-22T10:00:00.000Z');
   return {
     activityInterval: {
       endedAt: null,
-      id: "activity-interval-id",
+      id: 'activity-interval-id',
       metadata: {},
       ordinal: 0,
-      sessionId: "session-id",
+      sessionId: 'session-id',
       settledAt: null,
       settlementReason: null,
       startedAt: capturedAt,
-      status: "active",
+      status: 'active',
     },
     authorUser: {
-      displayName: "Drew",
-      externalSubject: "host-id",
-      handle: "drew",
-      id: "user-id",
-      identitySource: "host",
+      displayName: 'Drew',
+      externalSubject: 'host-id',
+      handle: 'drew',
+      id: 'user-id',
+      identitySource: 'host',
       metadata: {},
     },
     counts: {
@@ -754,48 +760,48 @@ function recentRecord(): RecentSessionRecord {
     rawSessionRecord: {
       capturedAt,
       contentBytes: 12,
-      contentHash: "sha256:test",
-      contentType: "jsonl",
-      harness: "codex",
-      harnessSessionId: "codex-session-1",
-      id: "raw-record-id",
+      contentHash: 'sha256:test',
+      contentType: 'jsonl',
+      harness: 'codex',
+      harnessSessionId: 'codex-session-1',
+      id: 'raw-record-id',
       isActive: true,
       metadata: {},
       provenance: {
-        importedBy: "test",
-        transcriptPath: "/tmp/session.jsonl",
-        transcriptUri: "file:///tmp/session.jsonl",
+        importedBy: 'test',
+        transcriptPath: '/tmp/session.jsonl',
+        transcriptUri: 'file:///tmp/session.jsonl',
       },
-      sessionId: "session-id",
+      sessionId: 'session-id',
       snapshotOrdinal: 0,
-      sourceLocator: "file:///tmp/session.jsonl",
-      status: "captured",
+      sourceLocator: 'file:///tmp/session.jsonl',
+      status: 'captured',
     },
     session: {
       endedAt: null,
-      harness: "codex",
-      harnessSessionId: "codex-session-1",
-      id: "session-id",
+      harness: 'codex',
+      harnessSessionId: 'codex-session-1',
+      id: 'session-id',
       lastActivityAt: capturedAt,
       metadata: {},
-      model: "gpt-5",
+      model: 'gpt-5',
       provenance: {},
-      sourceBindingId: "source-binding-id",
-      sourceLocator: "file:///tmp/session.jsonl",
+      sourceBindingId: 'source-binding-id',
+      sourceLocator: 'file:///tmp/session.jsonl',
       startedAt: capturedAt,
-      status: "active",
+      status: 'active',
       title: null,
-      workspaceId: "workspace-id",
+      workspaceId: 'workspace-id',
     },
     sourceBinding: {
       config: {
-        projectRoot: "/work/saga",
+        projectRoot: '/work/saga',
       },
-      displayName: "Codex on test-host",
+      displayName: 'Codex on test-host',
       enabled: true,
-      id: "source-binding-id",
-      sourceType: "codex",
-      sourceUri: "codex://host/host-id",
+      id: 'source-binding-id',
+      sourceType: 'codex',
+      sourceUri: 'codex://host/host-id',
     },
   };
 }
@@ -809,53 +815,53 @@ function deleteResult(): DeleteSessionSafetyResult {
       segments: 2,
       turns: 2,
     },
-    deletedAt: new Date("2026-06-22T10:05:00.000Z"),
-    operation: "deleted",
-    originClassification: "cli",
+    deletedAt: new Date('2026-06-22T10:05:00.000Z'),
+    operation: 'deleted',
+    originClassification: 'cli',
     reasonProvided: true,
-    sessionId: "session-id",
-    workspaceId: "workspace-id",
+    sessionId: 'session-id',
+    workspaceId: 'workspace-id',
   };
 }
 
 function redactResult(): RedactSessionSafetyResult {
   const rawImport = importResult({
     author: {
-      displayName: "Drew",
-      handle: "drew",
+      displayName: 'Drew',
+      handle: 'drew',
     },
-    contentType: "jsonl",
-    harness: "codex",
-    harnessSessionId: "codex-session-1",
+    contentType: 'jsonl',
+    harness: 'codex',
+    harnessSessionId: 'codex-session-1',
     host: {
-      id: "host-id",
-      label: "test-host",
-      projectRoot: "/work/saga",
+      id: 'host-id',
+      label: 'test-host',
+      projectRoot: '/work/saga',
     },
-    rawContent: "redacted body",
-    workspaceId: "workspace-id",
+    rawContent: 'redacted body',
+    workspaceId: 'workspace-id',
   });
   return {
-    operation: "redacted",
-    originClassification: "custom",
+    operation: 'redacted',
+    originClassification: 'custom',
     patternCount: 3,
-    previousRawSessionRecordId: "raw-record-old",
+    previousRawSessionRecordId: 'raw-record-old',
     rawSessionImport: {
       ...rawImport,
       rawSessionRecord: {
         ...rawImport.rawSessionRecord,
-        id: "raw-record-redacted",
-        redactedFromRawSessionRecordId: "raw-record-old",
+        id: 'raw-record-redacted',
+        redactedFromRawSessionRecordId: 'raw-record-old',
         snapshotOrdinal: 1,
-        status: "redacted",
+        status: 'redacted',
       },
     },
     reasonProvided: true,
-    redactedAt: new Date("2026-06-22T10:06:00.000Z"),
+    redactedAt: new Date('2026-06-22T10:06:00.000Z'),
     redactedRawEvents: 1,
     replacementCount: 4,
-    sessionId: "session-id",
-    workspaceId: "workspace-id",
+    sessionId: 'session-id',
+    workspaceId: 'workspace-id',
   };
 }
 
@@ -866,15 +872,15 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
       ? {
           ...row.rawSessionRecord,
           bodyJson: {
-            path: "/Users/example/raw/session.jsonl",
-            value: "raw-json-body",
+            path: '/Users/example/raw/session.jsonl',
+            value: 'raw-json-body',
           },
-          bodyText: "raw transcript body /Users/example/raw/session.jsonl skipped-secret-needle",
+          bodyText: 'raw transcript body /Users/example/raw/session.jsonl skipped-secret-needle',
           rawBodyExposure: {
-            mode: "raw_forensic",
-            requestedBy: "includeRawBody",
+            mode: 'raw_forensic',
+            requestedBy: 'includeRawBody',
             warning:
-              "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.",
+              'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.',
           },
         }
       : row.rawSessionRecord;
@@ -884,26 +890,26 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
       {
         activityInterval: row.activityInterval ?? {
           endedAt: null,
-          id: "activity-interval-id",
+          id: 'activity-interval-id',
           metadata: {},
           ordinal: 0,
-          sessionId: "session-id",
+          sessionId: 'session-id',
           settledAt: null,
           settlementReason: null,
-          startedAt: new Date("2026-06-22T10:00:00.000Z"),
-          status: "active",
+          startedAt: new Date('2026-06-22T10:00:00.000Z'),
+          status: 'active',
         },
         turns: [
           {
             contentParts: [
               {
-                type: "text",
-                text: "Hello from /Users/example/.codex/transcripts/session.jsonl",
+                type: 'text',
+                text: 'Hello from /Users/example/.codex/transcripts/session.jsonl',
               },
             ],
             endedAt: null,
             metadata: {
-              cwd: "/work/saga",
+              cwd: '/work/saga',
             },
             rawEventIds: [],
             rawSpan: {},
@@ -911,26 +917,26 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
               {
                 charEnd: 108,
                 charStart: 0,
-                id: "segment-id",
+                id: 'segment-id',
                 metadata: {},
                 ordinal: 0,
                 searchText:
-                  "Hello from /Users/example/.codex/transcripts/session.jsonl and file:///Users/example/.codex/transcripts/session.jsonl",
-                segmentKind: "turn",
-                snippet: "Hello from /Users/example/.codex/transcripts/session.jsonl",
+                  'Hello from /Users/example/.codex/transcripts/session.jsonl and file:///Users/example/.codex/transcripts/session.jsonl',
+                segmentKind: 'turn',
+                snippet: 'Hello from /Users/example/.codex/transcripts/session.jsonl',
                 tokenEnd: 1,
                 tokenStart: 0,
               },
             ],
-            startedAt: new Date("2026-06-22T10:00:00.000Z"),
+            startedAt: new Date('2026-06-22T10:00:00.000Z'),
             turn: {
-              actorKind: "host_user",
-              actorLabel: "drew",
-              harnessTurnId: "turn-1",
-              id: "turn-id",
-              model: "gpt-5",
+              actorKind: 'host_user',
+              actorLabel: 'drew',
+              harnessTurnId: 'turn-1',
+              id: 'turn-id',
+              model: 'gpt-5',
               ordinal: 0,
-              role: "user",
+              role: 'user',
             },
           },
         ],
@@ -957,12 +963,14 @@ function sessionDetail(input: { includeRawBody?: boolean } = {}): SessionDetail 
 
 function sessionDetailWithRawRecords(): SessionDetail {
   const detail = sessionDetail();
-  if (detail.activeRawSessionRecord === null) throw new Error("missing active raw record");
+  if (detail.activeRawSessionRecord === null) {
+    throw new Error('missing active raw record');
+  }
   const olderRawRecord = {
     ...detail.activeRawSessionRecord,
-    capturedAt: new Date("2026-06-22T09:55:00.000Z"),
-    contentHash: "sha256:older",
-    id: "raw-record-older",
+    capturedAt: new Date('2026-06-22T09:55:00.000Z'),
+    contentHash: 'sha256:older',
+    id: 'raw-record-older',
     isActive: false,
     snapshotOrdinal: 0,
   };

@@ -27,6 +27,7 @@
     "verify:unit": "pnpm run check && pnpm run test:unit"
   },
   "devDependencies": {
+    "@dbtlr/tooling": "0.3.0",
     "@types/node": "^24.0.0",
     "oxlint": "^1.70.0",
     "turbo": "^2.9.18",

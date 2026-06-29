@@ -1,6 +1,6 @@
-import { makeDatabase, runMigrationsSafely } from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
+import { makeDatabase, runMigrationsSafely } from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
 
 const config = await Effect.runPromise(loadRuntimeConfig());
 const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));

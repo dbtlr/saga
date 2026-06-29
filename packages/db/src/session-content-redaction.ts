@@ -1,25 +1,27 @@
 type JsonRecord = Record<string, unknown>;
 
-const SKIPPED_SEGMENT_KINDS = new Set(["tool_group_skipped", "turn_skipped"]);
+const SKIPPED_SEGMENT_KINDS = new Set(['tool_group_skipped', 'turn_skipped']);
 
-export interface SkippedContentSegment {
+export type SkippedContentSegment = {
   metadata: unknown;
   segmentKind: string | null;
-}
+};
 
 export function safeContentPartsForSkippedSegments(
   contentParts: unknown[],
   segments: readonly SkippedContentSegment[],
 ): unknown[] {
   const summary = summarizeSkippedSegments(segments);
-  if (summary === undefined) return contentParts;
+  if (summary === undefined) {
+    return contentParts;
+  }
 
   return [
     {
-      type: "omitted",
-      text: "[content omitted: skipped turn payload]",
+      type: 'omitted',
+      text: '[content omitted: skipped turn payload]',
       omitted: true,
-      reason: "skipped_segment_payload",
+      reason: 'skipped_segment_payload',
       filterReasons: summary.filterReasons,
       skippedPartCount: summary.skippedPartCount,
       skippedSegmentCount: summary.skippedSegmentCount,
@@ -43,10 +45,14 @@ function summarizeSkippedSegments(segments: readonly SkippedContentSegment[]):
 
   for (const segment of segments) {
     const metadata = asRecord(segment.metadata);
-    if (!hasSkippedObservability(segment, metadata)) continue;
+    if (!hasSkippedObservability(segment, metadata)) {
+      continue;
+    }
 
     skippedSegmentCount += 1;
-    if (segment.segmentKind !== null) segmentKinds.add(segment.segmentKind);
+    if (segment.segmentKind !== null) {
+      segmentKinds.add(segment.segmentKind);
+    }
 
     for (const reason of readFilterReasons(metadata)) {
       filterReasons.add(reason);
@@ -54,20 +60,22 @@ function summarizeSkippedSegments(segments: readonly SkippedContentSegment[]):
     skippedPartCount += readSkippedPartCount(metadata);
   }
 
-  if (skippedSegmentCount === 0) return undefined;
+  if (skippedSegmentCount === 0) {
+    return undefined;
+  }
 
   return {
-    filterReasons: [...filterReasons].sort(),
+    filterReasons: [...filterReasons].toSorted(),
     skippedPartCount,
     skippedSegmentCount,
-    segmentKinds: [...segmentKinds].sort(),
+    segmentKinds: [...segmentKinds].toSorted(),
   };
 }
 
 function hasSkippedObservability(segment: SkippedContentSegment, metadata: JsonRecord): boolean {
   return (
     (segment.segmentKind !== null && SKIPPED_SEGMENT_KINDS.has(segment.segmentKind)) ||
-    metadata.segmentStatus === "skipped" ||
+    metadata.segmentStatus === 'skipped' ||
     metadata.omittedSearchText === true ||
     readSkippedPartCount(metadata) > 0 ||
     readFilterReasons(metadata).length > 0
@@ -87,31 +95,45 @@ function readFilterReasons(metadata: JsonRecord): string[] {
 }
 
 function appendStringArray(target: string[], value: unknown): void {
-  if (!Array.isArray(value)) return;
+  if (!Array.isArray(value)) {
+    return;
+  }
   for (const entry of value) {
-    if (typeof entry === "string" && entry.length > 0) target.push(entry);
+    if (typeof entry === 'string' && entry.length > 0) {
+      target.push(entry);
+    }
   }
 }
 
 function appendFilterReasons(target: string[], value: unknown): void {
-  if (!Array.isArray(value)) return;
+  if (!Array.isArray(value)) {
+    return;
+  }
   for (const entry of value) {
     const reason = asRecord(entry).reason;
-    if (typeof reason === "string" && reason.length > 0) target.push(reason);
+    if (typeof reason === 'string' && reason.length > 0) {
+      target.push(reason);
+    }
   }
 }
 
 function readSkippedPartCount(metadata: JsonRecord): number {
   const topLevelCount = readNonNegativeNumber(metadata.skippedPartCount);
-  if (topLevelCount > 0) return topLevelCount;
+  if (topLevelCount > 0) {
+    return topLevelCount;
+  }
 
   return readNonNegativeNumber(asRecord(metadata.toolGroup).skippedPartCount);
 }
 
 function readNonNegativeNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null;
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return typeof value === "object" && value !== null ? (value as JsonRecord) : {};
+  return isRecord(value) ? value : {};
 }

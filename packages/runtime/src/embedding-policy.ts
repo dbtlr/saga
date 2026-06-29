@@ -1,28 +1,28 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 
-export type RemoteEmbeddingPolicyState = "enabled" | "disabled";
+export type RemoteEmbeddingPolicyState = 'enabled' | 'disabled';
 // "default" covers the fail-closed cases: no config, missing key, or unreadable/malformed
 // config. A future workspace override layer adds "workspace-config" without touching callers.
-export type EmbeddingPolicySource = "installation-config" | "default";
+export type EmbeddingPolicySource = 'installation-config' | 'default';
 
-export interface EmbeddingPolicyResolutionOptions {
+export type EmbeddingPolicyResolutionOptions = {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   readFile?: (path: string) => string;
-}
+};
 
-export interface EmbeddingPolicy {
+export type EmbeddingPolicy = {
   detail: string;
   remoteEmbeddings: RemoteEmbeddingPolicyState;
   source: EmbeddingPolicySource;
-}
+};
 
-export interface InstallationConfigLocation {
+export type InstallationConfigLocation = {
   displayPath: string;
   path: string;
-}
+};
 
 export function installationConfigLocation(
   options: EmbeddingPolicyResolutionOptions = {},
@@ -31,22 +31,22 @@ export function installationConfigLocation(
   const sagaHome = optionalString(env.SAGA_HOME);
   if (sagaHome !== undefined) {
     return {
-      displayPath: "SAGA_HOME/config.json",
-      path: resolve(sagaHome, "config.json"),
+      displayPath: 'SAGA_HOME/config.json',
+      path: resolve(sagaHome, 'config.json'),
     };
   }
 
   const home = options.homeDir ?? homedir();
   return {
-    displayPath: "~/.saga/config.json",
-    path: resolve(home, ".saga", "config.json"),
+    displayPath: '~/.saga/config.json',
+    path: resolve(home, '.saga', 'config.json'),
   };
 }
 
 export function resolveEmbeddingPolicy(
   options: EmbeddingPolicyResolutionOptions = {},
 ): EmbeddingPolicy {
-  const readFile = options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
+  const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
   const location = installationConfigLocation(options);
 
   let rawConfig: string;
@@ -71,18 +71,18 @@ export function resolveEmbeddingPolicy(
   }
 
   const remote = readRemoteEmbeddingsState(parsed);
-  if (remote === "enabled") {
+  if (remote === 'enabled') {
     return {
       detail: `remote embeddings enabled by installation standard in ${location.displayPath}`,
-      remoteEmbeddings: "enabled",
-      source: "installation-config",
+      remoteEmbeddings: 'enabled',
+      source: 'installation-config',
     };
   }
-  if (remote === "disabled") {
+  if (remote === 'disabled') {
     return {
       detail: `remote embeddings disabled by installation standard in ${location.displayPath}`,
-      remoteEmbeddings: "disabled",
-      source: "installation-config",
+      remoteEmbeddings: 'disabled',
+      source: 'installation-config',
     };
   }
 
@@ -94,35 +94,41 @@ export function resolveEmbeddingPolicy(
 function disabledByDefault(detail: string): EmbeddingPolicy {
   return {
     detail,
-    remoteEmbeddings: "disabled",
-    source: "default",
+    remoteEmbeddings: 'disabled',
+    source: 'default',
   };
 }
 
 function readRemoteEmbeddingsState(value: unknown): RemoteEmbeddingPolicyState | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value)) {
+    return undefined;
+  }
   const embeddings = value.embeddings;
-  if (!isRecord(embeddings)) return undefined;
+  if (!isRecord(embeddings)) {
+    return undefined;
+  }
   const remote = embeddings.remote;
-  if (remote === "enabled" || remote === "disabled") return remote;
+  if (remote === 'enabled' || remote === 'disabled') {
+    return remote;
+  }
   return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function optionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed === "" ? undefined : trimmed;
+  return trimmed === '' ? undefined : trimmed;
 }
 
 function isMissingFileError(error: unknown): boolean {
-  return isNodeError(error) && error.code === "ENOENT";
+  return isNodeError(error) && error.code === 'ENOENT';
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
+  return error instanceof Error && 'code' in error;
 }
 
 function errorMessage(error: unknown): string {

@@ -6,50 +6,53 @@ import {
   renameSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+} from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
   assertMigrationsCurrent,
   listHarnessActivationRawEvents,
   makeDatabase,
   registerSourceBinding,
-  type RawEvent,
-} from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { formatCommandOutput } from "./output.js";
-import { recordBlock, type RenderOptions } from "./render.js";
+} from '@saga/db';
+import type { RawEvent } from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+
 import {
   ensureLocalHostBinding,
   findProjectRoot,
   readBindingFile,
   writeBindingFile,
-  type WorkspaceBindingFile,
-} from "./init.js";
+} from './init.js';
+import type { WorkspaceBindingFile } from './init.js';
+import { formatCommandOutput } from './output.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
 
-export type HarnessTarget = "codex" | "claude";
-export type HookCoverage = "complete" | "partial" | "none";
+export type HarnessTarget = 'codex' | 'claude';
+export type HookCoverage = 'complete' | 'partial' | 'none';
 export type HarnessIntegrationState =
-  | "configured"
-  | "divergent"
-  | "invalid"
-  | "missing"
-  | "pending-trust"
-  | "stale";
+  | 'configured'
+  | 'divergent'
+  | 'invalid'
+  | 'missing'
+  | 'pending-trust'
+  | 'stale';
 
 export type HarnessActivationState =
-  | "active"
-  | "manual-only"
-  | "missing-binding"
-  | "missing-database"
-  | "missing-hooks"
-  | "no-evidence"
-  | "not-applicable"
-  | "stale"
-  | "unavailable";
+  | 'active'
+  | 'manual-only'
+  | 'missing-binding'
+  | 'missing-database'
+  | 'missing-hooks'
+  | 'no-evidence'
+  | 'not-applicable'
+  | 'stale'
+  | 'unavailable';
 
-export interface HarnessActivationStatus {
+export type HarnessActivationStatus = {
   checkedAt: string;
   detail: string;
   lastEvent?: {
@@ -63,46 +66,46 @@ export interface HarnessActivationStatus {
     unproven: readonly string[];
   };
   state: HarnessActivationState;
-}
+};
 
-export interface HarnessStatus {
+export type HarnessStatus = {
   activation: HarnessActivationStatus;
-  binding: "installed" | "missing";
+  binding: 'installed' | 'missing';
   displayName: string;
   hookCommand: string;
-  hookTrust: "not installed" | "pending user trust" | "requires review" | "trusted by evidence";
+  hookTrust: 'not installed' | 'pending user trust' | 'requires review' | 'trusted by evidence';
   hooksCoverage: HookCoverage;
-  hooks: "installed" | "invalid" | "missing";
+  hooks: 'installed' | 'invalid' | 'missing';
   hooksError?: string;
   hooksPath: string;
   state: HarnessIntegrationState;
   stateDetail: string;
-  mcp: "deferred";
+  mcp: 'deferred';
   nextStep: string | undefined;
   sessionStartCoverage: HookCoverage;
   sessionStartDetail: string;
-  skills: "deferred";
+  skills: 'deferred';
   target: HarnessTarget;
-}
+};
 
-export type CodexHarnessStatus = HarnessStatus & { target: "codex" };
+export type CodexHarnessStatus = HarnessStatus & { target: 'codex' };
 
 type HarnessSourceUri = `codex://host/${string}` | `claude://host/${string}`;
 
-export interface HarnessAdapter {
+export type HarnessAdapter = {
   displayName: string;
   gitignoreEntries: readonly string[];
-  hooksPath(projectRoot: string): string;
-  ingestCommand: "codex-hook" | "claude-hook";
+  hooksPath: (projectRoot: string) => string;
+  ingestCommand: 'codex-hook' | 'claude-hook';
   settingsLabel: string;
   shimScriptName: string;
-  shimPath(projectRoot: string): string;
-  sourceUri(hostId: string): HarnessSourceUri;
+  shimPath: (projectRoot: string) => string;
+  sourceUri: (hostId: string) => HarnessSourceUri;
   sourceType: HarnessTarget;
   target: HarnessTarget;
-}
+};
 
-interface HarnessBindingSnapshot {
+type HarnessBindingSnapshot = {
   hookCommand: string;
   hookTrust: string;
   hooksPath: string;
@@ -110,69 +113,69 @@ interface HarnessBindingSnapshot {
   sourceBindingId: string;
   sourceUri: string;
   target: string;
-}
+};
 
-interface HookCommand {
+type HookCommand = {
   command: string;
   statusMessage?: string;
   timeout?: number;
-  type: "command";
-}
+  type: 'command';
+};
 
-interface HookMatcher {
+type HookMatcher = {
   hooks?: HookCommand[];
   matcher?: string;
-}
+};
 
-interface HooksSettingsFile {
+type HooksSettingsFile = {
   hooks?: Record<string, HookMatcher[]>;
-}
+};
 
-interface HooksSettingsParseError {
+type HooksSettingsParseError = {
   message: string;
   path: string;
   target: HarnessTarget;
-}
+};
 
 type HooksSettingsReadResult =
   | { file: HooksSettingsFile; ok: true }
   | { error: HooksSettingsParseError; ok: false };
 
-const HARNESS_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"] as const;
-const SESSION_START_SOURCES = ["startup", "resume", "clear", "compact"] as const;
+const HARNESS_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const;
+const SESSION_START_SOURCES = ['startup', 'resume', 'clear', 'compact'] as const;
 const ACTIVATION_RECENT_WINDOW_HOURS = 24;
 const ACTIVATION_RECENT_WINDOW_MS = ACTIVATION_RECENT_WINDOW_HOURS * 60 * 60 * 1000;
 const LEGACY_HOOK_COMMANDS = {
-  claude: "saga ingest claude-hook",
-  codex: "saga ingest codex-hook",
+  claude: 'saga ingest claude-hook',
+  codex: 'saga ingest codex-hook',
 } as const;
-const LEGACY_CODEX_HOOK_COMMAND = "saga ingest codex-hook";
+const LEGACY_CODEX_HOOK_COMMAND = 'saga ingest codex-hook';
 const HOOK_TIMEOUT_SECONDS = 30;
-const HARNESS_TARGET_ORDER = ["codex", "claude"] as const satisfies readonly HarnessTarget[];
+const HARNESS_TARGET_ORDER = ['codex', 'claude'] as const satisfies readonly HarnessTarget[];
 const HARNESS_ADAPTERS = {
   claude: {
-    displayName: "Claude Code",
-    gitignoreEntries: [".claude/settings.local.json", ".claude/saga-claude-hook.sh"],
-    hooksPath: (projectRoot: string) => join(projectRoot, ".claude", "settings.local.json"),
-    ingestCommand: "claude-hook",
-    settingsLabel: "Claude settings file",
-    shimScriptName: "saga-claude-hook.sh",
-    shimPath: (projectRoot: string) => join(projectRoot, ".claude", "saga-claude-hook.sh"),
+    displayName: 'Claude Code',
+    gitignoreEntries: ['.claude/settings.local.json', '.claude/saga-claude-hook.sh'],
+    hooksPath: (projectRoot: string) => join(projectRoot, '.claude', 'settings.local.json'),
+    ingestCommand: 'claude-hook',
+    settingsLabel: 'Claude settings file',
+    shimScriptName: 'saga-claude-hook.sh',
+    shimPath: (projectRoot: string) => join(projectRoot, '.claude', 'saga-claude-hook.sh'),
     sourceUri: (hostId: string) => `claude://host/${hostId}`,
-    sourceType: "claude",
-    target: "claude",
+    sourceType: 'claude',
+    target: 'claude',
   },
   codex: {
-    displayName: "Codex",
-    gitignoreEntries: [".codex/"],
-    hooksPath: (projectRoot: string) => join(projectRoot, ".codex", "hooks.json"),
-    ingestCommand: "codex-hook",
-    settingsLabel: "Codex hooks file",
-    shimScriptName: "saga-codex-hook.sh",
-    shimPath: (projectRoot: string) => join(projectRoot, ".codex", "saga-codex-hook.sh"),
+    displayName: 'Codex',
+    gitignoreEntries: ['.codex/'],
+    hooksPath: (projectRoot: string) => join(projectRoot, '.codex', 'hooks.json'),
+    ingestCommand: 'codex-hook',
+    settingsLabel: 'Codex hooks file',
+    shimScriptName: 'saga-codex-hook.sh',
+    shimPath: (projectRoot: string) => join(projectRoot, '.codex', 'saga-codex-hook.sh'),
     sourceUri: (hostId: string) => `codex://host/${hostId}`,
-    sourceType: "codex",
-    target: "codex",
+    sourceType: 'codex',
+    target: 'codex',
   },
 } as const satisfies Record<HarnessTarget, HarnessAdapter>;
 
@@ -182,28 +185,28 @@ export async function runHarnessCommand(
 ): Promise<string> {
   const subcommand = args[0];
 
-  if (subcommand === "install") {
+  if (subcommand === 'install') {
     const target = parseTarget(args[1]);
     const result = await installHarness({ target });
-    return formatHarnessResults("Harness installed", [result], options);
+    return formatHarnessResults('Harness installed', [result], options);
   }
 
-  if (subcommand === "uninstall") {
+  if (subcommand === 'uninstall') {
     const target = parseTarget(args[1]);
     const result = uninstallHarness({ target });
-    return formatHarnessResults("Harness uninstalled", [result], options);
+    return formatHarnessResults('Harness uninstalled', [result], options);
   }
 
-  if (subcommand === "status") {
+  if (subcommand === 'status') {
     const target = args[1] === undefined ? undefined : parseTarget(args[1]);
     const result =
       target === undefined
         ? await inspectHarnessesWithActivation()
         : [await inspectHarnessWithActivation({ target })];
-    return formatHarnessResults("Harness status", result, options);
+    return formatHarnessResults('Harness status', result, options);
   }
 
-  throw new Error(`harness ${subcommand ?? ""} is not implemented yet`.trim());
+  throw new Error(`harness ${subcommand ?? ''} is not implemented yet`.trim());
 }
 
 export async function installHarness(input: {
@@ -238,7 +241,7 @@ export async function installHarness(input: {
       ...binding.harnesses,
       [input.target]: {
         hookCommand,
-        hookTrust: "requires-review",
+        hookTrust: 'requires-review',
         hooksPath,
         installedAt,
         sourceBindingId: sourceBinding.id,
@@ -344,20 +347,20 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
   if (!hooksFile.ok) {
     return {
       activation: activationNotChecked(adapter.target),
-      binding: harnessBinding === undefined ? "missing" : "installed",
+      binding: harnessBinding === undefined ? 'missing' : 'installed',
       displayName: adapter.displayName,
       hookCommand,
-      hooks: "invalid",
-      hooksCoverage: "none",
+      hooks: 'invalid',
+      hooksCoverage: 'none',
       hooksError: formatHooksSettingsParseError(hooksFile.error),
-      hookTrust: "not installed",
+      hookTrust: 'not installed',
       hooksPath,
-      mcp: "deferred",
+      mcp: 'deferred',
       nextStep: undefined,
-      sessionStartCoverage: "none",
-      sessionStartDetail: "SessionStart hook configuration could not be read",
-      skills: "deferred",
-      state: "invalid",
+      sessionStartCoverage: 'none',
+      sessionStartDetail: 'SessionStart hook configuration could not be read',
+      skills: 'deferred',
+      state: 'invalid',
       stateDetail: formatHooksSettingsParseError(hooksFile.error),
       target: adapter.target,
     };
@@ -367,24 +370,24 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     hookCommand,
     target: adapter.target,
   });
-  const hooksInstalled = sagaHookCoverage.hooksCoverage === "complete";
+  const hooksInstalled = sagaHookCoverage.hooksCoverage === 'complete';
   const bindingIssue = validateHarnessBindingSnapshot(harnessBinding);
   if (bindingIssue !== undefined) {
     return {
       activation: activationNotChecked(adapter.target),
-      binding: "installed",
+      binding: 'installed',
       displayName: adapter.displayName,
       hookCommand,
-      hookTrust: hooksInstalled ? "requires review" : "not installed",
+      hookTrust: hooksInstalled ? 'requires review' : 'not installed',
       hooksCoverage: sagaHookCoverage.hooksCoverage,
-      hooks: hooksInstalled ? "installed" : "missing",
+      hooks: hooksInstalled ? 'installed' : 'missing',
       hooksPath,
-      mcp: "deferred",
+      mcp: 'deferred',
       nextStep: undefined,
       sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
       sessionStartDetail: sagaHookCoverage.sessionStartDetail,
-      skills: "deferred",
-      state: "invalid",
+      skills: 'deferred',
+      state: 'invalid',
       stateDetail: `invalid harness binding: ${bindingIssue}`,
       target: adapter.target,
     };
@@ -403,18 +406,18 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
   });
   return {
     activation: activationNotChecked(adapter.target),
-    binding: harnessBinding === undefined ? "missing" : "installed",
+    binding: harnessBinding === undefined ? 'missing' : 'installed',
     displayName: adapter.displayName,
     hookCommand,
     hookTrust: hookTrustDisplay(adapter.target, hooksInstalled, state.state),
     hooksCoverage: sagaHookCoverage.hooksCoverage,
-    hooks: hooksInstalled ? "installed" : "missing",
+    hooks: hooksInstalled ? 'installed' : 'missing',
     hooksPath,
-    mcp: "deferred",
+    mcp: 'deferred',
     nextStep: nextStepForHarnessState(adapter.target, state.state),
     sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
     sessionStartDetail: sagaHookCoverage.sessionStartDetail,
-    skills: "deferred",
+    skills: 'deferred',
     state: state.state,
     stateDetail: state.detail,
     target: adapter.target,
@@ -424,20 +427,26 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
 function validateHarnessBindingSnapshot(
   binding: Partial<HarnessBindingSnapshot> | undefined,
 ): string | undefined {
-  if (binding === undefined) return undefined;
+  if (binding === undefined) {
+    return undefined;
+  }
   const requiredStrings = [
-    "hookCommand",
-    "hooksPath",
-    "installedAt",
-    "sourceBindingId",
-    "sourceUri",
-    "target",
+    'hookCommand',
+    'hooksPath',
+    'installedAt',
+    'sourceBindingId',
+    'sourceUri',
+    'target',
   ] as const satisfies readonly (keyof HarnessBindingSnapshot)[];
   const invalidField = requiredStrings.find(
-    (field) => typeof binding[field] !== "string" || binding[field].trim() === "",
+    (field) => typeof binding[field] !== 'string' || binding[field].trim() === '',
   );
-  if (invalidField !== undefined) return `${invalidField} must be a non-empty string`;
-  if (binding.hookTrust !== "requires-review") return "hookTrust must be requires-review";
+  if (invalidField !== undefined) {
+    return `${invalidField} must be a non-empty string`;
+  }
+  if (binding.hookTrust !== 'requires-review') {
+    return 'hookTrust must be requires-review';
+  }
   return undefined;
 }
 
@@ -453,71 +462,78 @@ function classifyHarnessState(input: {
   sessionStartDetail: string;
 }): { detail: string; state: HarnessIntegrationState } {
   const bindingInstalled = input.harnessBinding !== undefined;
-  if (!bindingInstalled && input.sagaHookCoverage === "none") {
-    return { detail: "binding and hooks are not installed", state: "missing" };
+  if (!bindingInstalled && input.sagaHookCoverage === 'none') {
+    return { detail: 'binding and hooks are not installed', state: 'missing' };
   }
 
   if (!bindingInstalled) {
     return {
       detail: activeHooksWithoutBindingDetail(input.sagaHookCoverage),
-      state: "divergent",
+      state: 'divergent',
     };
   }
 
   const staleReasons = staleHarnessBindingReasons(input);
   if (staleReasons.length > 0) {
-    return { detail: staleReasons.join("; "), state: "stale" };
+    return { detail: staleReasons.join('; '), state: 'stale' };
   }
 
   if (!input.hooksInstalled) {
-    return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: "divergent" };
+    return { detail: bindingHookDivergenceDetail(input.sagaHookCoverage), state: 'divergent' };
   }
 
-  if (input.sessionStartCoverage !== "complete") {
+  if (input.sessionStartCoverage !== 'complete') {
     return {
       detail: `local binding exists but ${input.sessionStartDetail}`,
-      state: "divergent",
+      state: 'divergent',
     };
   }
 
-  if (input.adapter.target === "codex" && input.harnessBinding?.hookTrust === "requires-review") {
+  if (input.adapter.target === 'codex' && input.harnessBinding?.hookTrust === 'requires-review') {
     return {
       detail:
-        "binding and hooks are installed; Codex project-local hook trust is pending explicit user approval",
-      state: "pending-trust",
+        'binding and hooks are installed; Codex project-local hook trust is pending explicit user approval',
+      state: 'pending-trust',
     };
   }
 
-  return { detail: "binding is valid and complete Saga hooks are active", state: "configured" };
+  return { detail: 'binding is valid and complete Saga hooks are active', state: 'configured' };
 }
 
 function activeHooksWithoutBindingDetail(coverage: HookCoverage): string {
-  if (coverage === "complete") return "hooks are installed but local binding is missing";
-  return "Saga hooks are partially installed but local binding is missing";
+  if (coverage === 'complete') {
+    return 'hooks are installed but local binding is missing';
+  }
+  return 'Saga hooks are partially installed but local binding is missing';
 }
 
 function bindingHookDivergenceDetail(coverage: HookCoverage): string {
-  if (coverage === "partial")
-    return "local binding exists but Saga hooks are only partially installed";
-  return "local binding exists but hooks are missing";
+  if (coverage === 'partial') {
+    return 'local binding exists but Saga hooks are only partially installed';
+  }
+  return 'local binding exists but hooks are missing';
 }
 
 function hookTrustDisplay(
   target: HarnessTarget,
   hooksInstalled: boolean,
   state: HarnessIntegrationState,
-): HarnessStatus["hookTrust"] {
-  if (!hooksInstalled) return "not installed";
-  if (target === "codex" && state === "pending-trust") return "pending user trust";
-  return "requires review";
+): HarnessStatus['hookTrust'] {
+  if (!hooksInstalled) {
+    return 'not installed';
+  }
+  if (target === 'codex' && state === 'pending-trust') {
+    return 'pending user trust';
+  }
+  return 'requires review';
 }
 
 function nextStepForHarnessState(
   target: HarnessTarget,
   state: HarnessIntegrationState,
 ): string | undefined {
-  if (target === "codex" && state === "pending-trust") {
-    return "approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here";
+  if (target === 'codex' && state === 'pending-trust') {
+    return 'approve Codex project-local hooks for this workspace, then restart Codex or start a new Codex session here';
   }
   return undefined;
 }
@@ -526,15 +542,15 @@ function activationNotChecked(target: HarnessTarget): HarnessActivationStatus {
   return {
     checkedAt: new Date(0).toISOString(),
     detail:
-      target === "codex"
-        ? "activation evidence was not checked"
-        : "runtime activation verification is not implemented for this harness",
+      target === 'codex'
+        ? 'activation evidence was not checked'
+        : 'runtime activation verification is not implemented for this harness',
     recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
     sessionStartSources: {
       observed: [],
       unproven: [...SESSION_START_SOURCES],
     },
-    state: target === "codex" ? "unavailable" : "not-applicable",
+    state: target === 'codex' ? 'unavailable' : 'not-applicable',
   };
 }
 
@@ -551,12 +567,12 @@ async function verifyHarnessActivation(input: {
       return missingBindingActivation(
         checkedAt,
         input.status.target,
-        "workspace binding is missing; run saga init",
+        'workspace binding is missing; run saga init',
       );
     }
 
     const harnessBinding = binding.harnesses?.[input.status.target];
-    if (harnessBinding?.sourceBindingId === undefined || harnessBinding.sourceBindingId === "") {
+    if (harnessBinding?.sourceBindingId === undefined || harnessBinding.sourceBindingId === '') {
       return missingBindingActivation(
         checkedAt,
         input.status.target,
@@ -564,7 +580,7 @@ async function verifyHarnessActivation(input: {
       );
     }
 
-    if (input.status.hooks !== "installed") {
+    if (input.status.hooks !== 'installed') {
       return missingHooksActivation(
         checkedAt,
         input.status.target,
@@ -576,14 +592,14 @@ async function verifyHarnessActivation(input: {
     if (config.databaseUrl === undefined) {
       return {
         checkedAt: checkedAt.toISOString(),
-        detail: "DATABASE_URL is not set; activation verification cannot query raw_events",
+        detail: 'DATABASE_URL is not set; activation verification cannot query raw_events',
         nextStep: `set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status ${input.status.target} again`,
         recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
         sessionStartSources: {
           observed: [],
           unproven: [...SESSION_START_SOURCES],
         },
-        state: "missing-database",
+        state: 'missing-database',
       };
     }
 
@@ -617,7 +633,7 @@ async function verifyHarnessActivation(input: {
         observed: [],
         unproven: [...SESSION_START_SOURCES],
       },
-      state: "unavailable",
+      state: 'unavailable',
     };
   }
 }
@@ -636,7 +652,7 @@ function missingBindingActivation(
       observed: [],
       unproven: [...SESSION_START_SOURCES],
     },
-    state: "missing-binding",
+    state: 'missing-binding',
   };
 }
 
@@ -654,7 +670,7 @@ function missingHooksActivation(
       observed: [],
       unproven: [...SESSION_START_SOURCES],
     },
-    state: "missing-hooks",
+    state: 'missing-hooks',
   };
 }
 
@@ -668,7 +684,7 @@ function classifyHarnessActivationEvidence(input: {
   const recentWindowMs = input.recentWindowMs ?? ACTIVATION_RECENT_WINDOW_MS;
   const recentWithinHours = Math.round(recentWindowMs / (60 * 60 * 1000));
   const adapter = getHarnessAdapter(input.target);
-  const ordered = [...input.events].sort(
+  const ordered = [...input.events].toSorted(
     (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
   );
   const realHookEvents = ordered.filter((event) => isRealActivationEvent(event, input.target));
@@ -694,7 +710,7 @@ function classifyHarnessActivationEvidence(input: {
         observed: observedSources,
         unproven: unprovenSources,
       },
-      state: "active",
+      state: 'active',
     };
   }
 
@@ -713,7 +729,7 @@ function classifyHarnessActivationEvidence(input: {
         observed: observedSources,
         unproven: unprovenSources,
       },
-      state: "stale",
+      state: 'stale',
     };
   }
 
@@ -728,7 +744,7 @@ function classifyHarnessActivationEvidence(input: {
         observed: [],
         unproven: [...SESSION_START_SOURCES],
       },
-      state: "manual-only",
+      state: 'manual-only',
     };
   }
 
@@ -743,7 +759,7 @@ function classifyHarnessActivationEvidence(input: {
       observed: [],
       unproven: [...SESSION_START_SOURCES],
     },
-    state: "no-evidence",
+    state: 'no-evidence',
   };
 }
 
@@ -752,7 +768,7 @@ export function classifyCodexActivationEvidence(input: {
   events: readonly RawEvent[];
   recentWindowMs?: number;
 }): HarnessActivationStatus {
-  return classifyHarnessActivationEvidence({ ...input, target: "codex" });
+  return classifyHarnessActivationEvidence({ ...input, target: 'codex' });
 }
 
 export function classifyClaudeActivationEvidence(input: {
@@ -760,52 +776,52 @@ export function classifyClaudeActivationEvidence(input: {
   events: readonly RawEvent[];
   recentWindowMs?: number;
 }): HarnessActivationStatus {
-  return classifyHarnessActivationEvidence({ ...input, target: "claude" });
+  return classifyHarnessActivationEvidence({ ...input, target: 'claude' });
 }
 
 function staleActivationNextStep(target: HarnessTarget): string {
-  if (target === "codex") {
-    return "restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again";
+  if (target === 'codex') {
+    return 'restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again';
   }
-  return "start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again";
+  return 'start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again';
 }
 
 function manualActivationNextStep(target: HarnessTarget): string {
-  if (target === "codex") {
-    return "use an interactive Codex session in this workspace, approve hooks if prompted, submit a prompt, then run saga harness status codex again";
+  if (target === 'codex') {
+    return 'use an interactive Codex session in this workspace, approve hooks if prompted, submit a prompt, then run saga harness status codex again';
   }
-  return "use an interactive Claude Code session in this workspace, submit a prompt, then run saga harness status claude again";
+  return 'use an interactive Claude Code session in this workspace, submit a prompt, then run saga harness status claude again';
 }
 
 function noEvidenceActivationNextStep(target: HarnessTarget): string {
-  if (target === "codex") {
-    return "approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again";
+  if (target === 'codex') {
+    return 'approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again';
   }
-  return "start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again";
+  return 'start or resume Claude Code in this workspace, submit a prompt, then run saga harness status claude again';
 }
 
 function applyActivationStatus(
   status: HarnessStatus,
   activation: HarnessActivationStatus,
 ): HarnessStatus {
-  if (status.target !== "codex") {
+  if (status.target !== 'codex') {
     return {
       ...status,
       activation,
       nextStep: status.nextStep ?? activation.nextStep,
     };
   }
-  if (status.state === "pending-trust" && activation.state === "active") {
+  if (status.state === 'pending-trust' && activation.state === 'active') {
     return {
       ...status,
       activation,
-      hookTrust: "trusted by evidence",
+      hookTrust: 'trusted by evidence',
       nextStep: undefined,
-      state: "configured",
+      state: 'configured',
       stateDetail: `binding and hooks are installed; ${activation.detail}`,
     };
   }
-  if (status.state === "pending-trust" && activation.state !== "not-applicable") {
+  if (status.state === 'pending-trust' && activation.state !== 'not-applicable') {
     return {
       ...status,
       activation,
@@ -821,7 +837,9 @@ function applyActivationStatus(
 }
 
 function isRealActivationEvent(event: RawEvent, target: HarnessTarget): boolean {
-  if (event.sourceType !== target) return false;
+  if (event.sourceType !== target) {
+    return false;
+  }
   if (
     event.eventType !== `${target}.SessionStart` &&
     event.eventType !== `${target}.UserPromptSubmit`
@@ -838,12 +856,14 @@ function isRealActivationEvent(event: RawEvent, target: HarnessTarget): boolean 
 }
 
 function hasManualSyntheticMarker(value: Record<string, unknown>): boolean {
-  const markerKeys = ["manual", "synthetic", "isManual", "isSynthetic", "sagaManualIngest"];
-  if (markerKeys.some((key) => value[key] === true)) return true;
-  const markerValues = ["manual", "synthetic"];
-  return ["origin", "source", "mode", "captureMode"].some((key) => {
+  const markerKeys = ['manual', 'synthetic', 'isManual', 'isSynthetic', 'sagaManualIngest'];
+  if (markerKeys.some((key) => value[key] === true)) {
+    return true;
+  }
+  const markerValues = new Set(['manual', 'synthetic']);
+  return ['origin', 'source', 'mode', 'captureMode'].some((key) => {
     const marker = stringValue(value[key]);
-    return marker !== undefined && markerValues.includes(marker.toLowerCase());
+    return marker !== undefined && markerValues.has(marker.toLowerCase());
   });
 }
 
@@ -853,16 +873,15 @@ function sessionStartSourcesFor(
 ): readonly string[] {
   const observed = new Set<string>();
   for (const event of events) {
-    if (event.eventType !== `${target}.SessionStart`) continue;
+    if (event.eventType !== `${target}.SessionStart`) {
+      continue;
+    }
     const source =
       stringValue(event.payload.source) ??
       stringValue(event.payload.session_start_source) ??
       stringValue(event.provenance.source) ??
       stringValue(event.provenance.sessionStartSource);
-    if (
-      source !== undefined &&
-      SESSION_START_SOURCES.includes(source as (typeof SESSION_START_SOURCES)[number])
-    ) {
+    if (source !== undefined && (SESSION_START_SOURCES as readonly string[]).includes(source)) {
       observed.add(source);
     }
   }
@@ -874,19 +893,19 @@ function sessionStartSourceDetail(
   unprovenSources: readonly string[],
 ): string {
   if (observedSources.length === 0) {
-    return "SessionStart lifecycle source evidence is not yet observed";
+    return 'SessionStart lifecycle source evidence is not yet observed';
   }
   if (unprovenSources.length === 0) {
-    return `SessionStart sources observed: ${observedSources.join(", ")}`;
+    return `SessionStart sources observed: ${observedSources.join(', ')}`;
   }
-  return `SessionStart sources observed: ${observedSources.join(", ")}; unproven: ${unprovenSources.join(", ")}`;
+  return `SessionStart sources observed: ${observedSources.join(', ')}; unproven: ${unprovenSources.join(', ')}`;
 }
 
 function eventSummary(event: RawEvent): string {
   return `${event.eventType} at ${event.occurredAt.toISOString()}`;
 }
 
-function rawEventPointer(event: RawEvent): NonNullable<HarnessActivationStatus["lastEvent"]> {
+function rawEventPointer(event: RawEvent): NonNullable<HarnessActivationStatus['lastEvent']> {
   return {
     eventType: event.eventType,
     occurredAt: event.occurredAt.toISOString(),
@@ -894,7 +913,7 @@ function rawEventPointer(event: RawEvent): NonNullable<HarnessActivationStatus["
 }
 
 function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function staleHarnessBindingReasons(input: {
@@ -905,23 +924,25 @@ function staleHarnessBindingReasons(input: {
   harnessBinding: HarnessBindingSnapshot | undefined;
 }): string[] {
   const binding = input.harnessBinding;
-  if (binding === undefined) return [];
+  if (binding === undefined) {
+    return [];
+  }
 
   const reasons: string[] = [];
   if (binding.target !== input.adapter.target) {
     reasons.push(`binding target is ${binding.target}, expected ${input.adapter.target}`);
   }
   if (input.expectedSourceUri === undefined) {
-    reasons.push("local binding host id is missing");
+    reasons.push('local binding host id is missing');
   }
   if (input.expectedSourceUri !== undefined && binding.sourceUri !== input.expectedSourceUri) {
     reasons.push(`binding source URI is ${binding.sourceUri}, expected ${input.expectedSourceUri}`);
   }
   if (binding.hooksPath !== input.expectedHooksPath) {
-    reasons.push("binding hooks path does not match the current adapter");
+    reasons.push('binding hooks path does not match the current adapter');
   }
   if (binding.hookCommand !== input.expectedHookCommand) {
-    reasons.push("binding hook command does not match the current shim");
+    reasons.push('binding hook command does not match the current shim');
   }
   return reasons;
 }
@@ -933,8 +954,8 @@ function formatHarnessResults(
 ): string {
   return formatCommandOutput(
     {
-      id: statuses.map((status) => status.target).join("\n"),
-      records: statuses.map((status) => formatHarnessRecord(title, status, options)).join("\n\n"),
+      id: statuses.map((status) => status.target).join('\n'),
+      records: statuses.map((status) => formatHarnessRecord(title, status, options)).join('\n\n'),
       value: statuses.length === 1 ? statuses[0] : statuses,
     },
     options.format,
@@ -945,29 +966,29 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
   return recordBlock(
     statusesTitle(title, status),
     [
-      { label: "target", value: status.target },
-      { label: "state", value: status.state },
-      { label: "detail", value: status.stateDetail },
-      { label: "binding", value: status.binding },
-      { label: "hooks", value: status.hooks },
-      { label: "hooks coverage", value: status.hooksCoverage },
+      { label: 'target', value: status.target },
+      { label: 'state', value: status.state },
+      { label: 'detail', value: status.stateDetail },
+      { label: 'binding', value: status.binding },
+      { label: 'hooks', value: status.hooks },
+      { label: 'hooks coverage', value: status.hooksCoverage },
       ...(status.hooksError === undefined
         ? []
-        : [{ label: "hooks error", value: status.hooksError }]),
+        : [{ label: 'hooks error', value: status.hooksError }]),
       {
-        label: "session start",
+        label: 'session start',
         value: `${status.sessionStartCoverage}; ${status.sessionStartDetail}`,
       },
       {
-        label: "activation",
+        label: 'activation',
         value: `${status.activation.state}; ${status.activation.detail}`,
       },
-      { label: "hook trust", value: status.hookTrust },
-      ...(status.nextStep === undefined ? [] : [{ label: "next step", value: status.nextStep }]),
-      { label: "hooks path", value: status.hooksPath },
-      { label: "hook command", value: status.hookCommand },
-      { label: "mcp", value: "deferred until saga mcp is implemented" },
-      { label: "skills", value: "deferred until Saga skills are packaged" },
+      { label: 'hook trust', value: status.hookTrust },
+      ...(status.nextStep === undefined ? [] : [{ label: 'next step', value: status.nextStep }]),
+      { label: 'hooks path', value: status.hooksPath },
+      { label: 'hook command', value: status.hookCommand },
+      { label: 'mcp', value: 'deferred until saga mcp is implemented' },
+      { label: 'skills', value: 'deferred until Saga skills are packaged' },
     ],
     options,
   );
@@ -978,8 +999,12 @@ function statusesTitle(title: string, status: HarnessStatus): string {
 }
 
 function parseTarget(value: string | undefined): HarnessTarget {
-  if (value === "codex" || value === "claude") return value;
-  if (value === undefined) throw new Error("harness target is required");
+  if (value === 'codex' || value === 'claude') {
+    return value;
+  }
+  if (value === undefined) {
+    throw new Error('harness target is required');
+  }
   throw new Error(`unsupported harness target: ${value}`);
 }
 
@@ -997,12 +1022,12 @@ function hookShimCommand(projectRoot: string, adapter: HarnessAdapter): string {
 
 function installHookShim(projectRoot: string, adapter: HarnessAdapter): string {
   const shimPath = adapter.shimPath(projectRoot);
-  const cliPath = fileURLToPath(new URL("../bin/saga.js", import.meta.url));
+  const cliPath = fileURLToPath(new URL('../bin/saga.js', import.meta.url));
   mkdirSync(dirname(shimPath), { recursive: true });
   writeFileSync(
     shimPath,
-    ["#!/bin/sh", `exec ${quoteShellArg(cliPath)} ingest ${adapter.ingestCommand} "$@"`, ""].join(
-      "\n",
+    ['#!/bin/sh', `exec ${quoteShellArg(cliPath)} ingest ${adapter.ingestCommand} "$@"`, ''].join(
+      '\n',
     ),
   );
   chmodSync(shimPath, 0o755);
@@ -1019,7 +1044,9 @@ function registerHarnessSourceBinding(input: {
   hostId: string,
   hostLabel: string,
 ) => Promise<{ id: string }> {
-  if (input.target === "claude") return input.registerClaudeSource ?? registerClaudeSourceBinding;
+  if (input.target === 'claude') {
+    return input.registerClaudeSource ?? registerClaudeSourceBinding;
+  }
   return input.registerCodexSource ?? registerCodexSourceBinding;
 }
 
@@ -1029,7 +1056,7 @@ async function registerClaudeSourceBinding(
   hostId: string,
   hostLabel: string,
 ) {
-  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, "claude");
+  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, 'claude');
 }
 
 async function registerCodexSourceBinding(
@@ -1038,7 +1065,7 @@ async function registerCodexSourceBinding(
   hostId: string,
   hostLabel: string,
 ) {
-  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, "codex");
+  return registerAgentSourceBinding(projectRoot, workspaceId, hostId, hostLabel, 'codex');
 }
 
 async function registerAgentSourceBinding(
@@ -1074,14 +1101,18 @@ async function registerAgentSourceBinding(
 
 function readHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsFile {
   const result = tryReadHooksSettingsFile(path, adapter);
-  if (result.ok) return result.file;
+  if (result.ok) {
+    return result.file;
+  }
   throw new Error(formatHooksSettingsParseError(result.error));
 }
 
 function tryReadHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsReadResult {
-  if (!existsSync(path)) return { file: {}, ok: true };
+  if (!existsSync(path)) {
+    return { file: {}, ok: true };
+  }
   try {
-    return { file: parseHooksSettingsFile(JSON.parse(readFileSync(path, "utf8"))), ok: true };
+    return { file: parseHooksSettingsFile(JSON.parse(readFileSync(path, 'utf8'))), ok: true };
   } catch (error) {
     return {
       error: {
@@ -1101,12 +1132,14 @@ function formatHooksSettingsParseError(error: HooksSettingsParseError): string {
 
 function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
   if (!isRecord(value)) {
-    throw new Error("expected a JSON object");
+    throw new Error('expected a JSON object');
   }
 
-  if (value.hooks === undefined) return value as HooksSettingsFile;
+  if (value.hooks === undefined) {
+    return value as HooksSettingsFile;
+  }
   if (!isRecord(value.hooks)) {
-    throw new Error("expected hooks to be an object");
+    throw new Error('expected hooks to be an object');
   }
 
   for (const [event, matchers] of Object.entries(value.hooks)) {
@@ -1119,7 +1152,9 @@ function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
         throw new Error(`expected hooks.${event}[${matcherIndex}] to be an object`);
       }
 
-      if (matcher.hooks === undefined) continue;
+      if (matcher.hooks === undefined) {
+        continue;
+      }
       if (!Array.isArray(matcher.hooks)) {
         throw new Error(`expected hooks.${event}[${matcherIndex}].hooks to be an array`);
       }
@@ -1130,7 +1165,7 @@ function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
             `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}] to be an object`,
           );
         }
-        if (hook.command !== undefined && typeof hook.command !== "string") {
+        if (hook.command !== undefined && typeof hook.command !== 'string') {
           throw new Error(
             `expected hooks.${event}[${matcherIndex}].hooks[${hookIndex}].command to be a string`,
           );
@@ -1143,7 +1178,7 @@ function parseHooksSettingsFile(value: unknown): HooksSettingsFile {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function writeJsonFile(path: string, value: unknown): void {
@@ -1159,14 +1194,16 @@ function writeJsonFile(path: string, value: unknown): void {
 }
 
 function ensureGitignoreEntry(projectRoot: string, entries: readonly string[]): void {
-  const gitignorePath = join(projectRoot, ".gitignore");
-  const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
-  const lines = existing.split(/\r?\n/).filter((line) => line.length > 0);
-  const missingEntries = entries.filter((entry) => !lines.includes(entry));
-  if (missingEntries.length === 0) return;
+  const gitignorePath = join(projectRoot, '.gitignore');
+  const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const lines = new Set(existing.split(/\r?\n/).filter((line) => line.length > 0));
+  const missingEntries = entries.filter((entry) => !lines.has(entry));
+  if (missingEntries.length === 0) {
+    return;
+  }
 
-  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  writeFileSync(gitignorePath, `${existing}${prefix}${missingEntries.join("\n")}\n`);
+  const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  writeFileSync(gitignorePath, `${existing}${prefix}${missingEntries.join('\n')}\n`);
 }
 
 function installSagaHooks(file: HooksSettingsFile, hookCommand: string): HooksSettingsFile {
@@ -1174,13 +1211,13 @@ function installSagaHooks(file: HooksSettingsFile, hookCommand: string): HooksSe
   for (const event of HARNESS_HOOK_EVENTS) {
     const matchers = withoutSagaHooks(hooks[event] ?? []);
     matchers.push({
-      ...(event === "SessionStart" ? { matcher: "startup|resume|clear|compact" } : {}),
+      ...(event === 'SessionStart' ? { matcher: 'startup|resume|clear|compact' } : {}),
       hooks: [
         {
           command: hookCommand,
-          statusMessage: "Syncing Saga workspace memory",
+          statusMessage: 'Syncing Saga workspace memory',
           timeout: HOOK_TIMEOUT_SECONDS,
-          type: "command",
+          type: 'command',
         },
       ],
     });
@@ -1204,6 +1241,13 @@ function uninstallSagaHooks(
     }
   }
   return { ...file, hooks };
+}
+
+function hooksCoverageLevel(installedEventCount: number): HookCoverage {
+  if (installedEventCount === HARNESS_HOOK_EVENTS.length) {
+    return 'complete';
+  }
+  return installedEventCount > 0 ? 'partial' : 'none';
 }
 
 function inspectSagaHookCoverage(
@@ -1232,13 +1276,10 @@ function inspectSagaHookCoverage(
     legacyCommands,
   });
 
+  const hooksCoverage = hooksCoverageLevel(installedEvents.length);
+
   return {
-    hooksCoverage:
-      installedEvents.length === HARNESS_HOOK_EVENTS.length
-        ? "complete"
-        : installedEvents.length > 0
-          ? "partial"
-          : "none",
+    hooksCoverage,
     sessionStartCoverage: sessionStartCoverage.coverage,
     sessionStartDetail: sessionStartCoverage.detail,
   };
@@ -1259,7 +1300,9 @@ function inspectSessionStartSourceCoverage(
     const hasSagaHook = (matcher.hooks ?? []).some((hook) =>
       isSagaHookCommand(hook, input.hookCommand, input.legacyCommands, input.hookScripts),
     );
-    if (!hasSagaHook) continue;
+    if (!hasSagaHook) {
+      continue;
+    }
 
     for (const source of sourcesCoveredBySessionStartMatcher(matcher.matcher)) {
       coveredSources.add(source);
@@ -1268,8 +1311,8 @@ function inspectSessionStartSourceCoverage(
 
   if (coveredSources.size === 0) {
     return {
-      coverage: "none",
-      detail: "no recognized Saga SessionStart hook source coverage is configured",
+      coverage: 'none',
+      detail: 'no recognized Saga SessionStart hook source coverage is configured',
     };
   }
 
@@ -1277,22 +1320,24 @@ function inspectSessionStartSourceCoverage(
   const configuredSources = SESSION_START_SOURCES.filter((source) => coveredSources.has(source));
   if (missingSources.length === 0) {
     return {
-      coverage: "complete",
-      detail: `SessionStart sources configured: ${configuredSources.join(", ")}`,
+      coverage: 'complete',
+      detail: `SessionStart sources configured: ${configuredSources.join(', ')}`,
     };
   }
 
   return {
-    coverage: "partial",
-    detail: `SessionStart sources configured: ${configuredSources.join(", ")}; missing: ${missingSources.join(", ")}`,
+    coverage: 'partial',
+    detail: `SessionStart sources configured: ${configuredSources.join(', ')}; missing: ${missingSources.join(', ')}`,
   };
 }
 
 function sourcesCoveredBySessionStartMatcher(matcher: string | undefined): readonly string[] {
-  if (matcher === undefined || matcher.trim() === "") return SESSION_START_SOURCES;
+  if (matcher === undefined || matcher.trim() === '') {
+    return SESSION_START_SOURCES;
+  }
 
   try {
-    const expression = new RegExp(`^(?:${matcher})$`, "u");
+    const expression = new RegExp(`^(?:${matcher})$`, 'u');
     return SESSION_START_SOURCES.filter((source) => expression.test(source));
   } catch {
     return [];
@@ -1312,7 +1357,9 @@ function withoutSagaHooks(
       : [getHarnessAdapter(target).shimScriptName];
   return matchers
     .map((matcher) => {
-      if (matcher.hooks === undefined) return matcher;
+      if (matcher.hooks === undefined) {
+        return matcher;
+      }
       return {
         ...matcher,
         hooks: matcher.hooks.filter(
@@ -1329,7 +1376,9 @@ function isSagaHookCommand(
   legacyCommands: readonly string[],
   hookScripts: readonly string[],
 ): boolean {
-  if (typeof hook.command !== "string") return false;
+  if (typeof hook.command !== 'string') {
+    return false;
+  }
   return (
     hook.command === hookCommand ||
     hook.command === LEGACY_CODEX_HOOK_COMMAND ||
@@ -1344,7 +1393,7 @@ function isSagaHookCommand(
 }
 
 function quoteShellArg(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 export function relativeHooksPath(projectRoot: string, hooksPath: string): string {

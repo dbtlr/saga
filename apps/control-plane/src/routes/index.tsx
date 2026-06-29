@@ -1,16 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useRouter } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
-import { useState, useTransition, type FormEvent } from "react";
+import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { useServerFn } from '@tanstack/react-start';
+import { useCallback, useMemo, useState, useTransition } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+
+import type { ControlPlaneSnapshot } from '../server/control-plane.js';
 import {
   getControlPlaneSnapshot,
   reviewClaim,
   saveSourceBinding,
   saveWorkspaceProfile,
-} from "../server/functions.js";
-import type { ControlPlaneSnapshot } from "../server/control-plane.js";
+} from '../server/functions.js';
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute('/')({
   component: ControlPlaneHome,
   loader: () => getControlPlaneSnapshot(),
 });
@@ -32,7 +33,7 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
       </header>
 
       <section className="summary-strip" aria-label="Runtime summary">
-        <Metric label="Workspace" value={snapshot.binding?.workspace.handle ?? "Unbound"} />
+        <Metric label="Workspace" value={snapshot.binding?.workspace.handle ?? 'Unbound'} />
         <Metric label="Runtime" value={snapshot.runtime.environment} />
         <Metric label="Service" value={snapshot.runtime.serviceUrl} />
         <Metric label="Database" value={snapshot.runtime.database} />
@@ -79,7 +80,7 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
               <ol className="claim-list">
                 {snapshot.claims.map((claim) => (
                   <ClaimReviewItem
-                    canEdit={snapshot.status === "ready"}
+                    canEdit={snapshot.status === 'ready'}
                     claim={claim}
                     key={claim.key}
                   />
@@ -98,26 +99,43 @@ function ClaimReviewItem({
   claim,
 }: {
   canEdit: boolean;
-  claim: ControlPlaneSnapshot["claims"][number];
+  claim: ControlPlaneSnapshot['claims'][number];
 }) {
   const router = useRouter();
   const review = useServerFn(reviewClaim);
   const [isPending, startTransition] = useTransition();
 
-  function runReview(
-    action: "accept" | "pin" | "promote" | "reject" | "unpin" | "unwatch" | "watch",
-  ) {
-    if (!canEdit) return;
-    startTransition(async () => {
-      await review({
-        data: {
-          action,
-          claimKey: claim.key,
-        },
+  const runReview = useCallback(
+    (action: 'accept' | 'pin' | 'promote' | 'reject' | 'unpin' | 'unwatch' | 'watch') => {
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await review({
+          data: {
+            action,
+            claimKey: claim.key,
+          },
+        });
+        await router.invalidate();
       });
-      await router.invalidate();
-    });
-  }
+    },
+    [canEdit, claim.key, review, router],
+  );
+
+  const onAccept = useCallback(() => runReview('accept'), [runReview]);
+  const onReject = useCallback(() => runReview('reject'), [runReview]);
+  const onPromote = useCallback(() => runReview('promote'), [runReview]);
+  const onPinChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      runReview((event.target as HTMLInputElement).checked ? 'pin' : 'unpin'),
+    [runReview],
+  );
+  const onWatchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      runReview((event.target as HTMLInputElement).checked ? 'watch' : 'unwatch'),
+    [runReview],
+  );
 
   return (
     <li className="claim-review-item">
@@ -127,21 +145,21 @@ function ClaimReviewItem({
           {claim.state} · {claim.kind} · {Math.round(claim.confidence * 100).toString()}%
         </small>
         {claim.promoted ? (
-          <small>{claim.promotionTitle === undefined ? "Promoted" : claim.promotionTitle}</small>
+          <small>{claim.promotionTitle === undefined ? 'Promoted' : claim.promotionTitle}</small>
         ) : null}
       </div>
       <div className="claim-review-actions">
         <button
-          disabled={!canEdit || isPending || claim.state === "supported"}
-          onClick={() => runReview("accept")}
+          disabled={!canEdit || isPending || claim.state === 'supported'}
+          onClick={onAccept}
           type="button"
         >
           Accept
         </button>
         <button
           className="danger-button"
-          disabled={!canEdit || isPending || claim.state === "rejected"}
-          onClick={() => runReview("reject")}
+          disabled={!canEdit || isPending || claim.state === 'rejected'}
+          onClick={onReject}
           type="button"
         >
           Reject
@@ -151,10 +169,10 @@ function ClaimReviewItem({
             !canEdit ||
             isPending ||
             claim.promoted ||
-            claim.state === "rejected" ||
-            claim.state === "superseded"
+            claim.state === 'rejected' ||
+            claim.state === 'superseded'
           }
-          onClick={() => runReview("promote")}
+          onClick={onPromote}
           type="button"
         >
           Promote
@@ -165,9 +183,7 @@ function ClaimReviewItem({
           <input
             checked={claim.pinned}
             disabled={!canEdit || isPending}
-            onChange={(event) =>
-              runReview((event.target as HTMLInputElement).checked ? "pin" : "unpin")
-            }
+            onChange={onPinChange}
             type="checkbox"
           />
           <span>Pin</span>
@@ -176,9 +192,7 @@ function ClaimReviewItem({
           <input
             checked={claim.watched}
             disabled={!canEdit || isPending}
-            onChange={(event) =>
-              runReview((event.target as HTMLInputElement).checked ? "watch" : "unwatch")
-            }
+            onChange={onWatchChange}
             type="checkbox"
           />
           <span>Watch</span>
@@ -190,7 +204,9 @@ function ClaimReviewItem({
 
 function ActiveContextPreview({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
   const context = snapshot.activeContext;
-  if (context === undefined) return null;
+  if (context === undefined) {
+    return null;
+  }
 
   return (
     <div className="context-preview">
@@ -229,7 +245,7 @@ function ContextChangeStream({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
               <strong>{activity.eventType}</strong>
               <small>
                 {activity.sourceType}
-                {activity.sessionId === undefined ? "" : ` · ${activity.sessionId}`}
+                {activity.sessionId === undefined ? '' : ` · ${activity.sessionId}`}
               </small>
             </li>
           ))}
@@ -247,11 +263,11 @@ function ProvenanceList({ provenance }: { provenance: readonly string[] }) {
   return (
     <dl className="provenance-list">
       {provenance.map((item) => {
-        const [kind, ...rest] = item.split(":");
+        const [kind, ...rest] = item.split(':');
         return (
           <div key={item}>
             <dt>{kind}</dt>
-            <dd title={item}>{rest.join(":") || item}</dd>
+            <dd title={item}>{rest.join(':') || item}</dd>
           </div>
         );
       })}
@@ -262,21 +278,43 @@ function ProvenanceList({ provenance }: { provenance: readonly string[] }) {
 function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
   const router = useRouter();
   const saveProfile = useServerFn(saveWorkspaceProfile);
-  const [displayName, setDisplayName] = useState(snapshot.profile?.displayName ?? "");
-  const [summary, setSummary] = useState(snapshot.profile?.summary ?? "");
-  const [message, setMessage] = useState("");
+  const [displayName, setDisplayName] = useState(snapshot.profile?.displayName ?? '');
+  const [summary, setSummary] = useState(snapshot.profile?.summary ?? '');
+  const [message, setMessage] = useState('');
   const [isPending, startTransition] = useTransition();
-  const canEdit = snapshot.status === "ready";
+  const canEdit = snapshot.status === 'ready';
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canEdit) return;
-    startTransition(async () => {
-      await saveProfile({ data: { displayName, summary } });
-      setMessage("Saved");
-      await router.invalidate();
-    });
-  }
+  const submit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await saveProfile({ data: { displayName, summary } });
+        setMessage('Saved');
+        await router.invalidate();
+      });
+    },
+    [canEdit, displayName, summary, saveProfile, router],
+  );
+  const onDisplayNameChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setDisplayName((event.target as HTMLInputElement).value),
+    [],
+  );
+  const onSummaryChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) =>
+      setSummary((event.target as HTMLTextAreaElement).value),
+    [],
+  );
+  const definitionRows = useMemo<readonly (readonly [string, string])[]>(
+    () => [
+      ['Project', snapshot.projectRoot],
+      ['Workspace', snapshot.binding?.workspace.id ?? 'Not registered'],
+    ],
+    [snapshot.projectRoot, snapshot.binding?.workspace.id],
+  );
 
   return (
     <section>
@@ -289,7 +327,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           <span>Display name</span>
           <input
             disabled={!canEdit || isPending}
-            onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+            onChange={onDisplayNameChange}
             value={displayName}
           />
         </label>
@@ -297,7 +335,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           <span>Summary</span>
           <textarea
             disabled={!canEdit || isPending}
-            onChange={(event) => setSummary((event.target as HTMLTextAreaElement).value)}
+            onChange={onSummaryChange}
             rows={5}
             value={summary}
           />
@@ -306,12 +344,7 @@ function WorkspaceProfilePanel({ snapshot }: { snapshot: ControlPlaneSnapshot })
           Save
         </button>
       </form>
-      <DefinitionList
-        rows={[
-          ["Project", snapshot.projectRoot],
-          ["Workspace", snapshot.binding?.workspace.id ?? "Not registered"],
-        ]}
-      />
+      <DefinitionList rows={definitionRows} />
     </section>
   );
 }
@@ -332,7 +365,7 @@ function SourceBindingsPanel({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
       <div className="source-list">
         {snapshot.sourceBindings.map((source) => (
           <SourceBindingForm
-            canEdit={snapshot.status === "ready"}
+            canEdit={snapshot.status === 'ready'}
             key={source.id}
             source={source}
           />
@@ -347,30 +380,45 @@ function SourceBindingForm({
   source,
 }: {
   canEdit: boolean;
-  source: ControlPlaneSnapshot["sourceBindings"][number];
+  source: ControlPlaneSnapshot['sourceBindings'][number];
 }) {
   const router = useRouter();
   const saveBinding = useServerFn(saveSourceBinding);
   const [displayName, setDisplayName] = useState(source.displayName);
   const [enabled, setEnabled] = useState(source.enabled);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState('');
   const [isPending, startTransition] = useTransition();
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canEdit) return;
-    startTransition(async () => {
-      await saveBinding({
-        data: {
-          displayName,
-          enabled,
-          id: source.id,
-        },
+  const submit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!canEdit) {
+        return;
+      }
+      startTransition(async () => {
+        await saveBinding({
+          data: {
+            displayName,
+            enabled,
+            id: source.id,
+          },
+        });
+        setMessage('Saved');
+        await router.invalidate();
       });
-      setMessage("Saved");
-      await router.invalidate();
-    });
-  }
+    },
+    [canEdit, displayName, enabled, source.id, saveBinding, router],
+  );
+  const onEnabledChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setEnabled((event.target as HTMLInputElement).checked),
+    [],
+  );
+  const onDisplayNameChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      setDisplayName((event.target as HTMLInputElement).value),
+    [],
+  );
 
   return (
     <form className="source-binding-form" onSubmit={submit}>
@@ -383,7 +431,7 @@ function SourceBindingForm({
           <input
             checked={enabled}
             disabled={!canEdit || isPending}
-            onChange={(event) => setEnabled((event.target as HTMLInputElement).checked)}
+            onChange={onEnabledChange}
             type="checkbox"
           />
           <span>Enabled</span>
@@ -393,7 +441,7 @@ function SourceBindingForm({
         <span>Display name</span>
         <input
           disabled={!canEdit || isPending}
-          onChange={(event) => setDisplayName((event.target as HTMLInputElement).value)}
+          onChange={onDisplayNameChange}
           value={displayName}
         />
       </label>
@@ -416,7 +464,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "error" }) {
+function StatusPill({ label, tone }: { label: string; tone: 'ok' | 'warn' | 'error' }) {
   return <span className={`status-pill ${tone}`}>{label}</span>;
 }
 
@@ -437,22 +485,32 @@ function EmptyState({ message }: { message: string }) {
   return <p className="empty-state">{message}</p>;
 }
 
-function labelForStatus(status: ControlPlaneSnapshot["status"]): string {
-  if (status === "ready") return "Ready";
-  if (status === "unbound") return "Unbound";
-  if (status === "misconfigured") return "Misconfigured";
-  return "Offline";
+function labelForStatus(status: ControlPlaneSnapshot['status']): string {
+  if (status === 'ready') {
+    return 'Ready';
+  }
+  if (status === 'unbound') {
+    return 'Unbound';
+  }
+  if (status === 'misconfigured') {
+    return 'Misconfigured';
+  }
+  return 'Offline';
 }
 
-function toneForStatus(status: ControlPlaneSnapshot["status"]): "ok" | "warn" | "error" {
-  if (status === "ready") return "ok";
-  if (status === "unbound") return "warn";
-  return "error";
+function toneForStatus(status: ControlPlaneSnapshot['status']): 'ok' | 'warn' | 'error' {
+  if (status === 'ready') {
+    return 'ok';
+  }
+  if (status === 'unbound') {
+    return 'warn';
+  }
+  return 'error';
 }
 
 function formatTimestamp(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+    dateStyle: 'medium',
+    timeStyle: 'short',
   }).format(new Date(value));
 }

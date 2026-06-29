@@ -1,50 +1,41 @@
-import { randomUUID } from "node:crypto";
-import {
-  candidateClaimKey,
-  detectClaimContradiction,
-  type CandidateClaim,
-  type ClaimKind,
-  type ClaimEvidence,
-} from "@saga/claims";
-import { and, desc, eq, notInArray, sql, type SQL } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { insertRawEvent } from "./raw-event.js";
-import {
-  claimEvents,
-  currentClaims,
-  rawEvents,
-  sourceBindings,
-  type ClaimEvent,
-  type CurrentClaim,
-  type RawEvent,
-} from "./schema.js";
+import { randomUUID } from 'node:crypto';
+
+import { candidateClaimKey, detectClaimContradiction } from '@saga/claims';
+import type { CandidateClaim, ClaimKind, ClaimEvidence } from '@saga/claims';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
+
+import type { DatabaseError, DatabaseService } from './database.js';
+import { insertRawEvent } from './raw-event.js';
+import { claimEvents, currentClaims, rawEvents, sourceBindings } from './schema.js';
+import type { ClaimEvent, CurrentClaim, RawEvent } from './schema.js';
 
 export type ClaimEventType =
-  | "contradicted"
-  | "decayed"
-  | "extracted"
-  | "merged"
-  | "pinned"
-  | "promoted"
-  | "rejected"
-  | "split"
-  | "supported"
-  | "superseded"
-  | "unpinned"
-  | "unwatched"
-  | "watched";
+  | 'contradicted'
+  | 'decayed'
+  | 'extracted'
+  | 'merged'
+  | 'pinned'
+  | 'promoted'
+  | 'rejected'
+  | 'split'
+  | 'supported'
+  | 'superseded'
+  | 'unpinned'
+  | 'unwatched'
+  | 'watched';
 export type ClaimState =
-  | "candidate"
-  | "contradicted"
-  | "decayed"
-  | "rejected"
-  | "supported"
-  | "superseded";
-export type ClaimMaintenanceAction = "decay" | "merge" | "split" | "supersede";
-export type ClaimReviewAction = "accept" | "pin" | "reject" | "unpin" | "unwatch" | "watch";
+  | 'candidate'
+  | 'contradicted'
+  | 'decayed'
+  | 'rejected'
+  | 'supported'
+  | 'superseded';
+export type ClaimMaintenanceAction = 'decay' | 'merge' | 'split' | 'supersede';
+export type ClaimReviewAction = 'accept' | 'pin' | 'reject' | 'unpin' | 'unwatch' | 'watch';
 
-export interface InsertClaimEventInput {
+export type InsertClaimEventInput = {
   attributes: Record<string, unknown>;
   claimKey: string;
   confidence: number;
@@ -53,14 +44,14 @@ export interface InsertClaimEventInput {
   kind: ClaimKind;
   text: string;
   workspaceId: string;
-}
+};
 
-export interface ClaimProjectionResult {
+export type ClaimProjectionResult = {
   currentClaim: CurrentClaim;
   event: ClaimEvent;
-}
+};
 
-export interface ClaimConfidenceInput {
+export type ClaimConfidenceInput = {
   actorId?: string | null | undefined;
   baseConfidence: number;
   claimKind: ClaimKind;
@@ -71,9 +62,9 @@ export interface ClaimConfidenceInput {
   priorEvents: number;
   sourceType: string;
   trustLevel?: string | null | undefined;
-}
+};
 
-export interface ClaimConfidenceResult {
+export type ClaimConfidenceResult = {
   inputs: {
     actorAuthority: number;
     base: number;
@@ -85,17 +76,17 @@ export interface ClaimConfidenceResult {
     sourceQuality: number;
   };
   score: number;
-}
+};
 
-export interface InsertClaimReviewEventInput {
+export type InsertClaimReviewEventInput = {
   action: ClaimReviewAction;
   actorId?: string | undefined;
   claimKey: string;
   occurredAt?: Date | string | undefined;
   workspaceId: string;
-}
+};
 
-export interface InsertClaimMaintenanceEventInput {
+export type InsertClaimMaintenanceEventInput = {
   action: ClaimMaintenanceAction;
   actorId?: string | undefined;
   claimKey: string;
@@ -103,17 +94,17 @@ export interface InsertClaimMaintenanceEventInput {
   reason?: string | undefined;
   targetClaimKeys?: readonly string[] | undefined;
   workspaceId: string;
-}
+};
 
-export interface InsertClaimPromotionEventInput {
+export type InsertClaimPromotionEventInput = {
   actorId?: string | undefined;
   claimKey: string;
   occurredAt?: Date | string | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
-export class ClaimProjectionError extends Data.TaggedError("ClaimProjectionError")<{
+export class ClaimProjectionError extends Data.TaggedError('ClaimProjectionError')<{
   readonly message: string;
 }> {}
 
@@ -121,13 +112,14 @@ export function insertExtractedCandidateClaim(
   service: DatabaseService,
   candidate: CandidateClaim,
 ): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
+  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
   return Effect.gen(function* () {
     const result = yield* insertClaimEventAndProject(service, {
       attributes: candidate.attributes,
       claimKey: candidateClaimKey(candidate),
       confidence: candidate.confidence,
       evidence: candidate.evidence,
-      eventType: "extracted",
+      eventType: 'extracted',
       kind: candidate.kind,
       text: candidate.text,
       workspaceId: candidate.workspaceId,
@@ -141,6 +133,9 @@ export function insertExtractedCandidateClaims(
   service: DatabaseService,
   candidates: readonly CandidateClaim[],
 ): Effect.Effect<ClaimProjectionResult[], ClaimProjectionError | DatabaseError> {
+  // False positive: Effect.forEach(iterable, fn) is not Array.prototype.forEach;
+  // the second arg is the effectful callback, not a thisArg.
+  // oxlint-disable-next-line unicorn/no-array-method-this-argument
   return Effect.forEach(candidates, (candidate) =>
     insertExtractedCandidateClaim(service, candidate),
   );
@@ -155,7 +150,7 @@ export function insertClaimEventAndProject(
       const observedAt = new Date(input.evidence.occurredAt);
       if (Number.isNaN(observedAt.getTime())) {
         throw new ClaimProjectionError({
-          message: "claim evidence occurredAt must be an ISO timestamp",
+          message: 'claim evidence occurredAt must be an ISO timestamp',
         });
       }
       const rawEvent = await findRawEventForEvidence(service, input);
@@ -182,7 +177,7 @@ export function insertClaimEventAndProject(
           claimText: input.text,
           confidence: confidence.score,
           eventType: input.eventType,
-          evidence: input.evidence as unknown as Record<string, unknown>,
+          evidence: input.evidence,
           occurredAt: observedAt,
           rawEventId: input.evidence.rawEventId,
           workspaceId: input.workspaceId,
@@ -267,7 +262,9 @@ export function insertClaimEventAndProject(
         })
         .returning();
 
-      if (currentClaim !== undefined) return { currentClaim, event };
+      if (currentClaim !== undefined) {
+        return { currentClaim, event };
+      }
 
       return { currentClaim: await findExistingCurrentClaim(service, input), event };
     },
@@ -314,17 +311,24 @@ function projectContradictionsForCandidate(
   candidate: CandidateClaim,
   candidateKey: string,
 ): Effect.Effect<void, ClaimProjectionError | DatabaseError> {
+  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
   return Effect.gen(function* () {
     const existingClaims = yield* listCurrentClaims(service, {
       limit: 100,
       workspaceId: candidate.workspaceId,
     });
     for (const claim of existingClaims) {
-      if (claim.claimKey === candidateKey) continue;
-      if (claim.state === "rejected" || claim.state === "contradicted") continue;
+      if (claim.claimKey === candidateKey) {
+        continue;
+      }
+      if (claim.state === 'rejected' || claim.state === 'contradicted') {
+        continue;
+      }
 
       const contradiction = detectClaimContradiction(claim.claimText, candidate.text);
-      if (contradiction === undefined) continue;
+      if (contradiction === undefined) {
+        continue;
+      }
 
       yield* insertClaimEventAndProject(service, {
         attributes: {
@@ -338,7 +342,7 @@ function projectContradictionsForCandidate(
         claimKey: claim.claimKey,
         confidence: candidate.confidence,
         evidence: candidate.evidence,
-        eventType: "contradicted",
+        eventType: 'contradicted',
         kind: readClaimKind(claim.claimKind),
         text: claim.claimText,
         workspaceId: candidate.workspaceId,
@@ -365,30 +369,30 @@ export function insertClaimReviewEventAndProject(
         .limit(1);
 
       if (claim === undefined) {
-        throw new ClaimProjectionError({ message: "claim is not available for review" });
+        throw new ClaimProjectionError({ message: 'claim is not available for review' });
       }
 
       const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
       if (Number.isNaN(occurredAt.getTime())) {
         throw new ClaimProjectionError({
-          message: "claim review occurredAt must be an ISO timestamp",
+          message: 'claim review occurredAt must be an ISO timestamp',
         });
       }
 
       const sourceBinding = await ensureControlPlaneSourceBinding(service, input.workspaceId);
       const reviewEventType = eventTypeForReviewAction(input.action);
       const externalEventId = [
-        "saga",
-        "claim-review",
+        'saga',
+        'claim-review',
         input.claimKey,
         input.action,
         occurredAt.toISOString(),
         randomUUID(),
-      ].join(":");
+      ].join(':');
       const rawEvent = await Effect.runPromise(
         insertRawEvent(service, {
-          actorId: input.actorId ?? "control-plane",
-          eventType: "saga.claim.review",
+          actorId: input.actorId ?? 'control-plane',
+          eventType: 'saga.claim.review',
           externalEventId,
           occurredAt: occurredAt.toISOString(),
           payload: {
@@ -397,12 +401,12 @@ export function insertClaimReviewEventAndProject(
             previousState: claim.state,
           },
           provenance: {
-            surface: "control-plane",
+            surface: 'control-plane',
           },
           sourceBindingId: sourceBinding.id,
-          sourceId: "saga:control-plane",
-          sourceType: "saga",
-          trustLevel: "trusted",
+          sourceId: 'saga:control-plane',
+          sourceType: 'saga',
+          trustLevel: 'trusted',
           workspaceId: input.workspaceId,
         }),
       );
@@ -458,30 +462,30 @@ export function insertClaimMaintenanceEventAndProject(
         .limit(1);
 
       if (claim === undefined) {
-        throw new ClaimProjectionError({ message: "claim is not available for maintenance" });
+        throw new ClaimProjectionError({ message: 'claim is not available for maintenance' });
       }
 
       const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
       if (Number.isNaN(occurredAt.getTime())) {
         throw new ClaimProjectionError({
-          message: "claim maintenance occurredAt must be an ISO timestamp",
+          message: 'claim maintenance occurredAt must be an ISO timestamp',
         });
       }
 
       const sourceBinding = await ensureControlPlaneSourceBinding(service, input.workspaceId);
       const maintenanceEventType = eventTypeForMaintenanceAction(input.action);
       const externalEventId = [
-        "saga",
-        "claim-maintenance",
+        'saga',
+        'claim-maintenance',
         input.claimKey,
         input.action,
         occurredAt.toISOString(),
         randomUUID(),
-      ].join(":");
+      ].join(':');
       const rawEvent = await Effect.runPromise(
         insertRawEvent(service, {
-          actorId: input.actorId ?? "control-plane",
-          eventType: "saga.claim.maintenance",
+          actorId: input.actorId ?? 'control-plane',
+          eventType: 'saga.claim.maintenance',
           externalEventId,
           occurredAt: occurredAt.toISOString(),
           payload: {
@@ -492,12 +496,12 @@ export function insertClaimMaintenanceEventAndProject(
             targetClaimKeys: input.targetClaimKeys ?? [],
           },
           provenance: {
-            surface: "control-plane",
+            surface: 'control-plane',
           },
           sourceBindingId: sourceBinding.id,
-          sourceId: "saga:control-plane",
-          sourceType: "saga",
-          trustLevel: "trusted",
+          sourceId: 'saga:control-plane',
+          sourceType: 'saga',
+          trustLevel: 'trusted',
           workspaceId: input.workspaceId,
         }),
       );
@@ -557,34 +561,34 @@ export function insertClaimPromotionEventAndProject(
         .limit(1);
 
       if (claim === undefined) {
-        throw new ClaimProjectionError({ message: "claim is not available for promotion" });
+        throw new ClaimProjectionError({ message: 'claim is not available for promotion' });
       }
-      if (claim.state === "rejected" || claim.state === "superseded") {
+      if (claim.state === 'rejected' || claim.state === 'superseded') {
         throw new ClaimProjectionError({
-          message: "terminal claims are not available for promotion",
+          message: 'terminal claims are not available for promotion',
         });
       }
 
       const occurredAt = input.occurredAt === undefined ? new Date() : new Date(input.occurredAt);
       if (Number.isNaN(occurredAt.getTime())) {
         throw new ClaimProjectionError({
-          message: "claim promotion occurredAt must be an ISO timestamp",
+          message: 'claim promotion occurredAt must be an ISO timestamp',
         });
       }
 
       const sourceBinding = await ensureControlPlaneSourceBinding(service, input.workspaceId);
       const title = promotionTitle(input.title, claim.claimText);
       const externalEventId = [
-        "saga",
-        "claim-promotion",
+        'saga',
+        'claim-promotion',
         input.claimKey,
         occurredAt.toISOString(),
         randomUUID(),
-      ].join(":");
+      ].join(':');
       const rawEvent = await Effect.runPromise(
         insertRawEvent(service, {
-          actorId: input.actorId ?? "control-plane",
-          eventType: "saga.claim.promotion",
+          actorId: input.actorId ?? 'control-plane',
+          eventType: 'saga.claim.promotion',
           externalEventId,
           occurredAt: occurredAt.toISOString(),
           payload: {
@@ -593,12 +597,12 @@ export function insertClaimPromotionEventAndProject(
             title,
           },
           provenance: {
-            surface: "control-plane",
+            surface: 'control-plane',
           },
           sourceBindingId: sourceBinding.id,
-          sourceId: "saga:control-plane",
-          sourceType: "saga",
-          trustLevel: "trusted",
+          sourceId: 'saga:control-plane',
+          sourceType: 'saga',
+          trustLevel: 'trusted',
           workspaceId: input.workspaceId,
         }),
       );
@@ -621,8 +625,8 @@ export function insertClaimPromotionEventAndProject(
           claimKey: claim.claimKey,
           confidence: claim.confidence,
           evidence,
-          eventType: "promoted",
-          kind: "decision",
+          eventType: 'promoted',
+          kind: 'decision',
           text: claim.claimText,
           workspaceId: input.workspaceId,
         }),
@@ -669,7 +673,7 @@ export function listActiveContextClaims(
         .where(
           and(
             eq(currentClaims.workspaceId, input.workspaceId),
-            notInArray(currentClaims.state, ["rejected", "superseded"]),
+            notInArray(currentClaims.state, ['rejected', 'superseded']),
           ),
         )
         .orderBy(desc(currentClaims.confidence), desc(currentClaims.observedAt))
@@ -696,7 +700,7 @@ async function findExistingClaimEvent(
     .limit(1);
 
   if (event === undefined) {
-    throw new ClaimProjectionError({ message: "claim event insert returned no row" });
+    throw new ClaimProjectionError({ message: 'claim event insert returned no row' });
   }
 
   return event;
@@ -709,7 +713,7 @@ async function findExistingCurrentClaim(
   const currentClaim = await findOptionalCurrentClaim(service, input);
 
   if (currentClaim === undefined) {
-    throw new ClaimProjectionError({ message: "current claim projection returned no row" });
+    throw new ClaimProjectionError({ message: 'current claim projection returned no row' });
   }
 
   return currentClaim;
@@ -744,11 +748,11 @@ async function findRawEventForEvidence(
     .limit(1);
 
   if (rawEvent === undefined) {
-    throw new ClaimProjectionError({ message: "claim evidence rawEventId does not exist" });
+    throw new ClaimProjectionError({ message: 'claim evidence rawEventId does not exist' });
   }
   if (rawEvent.workspaceId !== input.workspaceId) {
     throw new ClaimProjectionError({
-      message: "claim evidence rawEventId belongs to a different workspace",
+      message: 'claim evidence rawEventId belongs to a different workspace',
     });
   }
   if (
@@ -757,7 +761,7 @@ async function findRawEventForEvidence(
     rawEvent.externalEventId !== input.evidence.externalEventId
   ) {
     throw new ClaimProjectionError({
-      message: "claim evidence does not match the referenced raw event",
+      message: 'claim evidence does not match the referenced raw event',
     });
   }
 
@@ -783,65 +787,89 @@ async function readClaimConfidenceStats(
     );
 
   return {
-    priorContradictions: Number(stats?.priorContradictions ?? 0),
-    priorEvents: Number(stats?.priorEvents ?? 0),
+    priorContradictions: stats?.priorContradictions ?? 0,
+    priorEvents: stats?.priorEvents ?? 0,
   };
 }
 
 function stateForEventType(eventType: ClaimEventType): ClaimState {
-  if (eventType === "supported" || eventType === "promoted") return "supported";
-  if (eventType === "contradicted") return "contradicted";
-  if (eventType === "decayed") return "decayed";
-  if (eventType === "rejected") return "rejected";
-  if (eventType === "merged" || eventType === "split" || eventType === "superseded") {
-    return "superseded";
+  if (eventType === 'supported' || eventType === 'promoted') {
+    return 'supported';
   }
-  return "candidate";
+  if (eventType === 'contradicted') {
+    return 'contradicted';
+  }
+  if (eventType === 'decayed') {
+    return 'decayed';
+  }
+  if (eventType === 'rejected') {
+    return 'rejected';
+  }
+  if (eventType === 'merged' || eventType === 'split' || eventType === 'superseded') {
+    return 'superseded';
+  }
+  return 'candidate';
 }
 
 function eventTypeForReviewAction(action: ClaimReviewAction): ClaimEventType {
-  if (action === "accept") return "supported";
-  if (action === "reject") return "rejected";
-  if (action === "pin") return "pinned";
-  if (action === "unpin") return "unpinned";
-  if (action === "watch") return "watched";
-  return "unwatched";
+  if (action === 'accept') {
+    return 'supported';
+  }
+  if (action === 'reject') {
+    return 'rejected';
+  }
+  if (action === 'pin') {
+    return 'pinned';
+  }
+  if (action === 'unpin') {
+    return 'unpinned';
+  }
+  if (action === 'watch') {
+    return 'watched';
+  }
+  return 'unwatched';
 }
 
 function eventTypeForMaintenanceAction(action: ClaimMaintenanceAction): ClaimEventType {
-  if (action === "decay") return "decayed";
-  if (action === "merge") return "merged";
-  if (action === "split") return "split";
-  return "superseded";
+  if (action === 'decay') {
+    return 'decayed';
+  }
+  if (action === 'merge') {
+    return 'merged';
+  }
+  if (action === 'split') {
+    return 'split';
+  }
+  return 'superseded';
 }
 
 function isReviewAttributeEventType(eventType: ClaimEventType): boolean {
   return (
-    eventType === "pinned" ||
-    eventType === "unpinned" ||
-    eventType === "watched" ||
-    eventType === "unwatched"
+    eventType === 'pinned' ||
+    eventType === 'unpinned' ||
+    eventType === 'watched' ||
+    eventType === 'unwatched'
   );
 }
 
 function isLifecycleReviewEvent(input: InsertClaimEventInput): boolean {
   return (
-    (input.eventType === "supported" || input.eventType === "rejected") &&
-    input.evidence.eventType === "saga.claim.review"
+    (input.eventType === 'supported' || input.eventType === 'rejected') &&
+    input.evidence.eventType === 'saga.claim.review'
   );
 }
 
 function isPromotionEvent(input: InsertClaimEventInput): boolean {
-  return input.eventType === "promoted" && input.evidence.eventType === "saga.claim.promotion";
+  return input.eventType === 'promoted' && input.evidence.eventType === 'saga.claim.promotion';
 }
 
 function isLifecycleMaintenanceEvent(input: InsertClaimEventInput): boolean {
   return (
-    (input.eventType === "decayed" ||
-      input.eventType === "merged" ||
-      input.eventType === "split" ||
-      input.eventType === "superseded") &&
-    input.evidence.eventType === "saga.claim.maintenance"
+    (input.eventType === 'decayed' ||
+      input.eventType === 'merged' ||
+      input.eventType === 'split' ||
+      input.eventType === 'superseded') &&
+    input.evidence.eventType === 'saga.claim.maintenance'
   );
 }
 
@@ -849,11 +877,13 @@ function preserveReviewAttributes(
   nextAttributes: Record<string, unknown>,
   existingAttributes: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  if (existingAttributes === undefined) return nextAttributes;
+  if (existingAttributes === undefined) {
+    return nextAttributes;
+  }
 
   const governanceAttributes = Object.fromEntries(
     Object.entries(existingAttributes).filter(
-      ([key]) => key.startsWith("review") || key.startsWith("adr"),
+      ([key]) => key.startsWith('review') || key.startsWith('adr'),
     ),
   );
   return {
@@ -872,10 +902,18 @@ function reviewAttributesForEventType(
     reviewLastAction: eventType,
     reviewLastAt: reviewedAt,
   };
-  if (eventType === "pinned") return { ...next, reviewPinned: true };
-  if (eventType === "unpinned") return { ...next, reviewPinned: false };
-  if (eventType === "watched") return { ...next, reviewWatched: true };
-  if (eventType === "unwatched") return { ...next, reviewWatched: false };
+  if (eventType === 'pinned') {
+    return { ...next, reviewPinned: true };
+  }
+  if (eventType === 'unpinned') {
+    return { ...next, reviewPinned: false };
+  }
+  if (eventType === 'watched') {
+    return { ...next, reviewWatched: true };
+  }
+  if (eventType === 'unwatched') {
+    return { ...next, reviewWatched: false };
+  }
   return next;
 }
 
@@ -896,7 +934,9 @@ function promotionAttributes(
 
 function promotionTitle(title: string | undefined, claimText: string): string {
   const normalized = title?.trim();
-  if (normalized !== undefined && normalized !== "") return normalized;
+  if (normalized !== undefined && normalized !== '') {
+    return normalized;
+  }
   return claimText.length <= 72 ? claimText : `${claimText.slice(0, 69)}...`;
 }
 
@@ -927,14 +967,14 @@ async function ensureControlPlaneSourceBinding(
   const [sourceBinding] = await service.db
     .insert(sourceBindings)
     .values({
-      displayName: "Saga Control Plane",
-      sourceType: "saga",
-      sourceUri: "saga://control-plane",
+      displayName: 'Saga Control Plane',
+      sourceType: 'saga',
+      sourceUri: 'saga://control-plane',
       workspaceId,
     })
     .onConflictDoUpdate({
       set: {
-        displayName: "Saga Control Plane",
+        displayName: 'Saga Control Plane',
         updatedAt: new Date(),
       },
       target: [sourceBindings.workspaceId, sourceBindings.sourceType, sourceBindings.sourceUri],
@@ -942,7 +982,7 @@ async function ensureControlPlaneSourceBinding(
     .returning({ id: sourceBindings.id });
 
   if (sourceBinding === undefined) {
-    throw new ClaimProjectionError({ message: "control-plane source binding returned no row" });
+    throw new ClaimProjectionError({ message: 'control-plane source binding returned no row' });
   }
 
   return sourceBinding;
@@ -950,10 +990,10 @@ async function ensureControlPlaneSourceBinding(
 
 function readClaimKind(value: string): ClaimKind {
   if (
-    value === "decision" ||
-    value === "follow_up" ||
-    value === "observation" ||
-    value === "preference"
+    value === 'decision' ||
+    value === 'follow_up' ||
+    value === 'observation' ||
+    value === 'preference'
   ) {
     return value;
   }
@@ -973,39 +1013,65 @@ function withConfidenceAttributes(
 }
 
 function actorAuthorityScore(actorId: string | null | undefined): number {
-  if (actorId === "control-plane") return 0.08;
-  if (actorId === "human") return 0.08;
-  if (actorId === "codex" || actorId === "claude") return 0.01;
+  if (actorId === 'control-plane') {
+    return 0.08;
+  }
+  if (actorId === 'human') {
+    return 0.08;
+  }
+  if (actorId === 'codex' || actorId === 'claude') {
+    return 0.01;
+  }
   return 0;
 }
 
 function contradictionScore(input: ClaimConfidenceInput): number {
   const priorPenalty = -Math.min(0.16, input.priorContradictions * 0.08);
-  if (input.eventType === "contradicted") return priorPenalty - 0.22;
-  if (input.eventType === "decayed") return priorPenalty - 0.45;
+  if (input.eventType === 'contradicted') {
+    return priorPenalty - 0.22;
+  }
+  if (input.eventType === 'decayed') {
+    return priorPenalty - 0.45;
+  }
   if (
-    input.eventType === "merged" ||
-    input.eventType === "split" ||
-    input.eventType === "superseded"
+    input.eventType === 'merged' ||
+    input.eventType === 'split' ||
+    input.eventType === 'superseded'
   ) {
     return priorPenalty - 0.5;
   }
-  if (input.eventType === "rejected") return priorPenalty - 0.35;
+  if (input.eventType === 'rejected') {
+    return priorPenalty - 0.35;
+  }
   return priorPenalty;
 }
 
 function explicitnessScore(input: ClaimConfidenceInput): number {
-  if (input.eventType === "promoted") return 0.12;
-  if (input.eventType === "supported" && input.sourceType === "saga") return 0.08;
-  if (input.eventType === "extracted" && input.claimKind === "decision") return 0.03;
-  if (input.eventType === "extracted" && input.claimKind === "preference") return 0.02;
+  if (input.eventType === 'promoted') {
+    return 0.12;
+  }
+  if (input.eventType === 'supported' && input.sourceType === 'saga') {
+    return 0.08;
+  }
+  if (input.eventType === 'extracted' && input.claimKind === 'decision') {
+    return 0.03;
+  }
+  if (input.eventType === 'extracted' && input.claimKind === 'preference') {
+    return 0.02;
+  }
   return 0;
 }
 
 function humanPromotionScore(input: ClaimConfidenceInput): number {
-  if (input.eventType === "promoted" && input.sourceType === "saga") return 0.2;
-  if (input.eventType === "supported" && input.sourceType === "saga") return 0.15;
-  if (input.eventType === "rejected" && input.sourceType === "saga") return -0.35;
+  if (input.eventType === 'promoted' && input.sourceType === 'saga') {
+    return 0.2;
+  }
+  if (input.eventType === 'supported' && input.sourceType === 'saga') {
+    return 0.15;
+  }
+  if (input.eventType === 'rejected' && input.sourceType === 'saga') {
+    return -0.35;
+  }
   return 0;
 }
 
@@ -1014,17 +1080,29 @@ function recurrenceScore(priorEvents: number): number {
 }
 
 function recencyScore(ageDays: number): number {
-  if (ageDays <= 7) return 0.03;
-  if (ageDays <= 30) return 0.01;
-  if (ageDays <= 90) return 0;
+  if (ageDays <= 7) {
+    return 0.03;
+  }
+  if (ageDays <= 30) {
+    return 0.01;
+  }
+  if (ageDays <= 90) {
+    return 0;
+  }
   return -0.08;
 }
 
 function sourceQualityScore(input: ClaimConfidenceInput): number {
-  const trustScore = input.trustLevel === "trusted" ? 0.08 : 0;
-  if (input.sourceType === "saga") return trustScore + 0.05;
-  if (input.sourceType === "git") return trustScore + 0.03;
-  if (input.sourceType === "codex" || input.sourceType === "claude") return trustScore + 0.01;
+  const trustScore = input.trustLevel === 'trusted' ? 0.08 : 0;
+  if (input.sourceType === 'saga') {
+    return trustScore + 0.05;
+  }
+  if (input.sourceType === 'git') {
+    return trustScore + 0.03;
+  }
+  if (input.sourceType === 'codex' || input.sourceType === 'claude') {
+    return trustScore + 0.01;
+  }
   return trustScore;
 }
 
@@ -1036,10 +1114,12 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return isRecord(value) ? value : {};
 }
 
 function projectionAdvanceSql(
@@ -1070,10 +1150,18 @@ function projectionAdvanceSql(
 }
 
 function statePrecedence(state: string): number {
-  if (state === "rejected") return 4;
-  if (state === "superseded") return 3;
-  if (state === "contradicted") return 2;
-  if (state === "supported") return 1;
+  if (state === 'rejected') {
+    return 4;
+  }
+  if (state === 'superseded') {
+    return 3;
+  }
+  if (state === 'contradicted') {
+    return 2;
+  }
+  if (state === 'supported') {
+    return 1;
+  }
   return 0;
 }
 

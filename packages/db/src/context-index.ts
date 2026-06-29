@@ -1,11 +1,13 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { contextIndexEntries, sourceBindings, type ContextIndexEntry } from "./schema.js";
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
 
-export type ContextIndexIncludePolicy = "always" | "when_relevant" | "never";
+import type { DatabaseError, DatabaseService } from './database.js';
+import { contextIndexEntries, sourceBindings } from './schema.js';
+import type { ContextIndexEntry } from './schema.js';
 
-export interface UpsertContextIndexEntryInput {
+export type ContextIndexIncludePolicy = 'always' | 'when_relevant' | 'never';
+
+export type UpsertContextIndexEntryInput = {
   description?: string | null | undefined;
   externalId: string;
   importance?: number | undefined;
@@ -16,33 +18,33 @@ export interface UpsertContextIndexEntryInput {
   sourceBindingId: string;
   title: string;
   workspaceId: string;
-}
+};
 
-export interface ListContextIndexEntriesInput {
+export type ListContextIndexEntriesInput = {
   includePolicies?: readonly ContextIndexIncludePolicy[] | undefined;
   limit?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface ResolveSagaLinkInput {
+export type ResolveSagaLinkInput = {
   sagaLink: string;
   workspaceId: string;
-}
+};
 
-export interface ContextIndexSourceBinding {
+export type ContextIndexSourceBinding = {
   config: Record<string, unknown>;
   displayName: string | null;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface ContextIndexEntryWithSource extends ContextIndexEntry {
+export type ContextIndexEntryWithSource = {
   sourceBinding: ContextIndexSourceBinding;
-}
+} & ContextIndexEntry;
 
-export interface ResolvedSagaLink {
+export type ResolvedSagaLink = {
   entry: ContextIndexEntryWithSource;
   provenance: {
     resolvedAt: string;
@@ -52,26 +54,26 @@ export interface ResolvedSagaLink {
     sourceUri: string;
     workspaceId: string;
   };
-}
+};
 
-export class ContextIndexError extends Data.TaggedError("ContextIndexError")<{
+export class ContextIndexError extends Data.TaggedError('ContextIndexError')<{
   readonly message: string;
 }> {}
 
-const INCLUDE_POLICIES = new Set<ContextIndexIncludePolicy>(["always", "when_relevant", "never"]);
+const INCLUDE_POLICIES = new Set<ContextIndexIncludePolicy>(['always', 'when_relevant', 'never']);
 
 export function makeSagaContextLink(key: string): string {
   return `saga:context/${encodeURIComponent(normalizeKey(key))}`;
 }
 
 export function parseSagaContextLink(link: string): { key: string } {
-  if (!link.startsWith("saga:context/")) {
+  if (!link.startsWith('saga:context/')) {
     throw new ContextIndexError({ message: `unsupported Saga Link: ${link}` });
   }
 
-  const encodedKey = link.slice("saga:context/".length);
-  if (encodedKey.trim() === "") {
-    throw new ContextIndexError({ message: "Saga Link is missing a context key" });
+  const encodedKey = link.slice('saga:context/'.length);
+  if (encodedKey.trim() === '') {
+    throw new ContextIndexError({ message: 'Saga Link is missing a context key' });
   }
 
   return { key: normalizeKey(decodeURIComponent(encodedKey)) };
@@ -89,11 +91,11 @@ export function upsertContextIndexEntry(
       const parsed = parseSagaContextLink(sagaLink);
       if (parsed.key !== key) {
         throw new ContextIndexError({
-          message: "Context Index entry key must match the Saga Link context key",
+          message: 'Context Index entry key must match the Saga Link context key',
         });
       }
 
-      const includePolicy = input.includePolicy ?? "when_relevant";
+      const includePolicy = input.includePolicy ?? 'when_relevant';
       if (!INCLUDE_POLICIES.has(includePolicy)) {
         throw new ContextIndexError({ message: `unsupported include policy: ${includePolicy}` });
       }
@@ -134,7 +136,7 @@ export function upsertContextIndexEntry(
         .returning();
 
       if (entry === undefined) {
-        throw new ContextIndexError({ message: "Context Index upsert returned no row" });
+        throw new ContextIndexError({ message: 'Context Index upsert returned no row' });
       }
 
       return entry;
@@ -184,7 +186,7 @@ export function listContextIndexEntries(
         .orderBy(desc(contextIndexEntries.importance), asc(contextIndexEntries.title))
         .limit(input.limit ?? 50);
 
-      return rows.map(({ entry, sourceBinding }) => ({ ...entry, sourceBinding }));
+      return rows.map(({ entry, sourceBinding }) => Object.assign(entry, { sourceBinding }));
     },
     catch: (cause) =>
       cause instanceof ContextIndexError
@@ -198,7 +200,7 @@ export function listActiveContextIndexEntries(
   input: { limit?: number | undefined; workspaceId: string },
 ): Effect.Effect<ContextIndexEntryWithSource[], DatabaseError | ContextIndexError> {
   return listContextIndexEntries(service, {
-    includePolicies: ["always"],
+    includePolicies: ['always'],
     limit: input.limit ?? 6,
     workspaceId: input.workspaceId,
   });
@@ -266,8 +268,8 @@ export function resolveSagaLink(
 
 function normalizeKey(key: string): string {
   const normalized = key.trim();
-  if (normalized === "") {
-    throw new ContextIndexError({ message: "Context Index key is required" });
+  if (normalized === '') {
+    throw new ContextIndexError({ message: 'Context Index key is required' });
   }
   return normalized;
 }
@@ -289,7 +291,7 @@ async function assertSourceBindingInWorkspace(
 
   if (sourceBinding === undefined) {
     throw new ContextIndexError({
-      message: "Context Index source binding must belong to the same workspace",
+      message: 'Context Index source binding must belong to the same workspace',
     });
   }
 }

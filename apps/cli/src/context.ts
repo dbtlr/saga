@@ -1,18 +1,19 @@
-import { compileActiveContext, renderActiveContextMarkdown } from "@saga/active-context";
+import { compileActiveContext, renderActiveContextMarkdown } from '@saga/active-context';
 import {
   listActiveContextIndexEntries,
   listActiveContextClaims,
   listRecentRawEvents,
   makeDatabase,
   workspaceProfiles,
-  type DatabaseService,
-} from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { eq } from "drizzle-orm";
-import { Effect } from "effect";
-import { findProjectRoot, readBindingFile } from "./init.js";
-import { formatCommandOutput } from "./output.js";
-import { type RenderOptions } from "./render.js";
+} from '@saga/db';
+import type { DatabaseService } from '@saga/db';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { eq } from 'drizzle-orm';
+import { Effect } from 'effect';
+
+import { findProjectRoot, readBindingFile } from './init.js';
+import { formatCommandOutput } from './output.js';
+import type { RenderOptions } from './render.js';
 
 export async function runContextCommand(
   _args: readonly string[],
@@ -21,7 +22,7 @@ export async function runContextCommand(
   const document = await compileProjectActiveContext();
   return formatCommandOutput(
     {
-      id: "active-context",
+      id: 'active-context',
       records: renderActiveContextMarkdown(document),
       value: document,
     },
@@ -33,7 +34,7 @@ export async function compileProjectActiveContext(input: { cwd?: string } = {}) 
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
-    throw new Error("workspace binding is missing; run saga init");
+    throw new Error('workspace binding is missing; run saga init');
   }
 
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));

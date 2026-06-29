@@ -1,3 +1,3 @@
-export const appName = "@saga/service";
+export const appName = '@saga/service';
 
-export * from "./server.js";
+export * from './server.js';

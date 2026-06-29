@@ -1,14 +1,10 @@
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import {
-  sourceBindings,
-  workspaceProfiles,
-  workspaces,
-  type SourceBinding,
-  type Workspace,
-} from "./schema.js";
+import { Data, Effect } from 'effect';
 
-export interface RegisterWorkspaceInput {
+import type { DatabaseError, DatabaseService } from './database.js';
+import { sourceBindings, workspaceProfiles, workspaces } from './schema.js';
+import type { SourceBinding, Workspace } from './schema.js';
+
+export type RegisterWorkspaceInput = {
   displayName: string | undefined;
   handle: string;
   source: {
@@ -17,22 +13,22 @@ export interface RegisterWorkspaceInput {
     type: string;
     uri: string;
   };
-}
+};
 
-export interface RegisterWorkspaceResult {
+export type RegisterWorkspaceResult = {
   sourceBinding: SourceBinding;
   workspace: Workspace;
-}
+};
 
-export interface RegisterSourceBindingInput {
+export type RegisterSourceBindingInput = {
   config?: Record<string, unknown>;
   displayName?: string | undefined;
   sourceType: string;
   sourceUri: string;
   workspaceId: string;
-}
+};
 
-export class WorkspaceRegistrationError extends Data.TaggedError("WorkspaceRegistrationError")<{
+export class WorkspaceRegistrationError extends Data.TaggedError('WorkspaceRegistrationError')<{
   readonly message: string;
 }> {}
 
@@ -59,7 +55,7 @@ export function registerWorkspace(
         .returning();
 
       if (workspace === undefined) {
-        throw new WorkspaceRegistrationError({ message: "workspace registration returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'workspace registration returned no row' });
       }
 
       await service.db
@@ -92,7 +88,7 @@ export function registerWorkspace(
         .returning();
 
       if (sourceBinding === undefined) {
-        throw new WorkspaceRegistrationError({ message: "source binding returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'source binding returned no row' });
       }
 
       return { sourceBinding, workspace };
@@ -132,7 +128,7 @@ export function registerSourceBinding(
         .returning();
 
       if (sourceBinding === undefined) {
-        throw new WorkspaceRegistrationError({ message: "source binding returned no row" });
+        throw new WorkspaceRegistrationError({ message: 'source binding returned no row' });
       }
 
       return sourceBinding;

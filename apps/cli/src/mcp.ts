@@ -1,19 +1,10 @@
-import { renderActiveContextMarkdown } from "@saga/active-context";
-import {
-  resolveConnector,
-  rewriteConnectorResultToSagaLinks,
-  type ConnectorClient,
-  type ResolveConnectorContext,
-  type SagaLinkIndexReference,
-} from "@saga/connectors";
-import {
-  createSagaMcpServer,
-  type GetSessionContextInput,
-  type JsonRpcRequest,
-  type ListRecentSessionsInput,
-  type SearchMemoryInput,
-  type SearchSessionsInput,
-} from "@saga/mcp";
+import { renderActiveContextMarkdown } from '@saga/active-context';
+import { resolveConnector, rewriteConnectorResultToSagaLinks } from '@saga/connectors';
+import type {
+  ConnectorClient,
+  ResolveConnectorContext,
+  SagaLinkIndexReference,
+} from '@saga/connectors';
 import {
   expandRecallContext,
   listActiveContextClaims,
@@ -25,21 +16,32 @@ import {
   redactAgentFacingSessionValue,
   resolveSagaLink as resolveDatabaseSagaLink,
   searchSessionRecall,
-  type DatabaseService,
-  type RecallContextExpansion,
-  type RecallSearchResult,
-  type RecallSegmentMatch,
-  type RecentSessionRecord,
-} from "@saga/db";
-import { loadRuntimeConfig } from "@saga/runtime";
-import { Effect } from "effect";
-import { compileActiveContextFromDatabase, compileProjectActiveContext } from "./context.js";
-import { findProjectRoot, readBindingFile } from "./init.js";
-import { type RenderOptions } from "./render.js";
+} from '@saga/db';
+import type {
+  DatabaseService,
+  RecallContextExpansion,
+  RecallSearchResult,
+  RecallSegmentMatch,
+  RecentSessionRecord,
+} from '@saga/db';
+import { createSagaMcpServer } from '@saga/mcp';
+import type {
+  GetSessionContextInput,
+  JsonRpcRequest,
+  ListRecentSessionsInput,
+  SearchMemoryInput,
+  SearchSessionsInput,
+} from '@saga/mcp';
+import { loadRuntimeConfig } from '@saga/runtime';
+import { Effect } from 'effect';
+
+import { compileActiveContextFromDatabase, compileProjectActiveContext } from './context.js';
+import { findProjectRoot, readBindingFile } from './init.js';
+import type { RenderOptions } from './render.js';
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
 
-export interface MemorySearchEntry {
+export type MemorySearchEntry = {
   confidence: number;
   fields: Record<string, string>;
   key: string;
@@ -47,9 +49,9 @@ export interface MemorySearchEntry {
   source: string;
   state: string;
   text: string;
-}
+};
 
-export interface RankedMemorySearchMatch {
+export type RankedMemorySearchMatch = {
   confidence: number;
   key: string;
   kind: string;
@@ -60,7 +62,7 @@ export interface RankedMemorySearchMatch {
   source: string;
   state: string;
   text: string;
-}
+};
 
 export async function runMcpCommand(
   _args: readonly string[],
@@ -72,7 +74,9 @@ export async function runMcpCommand(
   for await (const line of readJsonLines(stdin)) {
     try {
       const response = await server.handle(parseJsonRpcRequest(line));
-      if (response !== undefined) write(JSON.stringify(response));
+      if (response !== undefined) {
+        write(JSON.stringify(response));
+      }
     } catch (error) {
       write(JSON.stringify(jsonRpcInputError(error)));
     }
@@ -80,8 +84,8 @@ export async function runMcpCommand(
   return undefined;
 }
 
-export function createProjectMcpServer(input: { cwd?: string } = {}) {
-  const cwd = input.cwd;
+export function createProjectMcpServer(options: { cwd?: string } = {}) {
+  const cwd = options.cwd;
   return createSagaMcpServer({
     getActiveContext: async () => {
       const document = await compileProjectActiveContext(cwd === undefined ? {} : { cwd });
@@ -106,7 +110,7 @@ export async function searchProjectMemory(
   const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
-    throw new Error("workspace binding is missing; run saga init");
+    throw new Error('workspace binding is missing; run saga init');
   }
 
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
@@ -133,7 +137,7 @@ export async function searchProjectMemory(
       ),
       Effect.runPromise(
         listContextIndexEntries(service, {
-          includePolicies: ["always", "when_relevant"],
+          includePolicies: ['always', 'when_relevant'],
           limit: 50,
           workspaceId: binding.workspace.id,
         }),
@@ -156,29 +160,29 @@ export async function searchProjectMemory(
           },
           key: claim.claimKey,
           kind: claim.claimKind,
-          source: "current_claim",
+          source: 'current_claim',
           state: claim.state,
           text: claim.claimText,
         };
       }),
       ...recentEvents.map(
         (event): MemorySearchEntry => ({
-          confidence: event.trustLevel === "trusted" ? 0.8 : 0.45,
+          confidence: event.trustLevel === 'trusted' ? 0.8 : 0.45,
           fields: {
-            actor: event.actorId ?? "",
+            actor: event.actorId ?? '',
             event: event.eventType,
             externalEventId: event.externalEventId,
             payload: JSON.stringify(event.payload),
             provenance: JSON.stringify(event.provenance),
-            session: event.sessionId ?? "",
+            session: event.sessionId ?? '',
             source: `${event.sourceType}:${event.sourceId}`,
-            trace: event.traceId ?? "",
+            trace: event.traceId ?? '',
           },
           key: event.id,
-          kind: "raw_event",
-          source: "recent_activity",
-          state: event.trustLevel ?? "raw",
-          text: `${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, "")} ${event.externalEventId}`,
+          kind: 'raw_event',
+          source: 'recent_activity',
+          state: event.trustLevel ?? 'raw',
+          text: `${event.sourceType}.${event.eventType.replace(/^[^.]+[.]/, '')} ${event.externalEventId}`,
         }),
       ),
       ...contextIndex.map(
@@ -186,7 +190,7 @@ export async function searchProjectMemory(
           confidence: entry.importance,
           fields: {
             connector: entry.sourceBinding.sourceType,
-            description: entry.description ?? "",
+            description: entry.description ?? '',
             externalId: entry.externalId,
             key: entry.key,
             sagaLink: entry.sagaLink,
@@ -194,8 +198,8 @@ export async function searchProjectMemory(
             title: entry.title,
           },
           key: entry.sagaLink,
-          kind: "context_index",
-          source: "context_index",
+          kind: 'context_index',
+          source: 'context_index',
           state: entry.includePolicy,
           text: entry.title,
         }),
@@ -206,13 +210,13 @@ export async function searchProjectMemory(
             confidence: 1,
             fields: {
               line,
-              provenance: section.provenance.join(" "),
+              provenance: section.provenance.join(' '),
               section: section.title,
             },
             key: `active-context:${section.title}:${index.toString()}`,
-            kind: "active_context",
-            source: "active_context",
-            state: "compiled",
+            kind: 'active_context',
+            source: 'active_context',
+            state: 'compiled',
             text: `${section.title}: ${line}`,
           }),
         ),
@@ -228,7 +232,7 @@ export async function searchProjectMemory(
           },
           key: `active-context-claim:${claim.claimKey}`,
           kind: claim.claimKind,
-          source: "active_context_input",
+          source: 'active_context_input',
           state: claim.state,
           text: claim.claimText,
         }),
@@ -246,10 +250,15 @@ export async function searchProjectMemory(
 
 export function redactSearchMemoryStructuredMatches(
   matches: readonly RankedMemorySearchMatch[],
-): Array<Omit<RankedMemorySearchMatch, "score">> {
-  return matches.map(({ score: _score, ...match }) => {
-    return redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, "score">;
-  });
+): Omit<RankedMemorySearchMatch, 'score'>[] {
+  return matches.map(
+    ({ score: _score, ...match }) =>
+      // Boundary: redactMcpStructuredOutput returns `unknown` (it recurses over
+      // arbitrary structured output); it only strips secret keys, so the
+      // score-less match shape is preserved.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- redaction preserves shape, only removes secret keys
+      redactMcpStructuredOutput(match) as Omit<RankedMemorySearchMatch, 'score'>,
+  );
 }
 
 export async function resolveProjectSagaLink(
@@ -259,7 +268,7 @@ export async function resolveProjectSagaLink(
   const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
-    throw new Error("workspace binding is missing; run saga init");
+    throw new Error('workspace binding is missing; run saga init');
   }
 
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
@@ -274,7 +283,7 @@ export async function resolveProjectSagaLink(
       ),
       Effect.runPromise(
         listContextIndexEntries(service, {
-          includePolicies: ["always", "when_relevant"],
+          includePolicies: ['always', 'when_relevant'],
           limit: 500,
           workspaceId: binding.workspace.id,
         }),
@@ -369,7 +378,7 @@ async function withProjectDatabase<T>(
   const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
-    throw new Error("workspace binding is missing; run saga init");
+    throw new Error('workspace binding is missing; run saga init');
   }
 
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
@@ -393,14 +402,14 @@ export async function rewriteResolvedSagaLinkReferences(
     };
     title?: string | undefined;
   },
-  contextIndex: ReadonlyArray<{
+  contextIndex: readonly {
     externalId: string;
     sagaLink: string;
     sourceBinding: {
       id: string;
       sourceType: string;
     };
-  }>,
+  }[],
   connectorContext: ResolveConnectorContext = metadataOnlyConnectorContext(),
 ) {
   return rewriteConnectorResultToSagaLinks(
@@ -439,8 +448,8 @@ export function redactResolvedSagaLink<
   },
 >(
   resolved: Resolved,
-): Omit<Resolved, "entry"> & {
-  entry: Omit<Resolved["entry"], "sourceBinding"> & {
+): Omit<Resolved, 'entry'> & {
+  entry: Omit<Resolved['entry'], 'sourceBinding'> & {
     sourceBinding: {
       displayName: string | null;
       enabled: boolean;
@@ -464,8 +473,12 @@ export function redactResolvedSagaLink<
       },
     },
   };
-  return redacted as Omit<Resolved, "entry"> & {
-    entry: Omit<Resolved["entry"], "sourceBinding"> & {
+  // `redacted` is reconstructed field-by-field to exactly match the declared
+  // return shape, but it spreads the generic `Resolved`, which TS cannot
+  // decompose to verify the narrowed sourceBinding against the omit-based type.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- pins the public shape that a generic spread can't express
+  return redacted as Omit<Resolved, 'entry'> & {
+    entry: Omit<Resolved['entry'], 'sourceBinding'> & {
       sourceBinding: {
         displayName: string | null;
         enabled: boolean;
@@ -492,15 +505,15 @@ function metadataOnlyConnectorContext(): ResolveConnectorContext {
 function createMetadataOnlyConnectorClient(): ConnectorClient {
   return {
     retrieve: async (input) => {
-      const content = typeof input.metadata?.content === "string" ? input.metadata.content : "";
+      const content = typeof input.metadata?.content === 'string' ? input.metadata.content : '';
       const capped = capUtf8Content(content, MCP_RETRIEVAL_MAX_CONTENT_BYTES);
       return {
         content: capped.content,
         evidence: {
-          contentAvailable: content !== "",
+          contentAvailable: content !== '',
           contentBytes: capped.originalBytes,
           maxContentBytes: MCP_RETRIEVAL_MAX_CONTENT_BYTES,
-          source: "metadata",
+          source: 'metadata',
           truncated: capped.truncated,
         },
         references: [],
@@ -513,7 +526,7 @@ function capUtf8Content(
   value: string,
   maxBytes: number,
 ): { content: string; originalBytes: number; truncated: boolean } {
-  const buffer = Buffer.from(value, "utf8");
+  const buffer = Buffer.from(value, 'utf8');
   if (buffer.length <= maxBytes) {
     return {
       content: value,
@@ -525,8 +538,8 @@ function capUtf8Content(
   return {
     content: buffer
       .subarray(0, maxBytes)
-      .toString("utf8")
-      .replace(/\uFFFD$/u, ""),
+      .toString('utf8')
+      .replace(/\uFFFD$/u, ''),
     originalBytes: buffer.length,
     truncated: true,
   };
@@ -537,12 +550,14 @@ export function searchMemoryEntries(
   entries: readonly MemorySearchEntry[],
 ): RankedMemorySearchMatch[] {
   const tokens = tokenize(input.query);
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) {
+    return [];
+  }
 
   return entries
     .map((entry) => rankMemoryEntry(entry, tokens))
     .filter((match): match is RankedMemorySearchMatch => match !== undefined)
-    .sort(
+    .toSorted(
       (left, right) =>
         right.score - left.score ||
         right.confidence - left.confidence ||
@@ -560,12 +575,14 @@ function rankMemoryEntry(
     const hits = tokens.filter((token) => normalized.includes(token)).length;
     return hits === 0 ? [] : [{ field, hits, value }];
   });
-  if (fieldMatches.length === 0) return undefined;
+  if (fieldMatches.length === 0) {
+    return undefined;
+  }
 
   const matchedFields = [...new Set(fieldMatches.map((match) => match.field))];
-  const bestFieldMatch = fieldMatches
-    .slice()
-    .sort((left, right) => right.hits - left.hits || left.field.localeCompare(right.field))[0];
+  const bestFieldMatch = [...fieldMatches].toSorted(
+    (left, right) => right.hits - left.hits || left.field.localeCompare(right.field),
+  )[0];
   const exactTextBonus = tokens.every((token) => entry.text.toLowerCase().includes(token)) ? 4 : 0;
   const weightedHits = fieldMatches.reduce((score, match) => score + match.hits, 0);
   const sourceWeight = sourceSearchWeight(entry.source);
@@ -587,16 +604,18 @@ function renderSearchMemoryMarkdown(
   query: string,
   matches: readonly RankedMemorySearchMatch[],
 ): string {
-  if (matches.length === 0) return `# Saga Memory Search\n\nNo matches for ${query}.`;
+  if (matches.length === 0) {
+    return `# Saga Memory Search\n\nNo matches for ${query}.`;
+  }
 
   return [
-    "# Saga Memory Search",
-    "",
+    '# Saga Memory Search',
+    '',
     ...matches.map(
       (match) =>
-        `- [${match.source}/${match.state}/${match.kind}] ${redactMcpTextOutput(match.text)}${match.sagaLink === undefined ? "" : ` ${match.sagaLink}`} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(", ")}): ${redactMcpTextOutput(match.snippet)}`,
+        `- [${match.source}/${match.state}/${match.kind}] ${redactMcpTextOutput(match.text)}${match.sagaLink === undefined ? '' : ` ${match.sagaLink}`} (${Math.round(match.confidence * 100).toString()}%; matched ${match.matchedFields.join(', ')}): ${redactMcpTextOutput(match.snippet)}`,
     ),
-  ].join("\n");
+  ].join('\n');
 }
 
 function renderResolvedSagaLinkMarkdown(
@@ -617,11 +636,11 @@ function renderResolvedSagaLinkMarkdown(
   retrieval: {
     content?: string | undefined;
     provenance?: Record<string, unknown> | undefined;
-    references: ReadonlyArray<{
+    references: readonly {
       externalId: string;
       sagaLink?: string | undefined;
       title?: string | undefined;
-    }>;
+    }[];
     target?:
       | {
           apiUrl?: string | undefined;
@@ -632,7 +651,7 @@ function renderResolvedSagaLinkMarkdown(
 ): string {
   const referenceLines =
     retrieval.references.length === 0
-      ? ["- References: none"]
+      ? ['- References: none']
       : retrieval.references.map(
           (reference) =>
             `- Reference: ${reference.title ?? reference.externalId} ${reference.sagaLink ?? reference.externalId}`,
@@ -644,13 +663,13 @@ function renderResolvedSagaLinkMarkdown(
       : `- Target API URL: ${retrieval.target.apiUrl}`,
   ].filter((line): line is string => line !== undefined);
   const contentLines =
-    retrieval.content === undefined || retrieval.content.trim() === ""
+    retrieval.content === undefined || retrieval.content.trim() === ''
       ? []
-      : ["", "## Retrieved Content", "", redactMcpTextOutput(retrieval.content)];
+      : ['', '## Retrieved Content', '', redactMcpTextOutput(retrieval.content)];
 
   return [
-    "# Saga Link",
-    "",
+    '# Saga Link',
+    '',
     `- Link: ${resolved.entry.sagaLink}`,
     `- Title: ${resolved.entry.title}`,
     `- Connector: ${resolved.entry.sourceBinding.sourceType}`,
@@ -660,41 +679,43 @@ function renderResolvedSagaLinkMarkdown(
     ...targetLines,
     ...referenceLines,
     ...contentLines,
-  ].join("\n");
+  ].join('\n');
 }
 
 function renderRecentSessionsMarkdown(sessions: readonly RecentSessionRecord[]): string {
-  if (sessions.length === 0) return "# Recent Saga Sessions\n\nNo recent sessions found.";
+  if (sessions.length === 0) {
+    return '# Recent Saga Sessions\n\nNo recent sessions found.';
+  }
 
   return [
-    "# Recent Saga Sessions",
-    "",
+    '# Recent Saga Sessions',
+    '',
     ...sessions.flatMap((entry, index) => [
       `## Session ${String(index + 1)}`,
-      "",
+      '',
       `- Session: ${entry.session.id}`,
       `- Raw record: ${entry.rawSessionRecord.id} (snapshot ${String(entry.rawSessionRecord.snapshotOrdinal)}, ${entry.rawSessionRecord.status}, active ${String(entry.rawSessionRecord.isActive)})`,
-      `- Title: ${entry.session.title ?? "none"}`,
-      `- Harness: ${entry.session.harness} (harness session: ${entry.session.harnessSessionId ?? "none"})`,
-      `- Model: ${entry.session.model ?? "none"}`,
+      `- Title: ${entry.session.title ?? 'none'}`,
+      `- Harness: ${entry.session.harness} (harness session: ${entry.session.harnessSessionId ?? 'none'})`,
+      `- Model: ${entry.session.model ?? 'none'}`,
       `- Host user: ${entry.authorUser.handle} (${entry.authorUser.identitySource})`,
       `- Status: ${entry.session.status}`,
       `- Started: ${formatDate(entry.session.startedAt)}`,
       `- Last activity: ${formatDate(entry.session.lastActivityAt)}`,
       `- Captured: ${formatDate(entry.rawSessionRecord.capturedAt)}`,
       `- Counts: ${String(entry.counts.turns)} turns, ${String(entry.counts.segments)} segments, ${String(entry.counts.rawSessionRecords)} raw records, ${String(entry.counts.activityIntervals)} Activity Intervals`,
-      `- Activity Interval: ${entry.activityInterval === null ? "none" : `${entry.activityInterval.id} (ordinal ${String(entry.activityInterval.ordinal)}, ${entry.activityInterval.status})`}`,
+      `- Activity Interval: ${entry.activityInterval === null ? 'none' : `${entry.activityInterval.id} (ordinal ${String(entry.activityInterval.ordinal)}, ${entry.activityInterval.status})`}`,
       `- Source: ${formatSourceBinding(entry.sourceBinding)}`,
       `- Provenance: session=${compactSafeJson(entry.session.provenance)} raw=${compactSafeJson(entry.rawSessionRecord.provenance)}`,
-      "",
+      '',
     ]),
-  ].join("\n");
+  ].join('\n');
 }
 
 function renderSessionSearchMarkdown(result: RecallSearchResult): string {
   const lines = [
-    "# Saga Session Search",
-    "",
+    '# Saga Session Search',
+    '',
     `- Query: ${result.query}`,
     `- Workspace: ${result.workspaceId}`,
     `- Mode: lexical-only`,
@@ -703,18 +724,18 @@ function renderSessionSearchMarkdown(result: RecallSearchResult): string {
   ];
 
   if (result.matchCount === 0) {
-    return [...lines, "", "No matching session segments found."].join("\n");
+    return [...lines, '', 'No matching session segments found.'].join('\n');
   }
 
   let matchIndex = 1;
   for (const sessionGroup of result.sessions) {
     lines.push(
-      "",
+      '',
       `## Session ${sessionGroup.session.id}`,
-      "",
-      `- Title: ${sessionGroup.session.title ?? "none"}`,
-      `- Harness: ${sessionGroup.session.harness} (harness session: ${sessionGroup.session.harnessSessionId ?? "none"})`,
-      `- Model: ${sessionGroup.session.model ?? "none"}`,
+      '',
+      `- Title: ${sessionGroup.session.title ?? 'none'}`,
+      `- Harness: ${sessionGroup.session.harness} (harness session: ${sessionGroup.session.harnessSessionId ?? 'none'})`,
+      `- Model: ${sessionGroup.session.model ?? 'none'}`,
       `- Host user: ${sessionGroup.session.authorUser.handle} (${sessionGroup.session.authorUser.identitySource})`,
       `- Status: ${sessionGroup.session.status}`,
       `- Last activity: ${formatDate(sessionGroup.session.lastActivityAt)}`,
@@ -723,9 +744,9 @@ function renderSessionSearchMarkdown(result: RecallSearchResult): string {
 
     for (const intervalGroup of sessionGroup.activityIntervals) {
       lines.push(
-        "",
+        '',
         `### Activity Interval ${String(intervalGroup.activityInterval.ordinal)}`,
-        "",
+        '',
         `- ID: ${intervalGroup.activityInterval.id}`,
         `- Status: ${intervalGroup.activityInterval.status}`,
         `- Started: ${formatDate(intervalGroup.activityInterval.startedAt)}`,
@@ -733,19 +754,19 @@ function renderSessionSearchMarkdown(result: RecallSearchResult): string {
       );
 
       for (const match of intervalGroup.matches) {
-        lines.push("", renderSessionMatchMarkdown(match, matchIndex));
+        lines.push('', renderSessionMatchMarkdown(match, matchIndex));
         matchIndex += 1;
       }
     }
   }
 
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 function renderSessionMatchMarkdown(match: RecallSegmentMatch, matchIndex: number): string {
   return [
     `#### Match ${String(matchIndex)}`,
-    "",
+    '',
     `- Segment: ${match.segment.id} (${match.segment.segmentKind}, ordinal ${String(match.segment.ordinal)})`,
     `- Turn: ${match.turn.id} (ordinal ${String(match.turn.ordinal)}, ${match.turn.role})`,
     `- Raw record: ${match.rawSessionRecord.id} (snapshot ${String(match.rawSessionRecord.snapshotOrdinal)}, ${match.rawSessionRecord.status})`,
@@ -754,84 +775,94 @@ function renderSessionMatchMarkdown(match: RecallSegmentMatch, matchIndex: numbe
     `- Characters: ${formatRange(match.segment.charStart, match.segment.charEnd)}`,
     `- Source: ${formatSourceBinding(match.sourceBinding)}`,
     `- Provenance: raw=${compactSafeJson(match.rawSessionRecord.provenance)}`,
-    "",
-    "Retrieved Content:",
-    "",
+    '',
+    'Retrieved Content:',
+    '',
     redactMcpTextOutput(stripSearchMarkup(match.snippet)),
-  ].join("\n");
+  ].join('\n');
 }
 
 function renderSessionContextMarkdown(result: RecallContextExpansion): string {
   const lines = [
-    "# Saga Session Context",
-    "",
+    '# Saga Session Context',
+    '',
     `- Anchor segment: ${result.anchor.segment.id}`,
     `- Anchor turn: ${result.anchor.turn.id}`,
     `- Window: ${String(result.beforeTurns)} before / ${String(result.afterTurns)} after`,
     `- Session: ${result.session.id}`,
     `- Activity Interval: ${result.activityInterval.id} (ordinal ${String(result.activityInterval.ordinal)})`,
     `- Raw record: ${result.rawSessionRecord.id} (snapshot ${String(result.rawSessionRecord.snapshotOrdinal)}, ${result.rawSessionRecord.status})`,
-    `- Harness: ${result.session.harness} (harness session: ${result.session.harnessSessionId ?? "none"})`,
-    `- Model: ${result.session.model ?? "none"}`,
+    `- Harness: ${result.session.harness} (harness session: ${result.session.harnessSessionId ?? 'none'})`,
+    `- Model: ${result.session.model ?? 'none'}`,
     `- Host user: ${result.session.authorUser.handle} (${result.session.authorUser.identitySource})`,
     `- Source: ${formatSourceBinding(result.sourceBinding)}`,
     `- Provenance: session=${compactSafeJson(result.session.provenance)} raw=${compactSafeJson(result.rawSessionRecord.provenance)}`,
-    "",
-    "## Retrieved Context",
+    '',
+    '## Retrieved Context',
   ];
 
   for (const turn of result.turns) {
     lines.push(
-      "",
+      '',
       `### Turn ${String(turn.ordinal)} ${turn.role}`,
-      "",
+      '',
       `- Turn: ${turn.id}`,
-      `- Actor: ${turn.actorKind}:${turn.actorLabel ?? "none"}`,
-      `- Model: ${turn.model ?? "none"}`,
+      `- Actor: ${turn.actorKind}:${turn.actorLabel ?? 'none'}`,
+      `- Model: ${turn.model ?? 'none'}`,
       `- Started: ${formatDate(turn.startedAt)}`,
       `- Ended: ${formatDate(turn.endedAt)}`,
-      `- Raw events: ${turn.rawEventIds.length === 0 ? "none" : turn.rawEventIds.join(", ")}`,
+      `- Raw events: ${turn.rawEventIds.length === 0 ? 'none' : turn.rawEventIds.join(', ')}`,
       `- Raw span: ${compactSafeJson(turn.rawSpan)}`,
     );
 
     for (const segment of turn.segments) {
-      const anchor = segment.id === result.anchor.segment.id ? " anchor" : "";
+      const anchor = segment.id === result.anchor.segment.id ? ' anchor' : '';
       lines.push(
-        "",
+        '',
         `#### Segment ${String(segment.ordinal)}${anchor}`,
-        "",
+        '',
         `- Segment: ${segment.id}`,
         `- Kind: ${segment.segmentKind}`,
         `- Tokens: ${formatRange(segment.tokenStart, segment.tokenEnd)}`,
         `- Characters: ${formatRange(segment.charStart, segment.charEnd)}`,
-        `- Snippet: ${segment.snippet === null ? "none" : redactMcpTextOutput(segment.snippet)}`,
-        "",
-        "Text:",
-        "",
+        `- Snippet: ${segment.snippet === null ? 'none' : redactMcpTextOutput(segment.snippet)}`,
+        '',
+        'Text:',
+        '',
         truncate(redactMcpTextOutput(segment.searchText), 1200),
       );
     }
   }
 
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 export function redactMcpStructuredOutput(value: unknown): unknown {
-  if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((entry) => redactMcpStructuredOutput(entry));
-  if (typeof value === "string") return redactAgentFacingString(value);
-  if (!isRecord(value)) return value;
+  if (value instanceof Date) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactMcpStructuredOutput(entry));
+  }
+  if (typeof value === 'string') {
+    return redactAgentFacingString(value);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
 
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (isUnsafeMcpStructuredKey(key)) continue;
+    if (isUnsafeMcpStructuredKey(key)) {
+      continue;
+    }
     redacted[key] = redactMcpStructuredOutput(entry);
   }
   return redacted;
 }
 
 function isUnsafeMcpStructuredKey(key: string): boolean {
-  return key === "config" || key.toLowerCase().includes("sourcelocator");
+  return key === 'config' || key.toLowerCase().includes('sourcelocator');
 }
 
 function formatSourceBinding(sourceBinding: {
@@ -841,36 +872,42 @@ function formatSourceBinding(sourceBinding: {
   sourceType: string;
 }): string {
   const display = sourceBinding.displayName === undefined ? undefined : sourceBinding.displayName;
-  return `${sourceBinding.sourceType} binding=${sourceBinding.id} enabled=${String(sourceBinding.enabled)}${display === null || display === undefined ? "" : ` display=${display}`}`;
+  return `${sourceBinding.sourceType} binding=${sourceBinding.id} enabled=${String(sourceBinding.enabled)}${display === null || display === undefined ? '' : ` display=${display}`}`;
 }
 
-function formatScores(scores: RecallSegmentMatch["scores"]): string {
+function formatScores(scores: RecallSegmentMatch['scores']): string {
   const parts = [
     `combined ${formatScore(scores.combined)}`,
     `lexical ${formatScore(scores.lexical)}`,
     `trigram ${formatScore(scores.trigram)}`,
   ];
-  if (scores.vector !== undefined) parts.push(`vector ${formatScore(scores.vector)}`);
-  return parts.join(", ");
+  if (scores.vector !== undefined) {
+    parts.push(`vector ${formatScore(scores.vector)}`);
+  }
+  return parts.join(', ');
 }
 
 function formatScore(value: number): string {
-  return value.toFixed(4).replace(/0+$/u, "").replace(/\.$/u, "");
+  return value.toFixed(4).replace(/0+$/u, '').replace(/\.$/u, '');
 }
 
 function formatDate(value: Date | string | null): string {
-  if (value === null) return "none";
+  if (value === null) {
+    return 'none';
+  }
   return value instanceof Date ? value.toISOString() : value;
 }
 
 function formatRange(start: number | null, end: number | null): string {
-  if (start === null && end === null) return "none";
-  return `${start === null ? "?" : String(start)}..${end === null ? "?" : String(end)}`;
+  if (start === null && end === null) {
+    return 'none';
+  }
+  return `${start === null ? '?' : String(start)}..${end === null ? '?' : String(end)}`;
 }
 
 function compactSafeJson(value: unknown): string {
   const json = JSON.stringify(redactAgentFacingSessionValue(value));
-  return json === undefined ? "undefined" : truncate(json, 220);
+  return json === undefined ? 'undefined' : truncate(json, 220);
 }
 
 function redactMcpTextOutput(value: string): string {
@@ -879,33 +916,39 @@ function redactMcpTextOutput(value: string): string {
 
 function redactAgentFacingString(value: string): string {
   const redacted = redactAgentFacingSessionValue(value);
-  return typeof redacted === "string" ? redacted : value;
+  return typeof redacted === 'string' ? redacted : value;
 }
 
 function stripSearchMarkup(value: string): string {
-  return value.replaceAll(/<\/?b>/g, "");
+  return value.replaceAll(/<\/?b>/g, '');
 }
 
 function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
+  if (value.length <= maxLength) {
+    return value;
+  }
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function matchedSnippet(value: string, tokens: readonly string[]): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized === "") return "";
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized === '') {
+    return '';
+  }
 
   const lower = normalized.toLowerCase();
   const firstHit = tokens
     .map((token) => lower.indexOf(token))
     .filter((index) => index >= 0)
-    .sort((left, right) => left - right)[0];
-  if (firstHit === undefined) return truncateSnippet(normalized);
+    .toSorted((left, right) => left - right)[0];
+  if (firstHit === undefined) {
+    return truncateSnippet(normalized);
+  }
 
   const start = Math.max(0, firstHit - 48);
   const end = Math.min(normalized.length, firstHit + 112);
-  const prefix = start === 0 ? "" : "...";
-  const suffix = end === normalized.length ? "" : "...";
+  const prefix = start === 0 ? '' : '...';
+  const suffix = end === normalized.length ? '' : '...';
   return `${prefix}${normalized.slice(start, end)}${suffix}`;
 }
 
@@ -914,10 +957,18 @@ function truncateSnippet(value: string): string {
 }
 
 function sourceSearchWeight(source: string): number {
-  if (source === "current_claim") return 2;
-  if (source === "active_context") return 1.5;
-  if (source === "context_index") return 1.25;
-  if (source === "active_context_input") return 1;
+  if (source === 'current_claim') {
+    return 2;
+  }
+  if (source === 'active_context') {
+    return 1.5;
+  }
+  if (source === 'context_index') {
+    return 1.25;
+  }
+  if (source === 'active_context_input') {
+    return 1;
+  }
   return 0;
 }
 
@@ -934,36 +985,40 @@ function tokenize(query: string): string[] {
 }
 
 async function* readJsonLines(stdin: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
-  let buffer = "";
+  let buffer = '';
   for await (const chunk of stdin) {
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
     const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
+    buffer = lines.pop() ?? '';
     for (const line of lines) {
       const trimmed = line.trim();
-      if (trimmed !== "") yield trimmed;
+      if (trimmed !== '') {
+        yield trimmed;
+      }
     }
   }
   const trimmed = buffer.trim();
-  if (trimmed !== "") yield trimmed;
+  if (trimmed !== '') {
+    yield trimmed;
+  }
 }
 
 function parseJsonRpcRequest(line: string): JsonRpcRequest {
   const parsed = JSON.parse(line) as unknown;
-  if (!isRecord(parsed) || parsed.jsonrpc !== "2.0" || typeof parsed.method !== "string") {
-    throw new Error("expected a JSON-RPC 2.0 request object");
+  if (!isRecord(parsed) || parsed.jsonrpc !== '2.0' || typeof parsed.method !== 'string') {
+    throw new Error('expected a JSON-RPC 2.0 request object');
   }
   if (
     parsed.id !== undefined &&
-    typeof parsed.id !== "string" &&
-    typeof parsed.id !== "number" &&
+    typeof parsed.id !== 'string' &&
+    typeof parsed.id !== 'number' &&
     parsed.id !== null
   ) {
-    throw new Error("JSON-RPC request id must be a string, number, or null");
+    throw new Error('JSON-RPC request id must be a string, number, or null');
   }
   return {
     id: parsed.id,
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
     method: parsed.method,
     params: parsed.params,
   };
@@ -976,10 +1031,10 @@ function jsonRpcInputError(error: unknown) {
       message: error instanceof Error ? error.message : String(error),
     },
     id: null,
-    jsonrpc: "2.0",
+    jsonrpc: '2.0',
   };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

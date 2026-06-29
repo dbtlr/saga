@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const cliBin = join(repoRoot, "apps/cli/bin/saga.js");
-const requireFromCli = createRequire(new URL("../apps/cli/package.json", import.meta.url));
-const postgresModule = await import(pathToFileURL(requireFromCli.resolve("postgres")).href);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const cliBin = join(repoRoot, 'apps/cli/bin/saga.js');
+const requireFromCli = createRequire(new URL('../apps/cli/package.json', import.meta.url));
+const postgresModule = await import(pathToFileURL(requireFromCli.resolve('postgres')).href);
 const postgres = postgresModule.default;
 
 const adminDatabaseUrl = process.env.SAGA_TEST_DATABASE_URL?.trim();
-if (adminDatabaseUrl === undefined || adminDatabaseUrl === "") {
-  console.error("missing required environment variable: SAGA_TEST_DATABASE_URL");
+if (adminDatabaseUrl === undefined || adminDatabaseUrl === '') {
+  console.error('missing required environment variable: SAGA_TEST_DATABASE_URL');
   process.exit(1);
 }
 
@@ -29,7 +29,7 @@ try {
   const databaseUrl = new URL(adminDatabaseUrl);
   databaseUrl.pathname = `/${databaseName}`;
 
-  workspacePath = realpathSync(mkdtempSync(join(tmpdir(), "saga-mcp-smoke-")));
+  workspacePath = realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-')));
   seedGitWorkspace(workspacePath);
 
   const env = {
@@ -37,44 +37,44 @@ try {
     DATABASE_URL: databaseUrl.toString(),
   };
 
-  run("pnpm", ["--filter", "@saga/service", "migrate"], { cwd: repoRoot, env });
-  run(process.execPath, [cliBin, "--ascii", "init", "MCP Smoke"], { cwd: workspacePath, env });
-  run(process.execPath, [cliBin, "--ascii", "harness", "install", "codex"], {
+  run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
+  run(process.execPath, [cliBin, '--ascii', 'init', 'MCP Smoke'], { cwd: workspacePath, env });
+  run(process.execPath, [cliBin, '--ascii', 'harness', 'install', 'codex'], {
     cwd: workspacePath,
     env,
   });
-  run(join(workspacePath, ".codex", "saga-codex-hook.sh"), [], {
+  run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
     env,
     input: JSON.stringify(codexHookPayload(workspacePath)),
   });
 
-  const binding = JSON.parse(readFileSync(join(workspacePath, ".saga.local.json"), "utf8"));
+  const binding = JSON.parse(readFileSync(join(workspacePath, '.saga.local.json'), 'utf8'));
   await seedContextIndex(databaseUrl.toString(), binding);
 
   const responses = runMcpRequests(workspacePath, env, [
     {
       id: 1,
-      jsonrpc: "2.0",
-      method: "tools/call",
-      params: { arguments: {}, name: "get_active_context" },
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { arguments: {}, name: 'get_active_context' },
     },
     {
       id: 2,
-      jsonrpc: "2.0",
-      method: "tools/call",
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
-        arguments: { limit: 5, query: "dogfood capture" },
-        name: "search_memory",
+        arguments: { limit: 5, query: 'dogfood capture' },
+        name: 'search_memory',
       },
     },
     {
       id: 3,
-      jsonrpc: "2.0",
-      method: "tools/call",
+      jsonrpc: '2.0',
+      method: 'tools/call',
       params: {
-        arguments: { link: "saga:context/dogfood-note" },
-        name: "resolve_saga_link",
+        arguments: { link: 'saga:context/dogfood-note' },
+        name: 'resolve_saga_link',
       },
     },
   ]);
@@ -84,53 +84,53 @@ try {
   assertResolveResponse(responses.get(3));
 
   console.log(`mcp smoke passed: ${binding.workspace.handle}`);
-  console.log("tools: get_active_context, search_memory, resolve_saga_link");
+  console.log('tools: get_active_context, search_memory, resolve_saga_link');
   failed = false;
 } finally {
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
   await adminSql.end({ timeout: 5 });
 
-  if (workspacePath !== undefined && failed === false && process.env.SAGA_SMOKE_KEEP !== "1") {
+  if (workspacePath !== undefined && !failed && process.env.SAGA_SMOKE_KEEP !== '1') {
     rmSync(workspacePath, { force: true, recursive: true });
-  } else if (workspacePath !== undefined && failed === true) {
+  } else if (workspacePath !== undefined && failed) {
     console.error(`smoke workspace kept for inspection: ${workspacePath}`);
   }
 }
 
 function seedGitWorkspace(projectRoot) {
-  const rootPackageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+  const rootPackageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
   writeFileSync(
-    join(projectRoot, "package.json"),
+    join(projectRoot, 'package.json'),
     `${JSON.stringify(
       {
         engines: rootPackageJson.engines,
-        name: "saga-mcp-smoke",
+        name: 'saga-mcp-smoke',
         private: true,
-        version: "0.0.0",
+        version: '0.0.0',
       },
       null,
       2,
     )}\n`,
   );
-  execFileSync("git", ["init"], { cwd: projectRoot, stdio: "ignore" });
-  execFileSync("git", ["remote", "add", "origin", "git@example.com:saga/mcp-smoke.git"], {
+  execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@example.com:saga/mcp-smoke.git'], {
     cwd: projectRoot,
-    stdio: "ignore",
+    stdio: 'ignore',
   });
-  mkdirSync(join(projectRoot, "src"), { recursive: true });
-  writeFileSync(join(projectRoot, "src/index.ts"), "export const mcpSmoke = true;\n");
+  mkdirSync(join(projectRoot, 'src'), { recursive: true });
+  writeFileSync(join(projectRoot, 'src/index.ts'), 'export const mcpSmoke = true;\n');
 }
 
 function codexHookPayload(projectRoot) {
   return {
     cwd: projectRoot,
-    hook_event_name: "UserPromptSubmit",
-    model: "gpt-5",
-    permission_mode: "workspace-write",
-    prompt: "We should dogfood Saga capture before broad rollout.",
-    session_id: "mcp-smoke-session",
-    transcript_path: join(projectRoot, ".codex", "mcp-smoke-transcript.jsonl"),
-    turn_id: "mcp-smoke-turn-1",
+    hook_event_name: 'UserPromptSubmit',
+    model: 'gpt-5',
+    permission_mode: 'workspace-write',
+    prompt: 'We should dogfood Saga capture before broad rollout.',
+    session_id: 'mcp-smoke-session',
+    transcript_path: join(projectRoot, '.codex', 'mcp-smoke-transcript.jsonl'),
+    turn_id: 'mcp-smoke-turn-1',
   };
 }
 
@@ -181,7 +181,7 @@ async function seedContextIndex(databaseUrl, binding) {
         0.91,
         'always',
         ${sql.json({
-          content: "Dogfood capture evidence should be available through MCP Saga Link resolution.",
+          content: 'Dogfood capture evidence should be available through MCP Saga Link resolution.',
         })}
       )
     `;
@@ -191,13 +191,13 @@ async function seedContextIndex(databaseUrl, binding) {
 }
 
 function runMcpRequests(cwd, env, requests) {
-  const stdout = run(process.execPath, [cliBin, "mcp"], {
+  const stdout = run(process.execPath, [cliBin, 'mcp'], {
     cwd,
     env,
-    input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+    input: `${requests.map((request) => JSON.stringify(request)).join('\n')}\n`,
   });
   const responses = new Map();
-  for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== "")) {
+  for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== '')) {
     const response = JSON.parse(line);
     if (response.error !== undefined) {
       throw new Error(`MCP request failed: ${line}`);
@@ -210,22 +210,24 @@ function runMcpRequests(cwd, env, requests) {
 function run(command, args, options) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
-    encoding: "utf8",
+    encoding: 'utf8',
     env: options.env,
     input: options.input,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  if (result.error !== undefined) throw result.error;
+  if (result.error !== undefined) {
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       [
-        `${command} ${args.join(" ")} failed with exit code ${String(result.status)}`,
+        `${command} ${args.join(' ')} failed with exit code ${String(result.status)}`,
         result.stdout,
         result.stderr,
       ]
-        .filter((part) => part.trim() !== "")
-        .join("\n"),
+        .filter((part) => part.trim() !== '')
+        .join('\n'),
     );
   }
 
@@ -234,7 +236,7 @@ function run(command, args, options) {
 
 function assertActiveContextResponse(response) {
   const result = response?.result;
-  if (!toolText(result).includes("codex.UserPromptSubmit")) {
+  if (!toolText(result).includes('codex.UserPromptSubmit')) {
     throw new Error(
       `get_active_context text did not include recent hook activity: ${json(result)}`,
     );
@@ -248,7 +250,7 @@ function assertActiveContextResponse(response) {
 
 function assertSearchResponse(response) {
   const result = response?.result;
-  if (!toolText(result).includes("dogfood")) {
+  if (!toolText(result).includes('dogfood')) {
     throw new Error(`search_memory text did not include dogfood matches: ${json(result)}`);
   }
 
@@ -260,17 +262,17 @@ function assertSearchResponse(response) {
 
 function assertResolveResponse(response) {
   const result = response?.result;
-  if (!toolText(result).includes("Dogfood capture evidence")) {
+  if (!toolText(result).includes('Dogfood capture evidence')) {
     throw new Error(`resolve_saga_link text did not include retrieved content: ${json(result)}`);
   }
 
   const resolved = result?.structuredContent;
-  if (resolved?.entry?.sagaLink !== "saga:context/dogfood-note") {
+  if (resolved?.entry?.sagaLink !== 'saga:context/dogfood-note') {
     throw new Error(`resolve_saga_link structured content had wrong link: ${json(result)}`);
   }
 
   if (
-    resolved?.retrieval?.target?.url !== "https://docs.example.test/saga/notes/dogfood-capture.md"
+    resolved?.retrieval?.target?.url !== 'https://docs.example.test/saga/notes/dogfood-capture.md'
   ) {
     throw new Error(`resolve_saga_link target URL was wrong: ${json(result)}`);
   }
@@ -278,8 +280,8 @@ function assertResolveResponse(response) {
 
 function toolText(result) {
   return result?.content
-    ?.map((entry) => (entry?.type === "text" && typeof entry.text === "string" ? entry.text : ""))
-    .join("\n");
+    ?.map((entry) => (entry?.type === 'text' && typeof entry.text === 'string' ? entry.text : ''))
+    .join('\n');
 }
 
 function json(value) {

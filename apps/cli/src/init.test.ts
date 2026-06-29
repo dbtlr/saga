@@ -1,63 +1,65 @@
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, test } from "vitest";
-import { BINDING_FILE_NAME, normalizeHandle, readBindingFile, writeBindingFile } from "./init.js";
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-describe("normalizeHandle", () => {
-  test("creates lowercase slug handles", () => {
-    expect(normalizeHandle("Saga Workspace!")).toBe("saga-workspace");
+import { describe, expect, it } from 'vitest';
+
+import { BINDING_FILE_NAME, normalizeHandle, readBindingFile, writeBindingFile } from './init.js';
+
+describe('normalizeHandle', () => {
+  it('creates lowercase slug handles', () => {
+    expect(normalizeHandle('Saga Workspace!')).toBe('saga-workspace');
   });
 
-  test("falls back for empty handles", () => {
-    expect(normalizeHandle("!!!")).toBe("workspace");
+  it('falls back for empty handles', () => {
+    expect(normalizeHandle('!!!')).toBe('workspace');
   });
 });
 
-describe("writeBindingFile", () => {
-  test("writes local binding json", () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "saga-init-"));
+describe('writeBindingFile', () => {
+  it('writes local binding json', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-init-'));
     const bindingPath = writeBindingFile(projectRoot, {
       project: {
-        gitRemote: "git@github.com:dbtlr/saga.git",
+        gitRemote: 'git@github.com:dbtlr/saga.git',
         root: projectRoot,
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: "env:DATABASE_URL",
+        databaseUrl: 'env:DATABASE_URL',
       },
       sourceBinding: {
-        id: "source-id",
+        id: 'source-id',
       },
       workspace: {
-        handle: "saga",
-        id: "workspace-id",
+        handle: 'saga',
+        id: 'workspace-id',
       },
     });
 
     expect(bindingPath).toBe(join(projectRoot, BINDING_FILE_NAME));
-    expect(JSON.parse(readFileSync(bindingPath, "utf8"))).toEqual({
+    expect(JSON.parse(readFileSync(bindingPath, 'utf8'))).toStrictEqual({
       host: expect.objectContaining({
         generatedAt: expect.any(String),
         id: expect.any(String),
         label: expect.any(String),
       }),
       project: {
-        gitRemote: "git@github.com:dbtlr/saga.git",
+        gitRemote: 'git@github.com:dbtlr/saga.git',
         root: projectRoot,
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: "env:DATABASE_URL",
+        databaseUrl: 'env:DATABASE_URL',
       },
       sourceBinding: {
-        id: "source-id",
+        id: 'source-id',
       },
       workspace: {
-        handle: "saga",
-        id: "workspace-id",
+        handle: 'saga',
+        id: 'workspace-id',
       },
     });
-    expect(readBindingFile(projectRoot)?.workspace.handle).toBe("saga");
+    expect(readBindingFile(projectRoot)?.workspace.handle).toBe('saga');
   });
 });

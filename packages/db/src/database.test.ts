@@ -1,6 +1,7 @@
-import { RuntimeConfigLive } from "@saga/runtime";
-import { Effect } from "effect";
-import { describe, expect, test } from "vitest";
+import { RuntimeConfigLive } from '@saga/runtime';
+import { Effect, Exit } from 'effect';
+import { assert, describe, expect, it } from 'vitest';
+
 import {
   assertMigrationsCurrent,
   DatabaseLive,
@@ -11,8 +12,8 @@ import {
   makeDatabase,
   readExpectedMigrationHashes,
   runMigrationsSafely,
-  type DatabaseService,
-} from "./database.js";
+} from './database.js';
+import type { DatabaseService } from './database.js';
 
 const expectedHashes = readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).map(
   (migration) => migration.hash,
@@ -28,32 +29,33 @@ function serviceWithMigrationCount(
     db: undefined as never,
     sql: {
       unsafe: async (query: string) => {
-        if (query.includes("to_regclass")) {
-          return [{ table_name: tableExists ? "drizzle.__drizzle_migrations" : null }];
+        if (query.includes('to_regclass')) {
+          return [{ table_name: tableExists ? 'drizzle.__drizzle_migrations' : null }];
         }
 
-        return Array.from({ length: count }, (_, index) => ({
-          hash:
-            options.wrongHashAt === index
-              ? "wrong-hash"
-              : index < expectedHashes.length
-                ? expectedHashes[index]
-                : `newer-hash-${String(index)}`,
-        }));
+        return Array.from({ length: count }, (_, index) => {
+          if (options.wrongHashAt === index) {
+            return { hash: 'wrong-hash' };
+          }
+          return {
+            hash:
+              index < expectedHashes.length ? expectedHashes[index] : `newer-hash-${String(index)}`,
+          };
+        });
       },
     } as never,
   };
 }
 
-describe("makeDatabase", () => {
-  test("requires DATABASE_URL", async () => {
+describe('makeDatabase', () => {
+  it('requires DATABASE_URL', async () => {
     const result = await Effect.runPromiseExit(
       makeDatabase({
         databaseUrl: undefined,
-        environment: "test",
-        logLevel: "info",
+        environment: 'test',
+        logLevel: 'info',
         service: {
-          host: "127.0.0.1",
+          host: '127.0.0.1',
           port: 4766,
         },
         secrets: {
@@ -62,16 +64,14 @@ describe("makeDatabase", () => {
       }),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.cause.toString()).toContain("DATABASE_URL is required");
-    }
+    assert(Exit.isFailure(result));
+    expect(result.cause.toString()).toContain('DATABASE_URL is required');
   });
 });
 
-describe("DatabaseLive", () => {
-  test("provides a closeable database service from runtime config", async () => {
-    const program = Effect.gen(function* () {
+describe('databaseLive', () => {
+  it('provides a closeable database service from runtime config', async () => {
+    const program = Effect.gen(function* program() {
       const database = yield* DatabaseTag;
       expect(database.db).toBeDefined();
       expect(database.sql).toBeDefined();
@@ -79,7 +79,7 @@ describe("DatabaseLive", () => {
       Effect.provide(DatabaseLive()),
       Effect.provide(
         RuntimeConfigLive({
-          env: { DATABASE_URL: "postgres://postgres:postgres@localhost:5432/saga_test" },
+          env: { DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/saga_test' },
           envFiles: [],
         }),
       ),
@@ -89,8 +89,8 @@ describe("DatabaseLive", () => {
   });
 });
 
-describe("assertMigrationsCurrent", () => {
-  test("fails when fewer than the expected migrations are applied", async () => {
+describe('assertMigrationsCurrent', () => {
+  it('fails when fewer than the expected migrations are applied', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT - 1)),
@@ -100,12 +100,12 @@ describe("assertMigrationsCurrent", () => {
     });
   });
 
-  test("returns migration status when migrations are current", async () => {
+  it('returns migration status when migrations are current', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT)),
       ),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: EXPECTED_MIGRATION_COUNT,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
@@ -113,7 +113,7 @@ describe("assertMigrationsCurrent", () => {
     });
   });
 
-  test("fails when an applied migration hash differs from this build", async () => {
+  it('fails when an applied migration hash differs from this build', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(
@@ -122,11 +122,11 @@ describe("assertMigrationsCurrent", () => {
       ),
     ).rejects.toMatchObject({
       message:
-        "database migration 1 (0001_graceful_sebastian_shaw) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.",
+        'database migration 1 (0001_graceful_sebastian_shaw) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.',
     });
   });
 
-  test("fails when the database has newer migrations than this build expects", async () => {
+  it('fails when the database has newer migrations than this build expects', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT + 1)),
@@ -137,11 +137,11 @@ describe("assertMigrationsCurrent", () => {
   });
 });
 
-describe("getMigrationStatus", () => {
-  test("reports zero applied migrations when the drizzle table is missing", async () => {
+describe('getMigrationStatus', () => {
+  it('reports zero applied migrations when the drizzle table is missing', async () => {
     await expect(
       Effect.runPromise(getMigrationStatus(serviceWithMigrationCount(99, { tableExists: false }))),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: 0,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
@@ -149,11 +149,11 @@ describe("getMigrationStatus", () => {
   });
 });
 
-describe("runMigrationsSafely", () => {
-  test("skips migration execution when migrations are already current", async () => {
+describe('runMigrationsSafely', () => {
+  it('skips migration execution when migrations are already current', async () => {
     await expect(
       Effect.runPromise(runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT))),
-    ).resolves.toEqual({
+    ).resolves.toStrictEqual({
       applied: EXPECTED_MIGRATION_COUNT,
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,

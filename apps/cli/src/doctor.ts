@@ -1,39 +1,42 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { assertMigrationsCurrent, makeDatabase, type DatabaseService } from "@saga/db";
-import {
-  inspectEmbeddingWorkflow,
-  loadRuntimeConfig,
-  type CodexAuthResolutionOptions,
-  type EmbeddingPolicyResolutionOptions,
-  type EmbeddingWorkflowBoundary,
-} from "@saga/runtime";
-import { Effect } from "effect";
-import {
-  inspectHarnessesWithActivation,
-  type HarnessActivationState,
-  type HarnessActivationVerifier,
-  type HarnessIntegrationState,
-} from "./harness.js";
-import { bindingPathFor, findProjectRoot, readBindingFile } from "./init.js";
-import { formatCommandOutput } from "./output.js";
-import { recordBlock, type RenderOptions } from "./render.js";
-import { inspectServiceStatus } from "./service.js";
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-export type DoctorStatus = "ok" | "warn" | "fail";
+import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
+import type { DatabaseService } from '@saga/db';
+import { inspectEmbeddingWorkflow, loadRuntimeConfig } from '@saga/runtime';
+import type {
+  CodexAuthResolutionOptions,
+  EmbeddingPolicyResolutionOptions,
+  EmbeddingWorkflowBoundary,
+} from '@saga/runtime';
+import { Effect } from 'effect';
 
-export interface DoctorCheck {
+import { inspectHarnessesWithActivation } from './harness.js';
+import type {
+  HarnessActivationState,
+  HarnessActivationVerifier,
+  HarnessIntegrationState,
+} from './harness.js';
+import { bindingPathFor, findProjectRoot, readBindingFile } from './init.js';
+import { formatCommandOutput } from './output.js';
+import { recordBlock } from './render.js';
+import type { RenderOptions } from './render.js';
+import { inspectServiceStatus } from './service.js';
+
+export type DoctorStatus = 'ok' | 'warn' | 'fail';
+
+export type DoctorCheck = {
   detail: string;
   label: string;
   status: DoctorStatus;
-}
+};
 
 export async function runDoctor(_args: readonly string[], options: RenderOptions): Promise<string> {
   const checks = await doctorProject();
   return formatCommandOutput(
     {
-      id: "doctor",
+      id: 'doctor',
       records: renderDoctor(checks, options),
       value: checks,
     },
@@ -60,7 +63,7 @@ export async function doctorProject(
   const service = await inspectService();
   checks.push({
     detail: `${service.process}; ${service.health}`,
-    label: "service",
+    label: 'service',
     status: serviceDoctorStatus(service),
   });
   checks.push(checkEmbeddings(input.embeddingAuth, input.embeddingPolicy));
@@ -71,7 +74,7 @@ export async function doctorProject(
 
 export function renderDoctor(checks: readonly DoctorCheck[], options: RenderOptions): string {
   return recordBlock(
-    "Saga doctor",
+    'Saga doctor',
     checks.map((check) => ({
       label: check.label,
       value: `${statusToken(check.status, options)} ${check.detail}`,
@@ -88,38 +91,38 @@ export function checkNodeVersion(
   if (engine === undefined) {
     return {
       detail: `${version}; no package.json engine declared`,
-      label: "node",
-      status: "warn",
+      label: 'node',
+      status: 'warn',
     };
   }
 
   return {
     detail: `${version}; requires ${engine}`,
-    label: "node",
-    status: satisfiesEngineRange(version, engine) ? "ok" : "fail",
+    label: 'node',
+    status: satisfiesEngineRange(version, engine) ? 'ok' : 'fail',
   };
 }
 
 function checkPnpm(projectRoot: string): DoctorCheck {
   const engine = readPackageEngines(projectRoot).pnpm;
   try {
-    const version = execFileSync("pnpm", ["--version"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+    const version = execFileSync('pnpm', ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     return {
       detail:
         engine === undefined
           ? `${version}; no package.json engine declared`
           : `${version}; requires ${engine}`,
-      label: "pnpm",
-      status: engine === undefined || satisfiesEngineRange(version, engine) ? "ok" : "fail",
+      label: 'pnpm',
+      status: engine === undefined || satisfiesEngineRange(version, engine) ? 'ok' : 'fail',
     };
   } catch {
     return {
-      detail: "pnpm was not found on PATH",
-      label: "pnpm",
-      status: "fail",
+      detail: 'pnpm was not found on PATH',
+      label: 'pnpm',
+      status: 'fail',
     };
   }
 }
@@ -129,15 +132,18 @@ function readPackageEngines(projectRoot: string): {
   pnpm?: string | undefined;
 } {
   try {
-    const packageJson = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as {
+    // Boundary: package.json is external JSON; assert only a maximally-loose
+    // shape (unknown leaves) and validate each field's type below.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- external JSON; leaves are unknown and type-checked below
+    const packageJson = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')) as {
       engines?: {
         node?: unknown;
         pnpm?: unknown;
       };
     };
     return {
-      node: typeof packageJson.engines?.node === "string" ? packageJson.engines.node : undefined,
-      pnpm: typeof packageJson.engines?.pnpm === "string" ? packageJson.engines.pnpm : undefined,
+      node: typeof packageJson.engines?.node === 'string' ? packageJson.engines.node : undefined,
+      pnpm: typeof packageJson.engines?.pnpm === 'string' ? packageJson.engines.pnpm : undefined,
     };
   } catch {
     return {};
@@ -148,35 +154,47 @@ export function satisfiesEngineRange(version: string, range: string): boolean {
   return range
     .split(/\s+/u)
     .map((constraint) => constraint.trim())
-    .filter((constraint) => constraint !== "")
+    .filter((constraint) => constraint !== '')
     .every((constraint) => satisfiesVersionConstraint(version, constraint));
 }
 
 function satisfiesVersionConstraint(version: string, constraint: string): boolean {
-  if (constraint.startsWith("^")) {
+  if (constraint.startsWith('^')) {
     const base = parseVersion(constraint.slice(1));
     const actual = parseVersion(version);
     return compareVersion(actual, base) >= 0 && actual.major === base.major;
   }
 
   const match = /^(>=|>|<=|<|=)?(.+)$/u.exec(constraint);
-  if (match === null) return false;
-  const operator = match[1] ?? "=";
-  const comparison = compareVersion(parseVersion(version), parseVersion(match[2] ?? ""));
-  if (operator === ">=") return comparison >= 0;
-  if (operator === ">") return comparison > 0;
-  if (operator === "<=") return comparison <= 0;
-  if (operator === "<") return comparison < 0;
+  if (match === null) {
+    return false;
+  }
+  const operator = match[1] ?? '=';
+  const comparison = compareVersion(parseVersion(version), parseVersion(match[2] ?? ''));
+  if (operator === '>=') {
+    return comparison >= 0;
+  }
+  if (operator === '>') {
+    return comparison > 0;
+  }
+  if (operator === '<=') {
+    return comparison <= 0;
+  }
+  if (operator === '<') {
+    return comparison < 0;
+  }
   return comparison === 0;
 }
 
 function parseVersion(value: string): { major: number; minor: number; patch: number } {
   const match = /^v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?/u.exec(value.trim());
-  if (match === null) return { major: 0, minor: 0, patch: 0 };
+  if (match === null) {
+    return { major: 0, minor: 0, patch: 0 };
+  }
   return {
-    major: Number.parseInt(match[1] ?? "0", 10),
-    minor: Number.parseInt(match[2] ?? "0", 10),
-    patch: Number.parseInt(match[3] ?? "0", 10),
+    major: Number.parseInt(match[1] ?? '0', 10),
+    minor: Number.parseInt(match[2] ?? '0', 10),
+    patch: Number.parseInt(match[3] ?? '0', 10),
   };
 }
 
@@ -194,23 +212,23 @@ function checkBinding(projectRoot: string): DoctorCheck {
   } catch (error) {
     return {
       detail: `invalid ${bindingPathFor(projectRoot)}: ${error instanceof Error ? error.message : String(error)}`,
-      label: "binding",
-      status: "fail",
+      label: 'binding',
+      status: 'fail',
     };
   }
 
   if (binding === undefined) {
     return {
       detail: `missing ${bindingPathFor(projectRoot)}`,
-      label: "binding",
-      status: "warn",
+      label: 'binding',
+      status: 'warn',
     };
   }
 
   return {
     detail: `${binding.workspace.handle} (${binding.workspace.id})`,
-    label: "binding",
-    status: "ok",
+    label: 'binding',
+    status: 'ok',
   };
 }
 
@@ -220,14 +238,14 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
     if (config.databaseUrl === undefined) {
       return [
         {
-          detail: "DATABASE_URL is not set",
-          label: "postgres",
-          status: "warn",
+          detail: 'DATABASE_URL is not set',
+          label: 'postgres',
+          status: 'warn',
         },
         {
-          detail: "skipped because Postgres is not configured",
-          label: "migrations",
-          status: "warn",
+          detail: 'skipped because Postgres is not configured',
+          label: 'migrations',
+          status: 'warn',
         },
       ];
     }
@@ -238,9 +256,9 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
       const migrationCheck = await checkMigrations(service);
       return [
         {
-          detail: "connected",
-          label: "postgres",
-          status: "ok",
+          detail: 'connected',
+          label: 'postgres',
+          status: 'ok',
         },
         migrationCheck,
       ];
@@ -251,13 +269,13 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
     return [
       {
         detail: error instanceof Error ? error.message : String(error),
-        label: "postgres",
-        status: "fail",
+        label: 'postgres',
+        status: 'fail',
       },
       {
-        detail: "skipped because Postgres check failed",
-        label: "migrations",
-        status: "warn",
+        detail: 'skipped because Postgres check failed',
+        label: 'migrations',
+        status: 'warn',
       },
     ];
   }
@@ -268,28 +286,28 @@ async function checkMigrations(service: DatabaseService): Promise<DoctorCheck> {
     const migrationStatus = await Effect.runPromise(assertMigrationsCurrent(service));
     return {
       detail: `${String(migrationStatus.applied)} applied`,
-      label: "migrations",
-      status: "ok",
+      label: 'migrations',
+      status: 'ok',
     };
   } catch (error) {
     return {
       detail: error instanceof Error ? error.message : String(error),
-      label: "migrations",
-      status: "fail",
+      label: 'migrations',
+      status: 'fail',
     };
   }
 }
 
 async function inspectService(): Promise<{
   health: string;
-  process: "running" | "not running";
+  process: 'running' | 'not running';
 }> {
   try {
     return await inspectServiceStatus();
   } catch (error) {
     return {
       health: error instanceof Error ? error.message : String(error),
-      process: "not running",
+      process: 'not running',
     };
   }
 }
@@ -301,21 +319,19 @@ function checkEmbeddings(
   const workflow = inspectEmbeddingWorkflow(authOptions, policyOptions);
   return {
     detail: renderEmbeddingWorkflow(workflow),
-    label: "embeddings",
-    status: workflow.mode === "vector-aware" ? "ok" : "warn",
+    label: 'embeddings',
+    status: workflow.mode === 'vector-aware' ? 'ok' : 'warn',
   };
 }
 
 function renderEmbeddingWorkflow(workflow: EmbeddingWorkflowBoundary): string {
   const provider = `${workflow.provider.id}/${workflow.provider.model} (${String(workflow.provider.dimensions)} dimensions)`;
-  switch (workflow.mode) {
-    case "vector-aware":
-      return `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`;
-    case "lexical-only-by-policy":
-      return `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`;
-    case "lexical-fallback":
-      return `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`;
-  }
+  const detail: Record<EmbeddingWorkflowBoundary['mode'], string> = {
+    'vector-aware': `${provider} vector-aware; ${workflow.availability.credential.detail}; lexical fallback: ${workflow.lexicalFallback.state}`,
+    'lexical-only-by-policy': `${provider} lexical-only by policy; ${workflow.policy.detail}; ${workflow.availability.guidance}`,
+    'lexical-fallback': `${provider} lexical fallback; ${workflow.availability.credential.detail}; ${workflow.availability.guidance}`,
+  };
+  return detail[workflow.mode];
 }
 
 async function checkHarnesses(
@@ -342,8 +358,8 @@ async function checkHarnesses(
         detail: `skipped because harness state could not be read: ${
           error instanceof Error ? error.message : String(error)
         }`,
-        label: "harness",
-        status: "fail",
+        label: 'harness',
+        status: 'fail',
       },
     ];
   }
@@ -351,23 +367,33 @@ async function checkHarnesses(
 
 export function serviceDoctorStatus(service: {
   health: string;
-  process: "running" | "not running";
+  process: 'running' | 'not running';
 }): DoctorStatus {
-  return service.process === "running" && service.health.startsWith("ok ") ? "ok" : "warn";
+  return service.process === 'running' && service.health.startsWith('ok ') ? 'ok' : 'warn';
 }
 
 function harnessDoctorStatus(
   state: HarnessIntegrationState,
   _activation: HarnessActivationState,
 ): DoctorStatus {
-  if (state === "configured") return "ok";
-  if (state === "divergent" || state === "invalid" || state === "stale") return "fail";
-  return "warn";
+  if (state === 'configured') {
+    return 'ok';
+  }
+  if (state === 'divergent' || state === 'invalid' || state === 'stale') {
+    return 'fail';
+  }
+  return 'warn';
 }
 
 function statusToken(status: DoctorStatus, options: RenderOptions): string {
-  if (options.ascii) return `[${status}]`;
-  if (status === "ok") return "✓";
-  if (status === "warn") return "⚠";
-  return "✗";
+  if (options.ascii) {
+    return `[${status}]`;
+  }
+  if (status === 'ok') {
+    return '✓';
+  }
+  if (status === 'warn') {
+    return '⚠';
+  }
+  return '✗';
 }

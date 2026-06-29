@@ -1,12 +1,13 @@
-import { Data, Effect } from "effect";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { safeContentPartsForSkippedSegments } from "./session-content-redaction.js";
+import { Data, Effect } from 'effect';
+
+import type { DatabaseError, DatabaseService } from './database.js';
+import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
-  redactAgentFacingSessionValue,
+  redactAgentFacingSessionArray,
   redactAgentFacingSessionText,
-} from "./session-output-redaction.js";
+} from './session-output-redaction.js';
 
 const DEFAULT_RECENT_LIMIT = 20;
 const MAX_RECENT_LIMIT = 100;
@@ -17,19 +18,19 @@ const MAX_RAW_RECORDS = 50;
 const MAX_TURNS = 500;
 const MAX_SEGMENTS_PER_TURN = 25;
 const RAW_BODY_EXPOSURE_WARNING =
-  "Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.";
+  'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.';
 
 type JsonRecord = Record<string, unknown>;
 type TimestampValue = Date | string | null;
 
-export interface ListRecentSessionRecordsInput {
+export type ListRecentSessionRecordsInput = {
   activeOnly?: boolean | undefined;
   harness?: string | undefined;
   limit?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface RecentSessionRecord {
+export type RecentSessionRecord = {
   activityInterval: SessionActivityIntervalMetadata | null;
   authorUser: SessionHostUserMetadata;
   counts: {
@@ -41,18 +42,18 @@ export interface RecentSessionRecord {
   rawSessionRecord: SessionRawSessionRecordMetadata;
   session: SessionMetadata;
   sourceBinding: SessionSourceBindingMetadata;
-}
+};
 
-export interface GetSessionDetailInput {
+export type GetSessionDetailInput = {
   id: string;
   includeRawBody?: boolean | undefined;
   maxRawRecords?: number | undefined;
   maxSegmentsPerTurn?: number | undefined;
   maxTurns?: number | undefined;
   workspaceId: string;
-}
+};
 
-export interface SessionDetail {
+export type SessionDetail = {
   activeRawSessionRecord: SessionRawSessionRecordMetadata | null;
   activityIntervals: SessionDetailActivityInterval[];
   authorUser: SessionHostUserMetadata;
@@ -71,14 +72,14 @@ export interface SessionDetail {
     segments: boolean;
     turns: boolean;
   };
-}
+};
 
-export interface SessionDetailActivityInterval {
+export type SessionDetailActivityInterval = {
   activityInterval: SessionActivityIntervalMetadata;
   turns: SessionDetailTurn[];
-}
+};
 
-export interface SessionDetailTurn {
+export type SessionDetailTurn = {
   contentParts: unknown[];
   endedAt: Date | null;
   metadata: JsonRecord;
@@ -87,14 +88,14 @@ export interface SessionDetailTurn {
   segments: SessionDetailSegment[];
   startedAt: Date | null;
   turn: SessionTurnMetadata;
-}
+};
 
-export interface SessionDetailSegment extends SessionSegmentMetadata {
+export type SessionDetailSegment = {
   metadata: JsonRecord;
   searchText: string;
-}
+} & SessionSegmentMetadata;
 
-export interface SessionMetadata {
+export type SessionMetadata = {
   endedAt: Date | null;
   harness: string;
   harnessSessionId: string | null;
@@ -109,27 +110,27 @@ export interface SessionMetadata {
   status: string;
   title: string | null;
   workspaceId: string;
-}
+};
 
-export interface SessionHostUserMetadata {
+export type SessionHostUserMetadata = {
   displayName: string | null;
   externalSubject: string | null;
   handle: string;
   id: string;
   identitySource: string;
   metadata: JsonRecord;
-}
+};
 
-export interface SessionSourceBindingMetadata {
+export type SessionSourceBindingMetadata = {
   config: JsonRecord;
   displayName: string | null;
   enabled: boolean;
   id: string;
   sourceType: string;
   sourceUri: string;
-}
+};
 
-export interface SessionActivityIntervalMetadata {
+export type SessionActivityIntervalMetadata = {
   endedAt: Date | null;
   id: string;
   metadata: JsonRecord;
@@ -139,9 +140,9 @@ export interface SessionActivityIntervalMetadata {
   settlementReason: string | null;
   startedAt: Date;
   status: string;
-}
+};
 
-export interface SessionRawSessionRecordMetadata {
+export type SessionRawSessionRecordMetadata = {
   bodyJson?: unknown;
   bodyText?: string | null;
   capturedAt: Date;
@@ -159,15 +160,15 @@ export interface SessionRawSessionRecordMetadata {
   sourceLocator: string | null;
   status: string;
   rawBodyExposure?: SessionRawBodyExposureMetadata;
-}
+};
 
-export interface SessionRawBodyExposureMetadata {
-  mode: "raw_forensic";
-  requestedBy: "includeRawBody";
+export type SessionRawBodyExposureMetadata = {
+  mode: 'raw_forensic';
+  requestedBy: 'includeRawBody';
   warning: string;
-}
+};
 
-export interface SessionTurnMetadata {
+export type SessionTurnMetadata = {
   actorKind: string;
   actorLabel: string | null;
   harnessTurnId: string | null;
@@ -175,9 +176,9 @@ export interface SessionTurnMetadata {
   model: string | null;
   ordinal: number;
   role: string;
-}
+};
 
-export interface SessionSegmentMetadata {
+export type SessionSegmentMetadata = {
   charEnd: number | null;
   charStart: number | null;
   id: string;
@@ -186,13 +187,13 @@ export interface SessionSegmentMetadata {
   snippet: string | null;
   tokenEnd: number | null;
   tokenStart: number | null;
-}
+};
 
-export class SessionRecordQueryError extends Data.TaggedError("SessionRecordQueryError")<{
+export class SessionRecordQueryError extends Data.TaggedError('SessionRecordQueryError')<{
   readonly message: string;
 }> {}
 
-interface RecentSessionRecordRow extends CommonSessionRow {
+type RecentSessionRecordRow = {
   activity_interval_ended_at: TimestampValue;
   activity_interval_id: string | null;
   activity_interval_metadata: JsonRecord | null;
@@ -206,9 +207,9 @@ interface RecentSessionRecordRow extends CommonSessionRow {
   raw_records_count: number | string;
   segments_count: number | string;
   turns_count: number | string;
-}
+} & CommonSessionRow;
 
-interface CommonSessionRow {
+type CommonSessionRow = {
   author_display_name: string | null;
   author_external_subject: string | null;
   author_handle: string;
@@ -251,16 +252,16 @@ interface CommonSessionRow {
   source_binding_id: string;
   source_binding_source_type: string;
   source_binding_source_uri: string;
-}
+};
 
-interface SessionIdentityRow {
+type SessionIdentityRow = {
   selected_raw_record_id: string | null;
   session_id: string;
-}
+};
 
-interface SessionMetadataRow extends CommonSessionRow {}
+type SessionMetadataRow = {} & CommonSessionRow;
 
-interface ActivityIntervalRow {
+type ActivityIntervalRow = {
   activity_interval_ended_at: TimestampValue;
   activity_interval_id: string;
   activity_interval_metadata: JsonRecord;
@@ -270,9 +271,9 @@ interface ActivityIntervalRow {
   activity_interval_settlement_reason: string | null;
   activity_interval_started_at: Date | string;
   activity_interval_status: string;
-}
+};
 
-interface TurnRow extends ActivityIntervalRow {
+type TurnRow = {
   turn_actor_kind: string;
   turn_actor_label: string | null;
   turn_content_parts: unknown[];
@@ -287,9 +288,9 @@ interface TurnRow extends ActivityIntervalRow {
   turn_raw_span: JsonRecord;
   turn_role: string;
   turn_started_at: TimestampValue;
-}
+} & ActivityIntervalRow;
 
-interface SegmentRow {
+type SegmentRow = {
   segment_char_end: number | null;
   segment_char_start: number | null;
   segment_id: string;
@@ -302,7 +303,7 @@ interface SegmentRow {
   segment_token_start: number | null;
   segment_turn_id: string;
   segment_rank: number | string;
-}
+};
 
 export function listRecentSessionRecords(
   service: DatabaseService,
@@ -314,7 +315,7 @@ export function listRecentSessionRecords(
       const harness = cleanOptional(input.harness);
       const limit = normalizePositiveInt(input.limit, {
         defaultValue: DEFAULT_RECENT_LIMIT,
-        label: "limit",
+        label: 'limit',
         max: MAX_RECENT_LIMIT,
       });
       const activeOnly = input.activeOnly === true;
@@ -432,23 +433,23 @@ export function getSessionDetail(
       const id = cleanOptional(input.id);
       if (id === undefined) {
         throw new SessionRecordQueryError({
-          message: "session or raw session record id is required",
+          message: 'session or raw session record id is required',
         });
       }
 
       const maxRawRecords = normalizePositiveInt(input.maxRawRecords, {
         defaultValue: DEFAULT_MAX_RAW_RECORDS,
-        label: "raw-records",
+        label: 'raw-records',
         max: MAX_RAW_RECORDS,
       });
       const maxTurns = normalizePositiveInt(input.maxTurns, {
         defaultValue: DEFAULT_MAX_TURNS,
-        label: "turns",
+        label: 'turns',
         max: MAX_TURNS,
       });
       const maxSegmentsPerTurn = normalizePositiveInt(input.maxSegmentsPerTurn, {
         defaultValue: DEFAULT_MAX_SEGMENTS_PER_TURN,
-        label: "segments",
+        label: 'segments',
         max: MAX_SEGMENTS_PER_TURN,
       });
       const includeRawBody = input.includeRawBody === true;
@@ -848,7 +849,13 @@ export function getSessionDetail(
 function mapRecentSessionRecordRow(row: RecentSessionRecordRow): RecentSessionRecord {
   return {
     activityInterval:
-      row.activity_interval_id === null ? null : mapActivityInterval(row as ActivityIntervalRow),
+      row.activity_interval_id === null
+        ? null
+        : // SQL invariant: the LEFT JOIN populates every activity_interval_*
+          // column together, so a non-null id guarantees the rest are present.
+          // TS only narrows the checked field, not its siblings.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- join guarantees all activity_interval_* columns are non-null here
+          mapActivityInterval(row as ActivityIntervalRow),
     authorUser: mapAuthor(row),
     counts: {
       activityIntervals: Number(row.activity_intervals_count),
@@ -887,18 +894,18 @@ function groupActivityIntervals(
     const existing = turnsByInterval.get(row.activity_interval_id) ?? [];
     const segments = segmentsByTurn.get(row.turn_id) ?? [];
     existing.push({
-      contentParts: redactAgentFacingSessionValue(
+      contentParts: redactAgentFacingSessionArray(
         safeContentPartsForSkippedSegments(
           row.turn_content_parts,
           skippedSegmentsByTurn.get(row.turn_id) ?? segments,
         ),
-      ) as unknown[],
-      endedAt: normalizeNullableTimestamp(row.turn_ended_at, "turn.endedAt"),
+      ),
+      endedAt: normalizeNullableTimestamp(row.turn_ended_at, 'turn.endedAt'),
       metadata: redactAgentFacingJsonRecord(row.turn_metadata),
       rawEventIds: row.turn_raw_event_ids,
       rawSpan: redactAgentFacingJsonRecord(row.turn_raw_span),
       segments,
-      startedAt: normalizeNullableTimestamp(row.turn_started_at, "turn.startedAt"),
+      startedAt: normalizeNullableTimestamp(row.turn_started_at, 'turn.startedAt'),
       turn: mapTurn(row),
     });
     turnsByInterval.set(row.activity_interval_id, existing);
@@ -912,20 +919,20 @@ function groupActivityIntervals(
 
 function mapSession(row: CommonSessionRow): SessionMetadata {
   return {
-    endedAt: normalizeNullableTimestamp(row.session_ended_at, "session.endedAt"),
+    endedAt: normalizeNullableTimestamp(row.session_ended_at, 'session.endedAt'),
     harness: row.session_harness,
     harnessSessionId: row.session_harness_session_id,
     id: row.session_id,
     lastActivityAt: normalizeNullableTimestamp(
       row.session_last_activity_at,
-      "session.lastActivityAt",
+      'session.lastActivityAt',
     ),
     metadata: redactAgentFacingJsonRecord(row.session_metadata),
     model: row.session_model,
     provenance: redactAgentFacingJsonRecord(row.session_provenance),
     sourceBindingId: row.session_source_binding_id,
     sourceLocator: redactAgentFacingSourceLocator(row.session_source_locator),
-    startedAt: normalizeNullableTimestamp(row.session_started_at, "session.startedAt"),
+    startedAt: normalizeNullableTimestamp(row.session_started_at, 'session.startedAt'),
     status: row.session_status,
     title: row.session_title,
     workspaceId: row.session_workspace_id,
@@ -956,19 +963,19 @@ function mapSourceBinding(row: CommonSessionRow): SessionSourceBindingMetadata {
 
 function mapActivityInterval(row: ActivityIntervalRow): SessionActivityIntervalMetadata {
   return {
-    endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, "activityInterval.endedAt"),
+    endedAt: normalizeNullableTimestamp(row.activity_interval_ended_at, 'activityInterval.endedAt'),
     id: row.activity_interval_id,
     metadata: redactAgentFacingJsonRecord(row.activity_interval_metadata),
     ordinal: row.activity_interval_ordinal,
     sessionId: row.activity_interval_session_id,
     settledAt: normalizeNullableTimestamp(
       row.activity_interval_settled_at,
-      "activityInterval.settledAt",
+      'activityInterval.settledAt',
     ),
     settlementReason: row.activity_interval_settlement_reason,
     startedAt: normalizeRequiredTimestamp(
       row.activity_interval_started_at,
-      "activityInterval.startedAt",
+      'activityInterval.startedAt',
     ),
     status: row.activity_interval_status,
   };
@@ -981,17 +988,17 @@ function mapRawSessionRecord(
   const includeRawBody =
     options.includeRawBody === true &&
     row.raw_record_is_active &&
-    (Object.hasOwn(row, "raw_record_body_json") || Object.hasOwn(row, "raw_record_body_text"));
+    (Object.hasOwn(row, 'raw_record_body_json') || Object.hasOwn(row, 'raw_record_body_text'));
   return {
-    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_json")
+    ...(includeRawBody && Object.hasOwn(row, 'raw_record_body_json')
       ? { bodyJson: row.raw_record_body_json }
       : {}),
-    ...(includeRawBody && Object.hasOwn(row, "raw_record_body_text")
+    ...(includeRawBody && Object.hasOwn(row, 'raw_record_body_text')
       ? { bodyText: row.raw_record_body_text }
       : {}),
     capturedAt: normalizeRequiredTimestamp(
       row.raw_record_captured_at,
-      "rawSessionRecord.capturedAt",
+      'rawSessionRecord.capturedAt',
     ),
     contentBytes: row.raw_record_content_bytes,
     contentHash: row.raw_record_content_hash,
@@ -1009,8 +1016,8 @@ function mapRawSessionRecord(
     ...(includeRawBody
       ? {
           rawBodyExposure: {
-            mode: "raw_forensic",
-            requestedBy: "includeRawBody",
+            mode: 'raw_forensic',
+            requestedBy: 'includeRawBody',
             warning: RAW_BODY_EXPOSURE_WARNING,
           },
         }
@@ -1019,12 +1026,18 @@ function mapRawSessionRecord(
 }
 
 function normalizeNullableTimestamp(value: TimestampValue, label: string): Date | null {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
   if (value instanceof Date) {
-    if (!Number.isNaN(value.getTime())) return value;
-  } else if (typeof value === "string") {
+    if (!Number.isNaN(value.getTime())) {
+      return value;
+    }
+  } else if (typeof value === 'string') {
     const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
   }
   throw new SessionRecordQueryError({ message: `${label} must be a valid timestamp` });
 }
@@ -1067,8 +1080,8 @@ function mapSegment(row: SegmentRow): SessionDetailSegment {
 
 function normalizeWorkspaceId(value: string): string {
   const workspaceId = value.trim();
-  if (workspaceId === "") {
-    throw new SessionRecordQueryError({ message: "workspaceId is required" });
+  if (workspaceId === '') {
+    throw new SessionRecordQueryError({ message: 'workspaceId is required' });
   }
   return workspaceId;
 }
@@ -1077,7 +1090,9 @@ function normalizePositiveInt(
   value: number | undefined,
   input: { defaultValue: number; label: string; max: number },
 ): number {
-  if (value === undefined) return input.defaultValue;
+  if (value === undefined) {
+    return input.defaultValue;
+  }
   if (!Number.isInteger(value) || value < 1) {
     throw new SessionRecordQueryError({ message: `${input.label} must be a positive integer` });
   }
@@ -1086,7 +1101,7 @@ function normalizePositiveInt(
 
 function cleanOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
 function errorMessage(cause: unknown): string {

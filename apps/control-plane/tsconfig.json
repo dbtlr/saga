@@ -1,8 +1,6 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "@dbtlr/tooling/tsconfig/react.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
-    "lib": ["ESNext", "DOM"],
     "rootDir": ".",
     "types": ["node", "vite/client"],
     "verbatimModuleSyntax": false

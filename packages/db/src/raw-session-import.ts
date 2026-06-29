@@ -1,16 +1,17 @@
-import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
-import { Data, Effect } from "effect";
-import {
-  extractCodexTranscriptImportHints,
-  normalizeCodexTranscript,
-} from "./codex-transcript-normalizer.js";
+import { createHash } from 'node:crypto';
+
+import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { Data, Effect } from 'effect';
+
 import {
   extractClaudeTranscriptImportHints,
   normalizeClaudeTranscript,
-} from "./claude-transcript-normalizer.js";
-import type { DatabaseError, DatabaseService } from "./database.js";
-import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from "./session-segments.js";
+} from './claude-transcript-normalizer.js';
+import {
+  extractCodexTranscriptImportHints,
+  normalizeCodexTranscript,
+} from './codex-transcript-normalizer.js';
+import type { DatabaseError, DatabaseService } from './database.js';
 import {
   activityIntervals,
   rawSessionRecords,
@@ -22,28 +23,25 @@ import {
   sourceBindings,
   users,
   workspaces,
-  type ActivityInterval,
-  type RawSessionRecord,
-  type Session,
-  type SourceBinding,
-  type User,
-} from "./schema.js";
+} from './schema.js';
+import type { ActivityInterval, RawSessionRecord, Session, SourceBinding, User } from './schema.js';
+import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from './session-segments.js';
 import type {
   NormalizedTranscriptTurn,
   TranscriptImportHints,
   TranscriptNormalization,
-} from "./transcript-normalizer.js";
+} from './transcript-normalizer.js';
 
-export type RawSessionHarness = "claude" | "codex";
-export type RawSessionContentType = "json" | "jsonl" | "text";
-export type RawSessionImportStatus = "inserted" | "unchanged";
+export type RawSessionHarness = 'claude' | 'codex';
+export type RawSessionContentType = 'json' | 'jsonl' | 'text';
+export type RawSessionImportStatus = 'inserted' | 'unchanged';
 type JsonBody = boolean | null | number | string | JsonBody[] | { [key: string]: JsonBody };
-const SESSION_RELATIONSHIP_IMPORT_DERIVATION = "session-relationship-import-v1";
-type ActivityIntervalSettlementReason = "clear_context" | "idle_timeout" | "manual" | "stop_event";
+const SESSION_RELATIONSHIP_IMPORT_DERIVATION = 'session-relationship-import-v1';
+type ActivityIntervalSettlementReason = 'clear_context' | 'idle_timeout' | 'manual' | 'stop_event';
 
 const ACTIVITY_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-export interface RawSessionImportInput {
+export type RawSessionImportInput = {
   activity?: RawSessionImportActivityInput | undefined;
   author: {
     displayName?: string | undefined;
@@ -80,18 +78,18 @@ export interface RawSessionImportInput {
     | undefined;
   rawContent: string;
   sourceBindingId?: string | undefined;
-  status?: "active" | "completed" | undefined;
+  status?: 'active' | 'completed' | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface RawSessionImportActivityInput {
+export type RawSessionImportActivityInput = {
   hookEventName?: string | undefined;
   sessionStartSource?: string | undefined;
   settlementTriggerRawEventId?: string | undefined;
-}
+};
 
-export interface RawSessionImportResult {
+export type RawSessionImportResult = {
   activityInterval: ActivityInterval;
   authorUser: User;
   contentHash: string;
@@ -99,19 +97,19 @@ export interface RawSessionImportResult {
   rawSessionRecord: RawSessionRecord;
   session: Session;
   sourceBinding: SourceBinding;
-}
+};
 
 // operation: "opened" = new interval opened (incl. fresh SessionStart shell);
 //            "settled" = active interval settled (Stop); "settled_opened" = settle old + open new (clear/compact/idle);
 //            "updated" = session touched, no interval boundary; "unchanged" = idempotent no-op for this rawEventId.
 export type LifecycleBoundaryOperation =
-  | "opened"
-  | "settled"
-  | "settled_opened"
-  | "updated"
-  | "unchanged";
+  | 'opened'
+  | 'settled'
+  | 'settled_opened'
+  | 'updated'
+  | 'unchanged';
 
-export interface LifecycleBoundaryInput {
+export type LifecycleBoundaryInput = {
   activity: {
     hookEventName?: string | undefined;
     sessionStartSource?: string | undefined;
@@ -132,21 +130,21 @@ export interface LifecycleBoundaryInput {
   model?: string | undefined;
   provenance?: Record<string, unknown> | undefined;
   sourceBindingId?: string | undefined;
-  status?: "active" | "completed" | undefined;
+  status?: 'active' | 'completed' | undefined;
   title?: string | undefined;
   workspaceId: string;
-}
+};
 
-export interface LifecycleBoundaryResult {
+export type LifecycleBoundaryResult = {
   activityInterval: ActivityInterval;
   authorUser: User;
   operation: LifecycleBoundaryOperation;
   session: Session;
   sourceBinding: SourceBinding;
   // NOTE: deliberately NO rawSessionRecord field — ADR-0030.
-}
+};
 
-export class RawSessionImportError extends Data.TaggedError("RawSessionImportError")<{
+export class RawSessionImportError extends Data.TaggedError('RawSessionImportError')<{
   readonly message: string;
 }> {}
 
@@ -164,7 +162,7 @@ export function importRawSessionRecord(
 }
 
 export function importRawSessionRecordInTransaction(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: RawSessionImportInput,
 ): Effect.Effect<RawSessionImportResult, DatabaseError | RawSessionImportError> {
   return Effect.tryPromise({
@@ -184,7 +182,7 @@ export function importLifecycleBoundaryEvent(
     try: () =>
       service.db.transaction((tx) =>
         importLifecycleBoundaryEventInTransactionUnsafe(
-          tx as DatabaseService["db"],
+          tx as DatabaseService['db'],
           normalizeLifecycleInput(input),
         ),
       ),
@@ -204,10 +202,12 @@ async function importRawSessionRecordWithConflictRetry(
     try {
       return await importRawSessionRecordUnsafe(service, input);
     } catch (cause) {
-      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) throw cause;
+      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) {
+        throw cause;
+      }
     }
   }
-  throw new RawSessionImportError({ message: "raw session import retry exhausted" });
+  throw new RawSessionImportError({ message: 'raw session import retry exhausted' });
 }
 
 async function importRawSessionRecordUnsafe(
@@ -215,12 +215,12 @@ async function importRawSessionRecordUnsafe(
   input: NormalizedRawSessionImportInput,
 ): Promise<RawSessionImportResult> {
   return service.db.transaction((tx) =>
-    importRawSessionRecordInTransactionUnsafe(tx as DatabaseService["db"], input),
+    importRawSessionRecordInTransactionUnsafe(tx as DatabaseService['db'], input),
   );
 }
 
 async function importRawSessionRecordInTransactionUnsafe(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: NormalizedRawSessionImportInput,
 ): Promise<RawSessionImportResult> {
   const [workspace] = await tx
@@ -231,7 +231,7 @@ async function importRawSessionRecordInTransactionUnsafe(
 
   if (workspace === undefined) {
     throw new RawSessionImportError({
-      message: "workspace binding is required before importing raw sessions",
+      message: 'workspace binding is required before importing raw sessions',
     });
   }
 
@@ -295,7 +295,7 @@ async function importRawSessionRecordInTransactionUnsafe(
       activityInterval: existing.activityInterval,
       authorUser,
       contentHash: input.contentHash,
-      operation: "unchanged",
+      operation: 'unchanged',
       rawSessionRecord: existing.rawSessionRecord,
       session: relationshipSession,
       sourceBinding,
@@ -370,7 +370,7 @@ async function importRawSessionRecordInTransactionUnsafe(
             activityInterval: existing.activityInterval,
             authorUser,
             contentHash: input.contentHash,
-            operation: "unchanged",
+            operation: 'unchanged',
             rawSessionRecord: existing.rawSessionRecord,
             session: relationshipSession,
             sourceBinding,
@@ -378,7 +378,7 @@ async function importRawSessionRecordInTransactionUnsafe(
         }
       }
       throw new RawSessionImportError({
-        message: "active raw session record changed during import",
+        message: 'active raw session record changed during import',
       });
     }
   }
@@ -411,7 +411,7 @@ async function importRawSessionRecordInTransactionUnsafe(
       snapshotOrdinal: nextSnapshotOrdinal,
       sourceBindingId: sourceBinding.id,
       sourceLocator: input.locator,
-      status: input.rawRecord?.status ?? "captured",
+      status: input.rawRecord?.status ?? 'captured',
       workspaceId: input.workspaceId,
     })
     .onConflictDoNothing({
@@ -424,7 +424,7 @@ async function importRawSessionRecordInTransactionUnsafe(
       sessionId: session.id,
     });
     if (racedRecord === undefined) {
-      throw new RawSessionImportError({ message: "raw session record insert returned no row" });
+      throw new RawSessionImportError({ message: 'raw session record insert returned no row' });
     }
     const existing = await reuseExistingRawSessionRecord(tx, {
       existingRecord: racedRecord,
@@ -441,7 +441,7 @@ async function importRawSessionRecordInTransactionUnsafe(
       activityInterval: existing.activityInterval,
       authorUser,
       contentHash: input.contentHash,
-      operation: "unchanged",
+      operation: 'unchanged',
       rawSessionRecord: existing.rawSessionRecord,
       session: relationshipSession,
       sourceBinding,
@@ -475,7 +475,7 @@ async function importRawSessionRecordInTransactionUnsafe(
     activityInterval: updated.activityInterval,
     authorUser,
     contentHash: input.contentHash,
-    operation: "inserted",
+    operation: 'inserted',
     rawSessionRecord: insertedRawSessionRecord,
     session: updated.session,
     sourceBinding,
@@ -483,7 +483,7 @@ async function importRawSessionRecordInTransactionUnsafe(
 }
 
 async function findCurrentNoopRawSessionImport(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     now: Date;
@@ -491,13 +491,17 @@ async function findCurrentNoopRawSessionImport(
   },
 ): Promise<RawSessionImportResult | undefined> {
   const sourceBinding = await findCurrentRawSessionSourceBinding(tx, input.input);
-  if (sourceBinding === undefined) return undefined;
+  if (sourceBinding === undefined) {
+    return undefined;
+  }
 
   const session = await findSessionWithoutAdoption(tx, {
     input: input.input,
     sourceBindingId: sourceBinding.id,
   });
-  if (session === undefined) return undefined;
+  if (session === undefined) {
+    return undefined;
+  }
 
   const [activeRecord] = await tx
     .select()
@@ -539,7 +543,9 @@ async function findCurrentNoopRawSessionImport(
       workspaceId: input.input.workspaceId,
     })) ?? activityInterval;
   const authorUser = await findCurrentHostUser(tx, input.input);
-  if (authorUser === undefined || session.authorUserId !== authorUser.id) return undefined;
+  if (authorUser === undefined || session.authorUserId !== authorUser.id) {
+    return undefined;
+  }
 
   if (
     session.sourceBindingId !== sourceBinding.id ||
@@ -610,7 +616,7 @@ async function findCurrentNoopRawSessionImport(
     activityInterval: activeInterval,
     authorUser,
     contentHash: input.input.contentHash,
-    operation: "unchanged",
+    operation: 'unchanged',
     rawSessionRecord: existingRecord,
     session,
     sourceBinding,
@@ -618,7 +624,7 @@ async function findCurrentNoopRawSessionImport(
 }
 
 async function reuseExistingRawSessionRecord(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     existingRecord: RawSessionRecord;
     input: NormalizedRawSessionImportInput;
@@ -744,7 +750,7 @@ async function reuseExistingRawSessionRecord(
 }
 
 async function deriveSessionRelationships(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     session: Session;
@@ -755,7 +761,9 @@ async function deriveSessionRelationships(
     input: input.input,
   });
 
-  if (input.session.harnessSessionId === null) return input.session;
+  if (input.session.harnessSessionId === null) {
+    return input.session;
+  }
 
   const peerSessions = await tx
     .select()
@@ -768,7 +776,9 @@ async function deriveSessionRelationships(
       ),
     );
   for (const peerSession of peerSessions) {
-    if (peerSession.id === input.session.id) continue;
+    if (peerSession.id === input.session.id) {
+      continue;
+    }
     const parentCandidates = relationshipParentCandidates(peerSession);
     if (
       !parentCandidates.some(
@@ -794,7 +804,7 @@ async function deriveSessionRelationships(
 }
 
 async function deriveChildRelationshipsForSession(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     childSession: Session;
     input: NormalizedRawSessionImportInput;
@@ -812,7 +822,9 @@ async function deriveChildRelationshipsForSession(
       input: input.input,
       parentHarnessSessionId: candidate.parentHarnessSessionId,
     });
-    if (parentSession === undefined) continue;
+    if (parentSession === undefined) {
+      continue;
+    }
     desiredRelationships.push({
       parentSession,
       relationshipEvidence: relationshipEvidenceForCandidate(candidate, input.childSession),
@@ -838,7 +850,7 @@ async function deriveChildRelationshipsForSession(
 }
 
 async function findParentSessionForRelationship(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     childSession: Session;
     input: NormalizedRawSessionImportInput;
@@ -857,12 +869,14 @@ async function findParentSessionForRelationship(
       ),
     )
     .limit(1);
-  if (parentSession === undefined || parentSession.id === input.childSession.id) return undefined;
+  if (parentSession === undefined || parentSession.id === input.childSession.id) {
+    return undefined;
+  }
   return parentSession;
 }
 
 async function insertOrRefreshChildRelationship(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     childSession: Session;
     input: NormalizedRawSessionImportInput;
@@ -883,7 +897,7 @@ async function insertOrRefreshChildRelationship(
         eq(sessionRelationships.workspaceId, input.input.workspaceId),
         eq(sessionRelationships.sourceSessionId, input.parentSession.id),
         eq(sessionRelationships.targetSessionId, input.childSession.id),
-        eq(sessionRelationships.relationshipType, "child"),
+        eq(sessionRelationships.relationshipType, 'child'),
       ),
     )
     .limit(1);
@@ -892,9 +906,9 @@ async function insertOrRefreshChildRelationship(
     await tx
       .insert(sessionRelationships)
       .values({
-        confidence: "explicit",
+        confidence: 'explicit',
         evidence: input.relationshipEvidence,
-        relationshipType: "child",
+        relationshipType: 'child',
         sourceSessionId: input.parentSession.id,
         sourceTurnId,
         targetSessionId: input.childSession.id,
@@ -911,7 +925,9 @@ async function insertOrRefreshChildRelationship(
     return;
   }
 
-  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) return;
+  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) {
+    return;
+  }
 
   if (
     existingRelationship.sourceTurnId === sourceTurnId &&
@@ -931,7 +947,7 @@ async function insertOrRefreshChildRelationship(
 }
 
 async function deleteStaleChildRelationships(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     childSession: Session;
     desiredParentSessionIds: string[];
@@ -941,7 +957,7 @@ async function deleteStaleChildRelationships(
   const baseConditions = [
     eq(sessionRelationships.workspaceId, input.input.workspaceId),
     eq(sessionRelationships.targetSessionId, input.childSession.id),
-    eq(sessionRelationships.relationshipType, "child"),
+    eq(sessionRelationships.relationshipType, 'child'),
     sql`${sessionRelationships.evidence}->>'derivation' = ${SESSION_RELATIONSHIP_IMPORT_DERIVATION}`,
   ];
 
@@ -958,7 +974,7 @@ async function deleteStaleChildRelationships(
 }
 
 async function findRelationshipSourceTurnId(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     parentSession: Session;
     relationshipEvidence: Record<string, unknown>;
@@ -981,10 +997,14 @@ async function findRelationshipSourceTurnId(
         ),
       )
       .limit(1);
-    if (turn !== undefined) return turn.id;
+    if (turn !== undefined) {
+      return turn.id;
+    }
   }
 
-  if (parentTurnId === undefined) return undefined;
+  if (parentTurnId === undefined) {
+    return undefined;
+  }
   const [codexTurn] = await tx
     .select({ id: sessionTurns.id })
     .from(sessionTurns)
@@ -999,10 +1019,10 @@ async function findRelationshipSourceTurnId(
   return codexTurn?.id;
 }
 
-interface RelationshipParentCandidate {
+type RelationshipParentCandidate = {
   evidence: Record<string, unknown>;
   parentHarnessSessionId: string;
-}
+};
 
 function relationshipParentCandidates(session: Session): RelationshipParentCandidate[] {
   const metadata = asRecord(session.metadata);
@@ -1067,8 +1087,8 @@ function isImportedChildRelationshipEvidence(evidence: unknown): boolean {
 
 function isCodexSubagentEvidence(evidence: Record<string, unknown>): boolean {
   return (
-    readString(evidence.agent_role) === "subagent" ||
-    readString(evidence.thread_source) === "subagent" ||
+    readString(evidence.agent_role) === 'subagent' ||
+    readString(evidence.thread_source) === 'subagent' ||
     optionalRecord(evidence.source_subagent_thread_spawn) !== undefined
   );
 }
@@ -1078,14 +1098,16 @@ function dedupeRelationshipCandidates(
 ): RelationshipParentCandidate[] {
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
-    if (seen.has(candidate.parentHarnessSessionId)) return false;
+    if (seen.has(candidate.parentHarnessSessionId)) {
+      return false;
+    }
     seen.add(candidate.parentHarnessSessionId);
     return true;
   });
 }
 
 async function refreshSessionAndActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityInterval: ActivityInterval;
     activityIntervalStartedAt?: Date | undefined;
@@ -1103,7 +1125,7 @@ async function refreshSessionAndActivityInterval(
     .set({
       endedAt:
         input.transcriptNormalization?.session.endedAt ??
-        (input.settlement?.reason === "stop_event" ? input.settlement.endedAt : undefined),
+        (input.settlement?.reason === 'stop_event' ? input.settlement.endedAt : undefined),
       lastActivityAt:
         input.sessionLastActivityAt ??
         input.transcriptNormalization?.session.lastActivityAt ??
@@ -1122,7 +1144,7 @@ async function refreshSessionAndActivityInterval(
       status:
         input.transcriptNormalization?.session.status ??
         input.input.status ??
-        (input.settlement?.reason === "stop_event" ? "completed" : input.session.status),
+        (input.settlement?.reason === 'stop_event' ? 'completed' : input.session.status),
       title:
         input.transcriptNormalization?.session.title ?? input.input.title ?? input.session.title,
       updatedAt: input.now,
@@ -1130,7 +1152,7 @@ async function refreshSessionAndActivityInterval(
     .where(eq(sessions.id, input.session.id))
     .returning();
   if (updatedSession === undefined) {
-    throw new RawSessionImportError({ message: "session update returned no row" });
+    throw new RawSessionImportError({ message: 'session update returned no row' });
   }
 
   const [updatedActivityInterval] = await tx
@@ -1153,13 +1175,13 @@ async function refreshSessionAndActivityInterval(
         input.settlement === undefined
           ? (input.transcriptNormalization?.activityInterval.status ??
             input.activityInterval.status)
-          : "settled",
+          : 'settled',
       updatedAt: input.now,
     })
     .where(eq(activityIntervals.id, input.activityInterval.id))
     .returning();
   if (updatedActivityInterval === undefined) {
-    throw new RawSessionImportError({ message: "activity interval update returned no row" });
+    throw new RawSessionImportError({ message: 'activity interval update returned no row' });
   }
 
   return { activityInterval: updatedActivityInterval, session: updatedSession };
@@ -1175,7 +1197,7 @@ function sessionIsCurrentForRefresh(input: {
 }): boolean {
   const expectedEndedAt =
     input.transcriptNormalization?.session.endedAt ??
-    (input.settlement?.reason === "stop_event" ? input.settlement.endedAt : input.session.endedAt);
+    (input.settlement?.reason === 'stop_event' ? input.settlement.endedAt : input.session.endedAt);
   const expectedMetadata = {
     ...sessionMetadataBaseForRefresh({
       existingMetadata: input.session.metadata,
@@ -1203,7 +1225,7 @@ function sessionIsCurrentForRefresh(input: {
     input.session.status ===
       (input.transcriptNormalization?.session.status ??
         input.input.status ??
-        (input.settlement?.reason === "stop_event" ? "completed" : input.session.status)) &&
+        (input.settlement?.reason === 'stop_event' ? 'completed' : input.session.status)) &&
     input.session.title ===
       (input.transcriptNormalization?.session.title ?? input.input.title ?? input.session.title)
   );
@@ -1245,7 +1267,7 @@ function activityIntervalIsCurrentForRefresh(input: {
     input.activityInterval.status ===
       (input.settlement === undefined
         ? (input.transcriptNormalization?.activityInterval.status ?? input.activityInterval.status)
-        : "settled")
+        : 'settled')
   );
 }
 
@@ -1254,7 +1276,9 @@ function sessionMetadataBaseForRefresh(input: {
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): Record<string, unknown> {
   const metadata = asRecord(input.existingMetadata);
-  if (input.transcriptNormalization === undefined) return metadata;
+  if (input.transcriptNormalization === undefined) {
+    return metadata;
+  }
 
   const refreshedMetadata = { ...metadata };
   delete refreshedMetadata.parentHarnessSessionId;
@@ -1263,7 +1287,7 @@ function sessionMetadataBaseForRefresh(input: {
 }
 
 async function rawSessionRecordIsCurrent(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     existingRecord: RawSessionRecord;
@@ -1278,7 +1302,9 @@ async function rawSessionRecordIsCurrent(
       input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
     (input.transcriptNormalization === undefined ||
       jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata));
-  if (!rawRecordCurrent) return false;
+  if (!rawRecordCurrent) {
+    return false;
+  }
 
   if (input.transcriptNormalization !== undefined) {
     return transcriptDerivedRowsAreCurrent(tx, {
@@ -1298,7 +1324,7 @@ async function rawSessionRecordIsCurrent(
 }
 
 async function repairActiveRawSessionRecordDerivedRows(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     existingRecord: RawSessionRecord;
@@ -1320,7 +1346,9 @@ async function repairActiveRawSessionRecordDerivedRows(
       input.existingRecord.harnessSessionId === input.input.harnessSessionId) &&
     jsonEqual(rawRecordMetadata.normalization, input.transcriptNormalization.metadata);
 
-  if (derivedRowsCurrent && rawRecordCurrent) return input.existingRecord;
+  if (derivedRowsCurrent && rawRecordCurrent) {
+    return input.existingRecord;
+  }
 
   if (!derivedRowsCurrent) {
     await regenerateDerivedSessionRecords(tx, {
@@ -1347,13 +1375,13 @@ async function repairActiveRawSessionRecordDerivedRows(
     .where(eq(rawSessionRecords.id, input.existingRecord.id))
     .returning();
   if (rawSessionRecord === undefined) {
-    throw new RawSessionImportError({ message: "raw session record repair returned no row" });
+    throw new RawSessionImportError({ message: 'raw session record repair returned no row' });
   }
   return rawSessionRecord;
 }
 
 async function transcriptDerivedRowsAreCurrent(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     input: NormalizedRawSessionImportInput;
@@ -1372,11 +1400,15 @@ async function transcriptDerivedRowsAreCurrent(
       ),
     )
     .orderBy(sessionTurns.ordinal);
-  if (turnRows.length !== input.transcriptNormalization.turns.length) return false;
+  if (turnRows.length !== input.transcriptNormalization.turns.length) {
+    return false;
+  }
 
   const turnsAreCurrent = input.transcriptNormalization.turns.every((normalizedTurn, turnIndex) => {
     const turn = turnRows[turnIndex];
-    if (turn === undefined) return false;
+    if (turn === undefined) {
+      return false;
+    }
 
     return (
       turn.activityIntervalId === input.activityIntervalId &&
@@ -1398,7 +1430,9 @@ async function transcriptDerivedRowsAreCurrent(
       turn.workspaceId === input.input.workspaceId
     );
   });
-  if (!turnsAreCurrent) return false;
+  if (!turnsAreCurrent) {
+    return false;
+  }
 
   return sessionSegmentsAreCurrent(tx, {
     rawSessionRecordId: input.rawSessionRecordId,
@@ -1407,30 +1441,30 @@ async function transcriptDerivedRowsAreCurrent(
   });
 }
 
-interface NormalizedRawSessionImportInput extends RawSessionImportInput {
+type NormalizedRawSessionImportInput = {
   capturedAt: Date;
   contentBytes: number;
   contentHash: string;
   sourceLocatorHash: string | undefined;
-}
+} & RawSessionImportInput;
 
-interface ActivityIntervalSettlement {
+type ActivityIntervalSettlement = {
   endedAt: Date;
   metadata?: Record<string, unknown> | undefined;
   reason: ActivityIntervalSettlementReason;
   settledAt: Date;
   triggerRawEventId?: string | undefined;
-}
+};
 
-interface ActivityIntervalResolution {
+type ActivityIntervalResolution = {
   activityInterval: ActivityInterval;
   settlement?: ActivityIntervalSettlement | undefined;
-}
+};
 
 function normalizeTranscript(
   input: NormalizedRawSessionImportInput,
 ): TranscriptNormalization | undefined {
-  if (input.harness === "codex") {
+  if (input.harness === 'codex') {
     return normalizeCodexTranscript({
       contentType: input.contentType,
       fallbackHarnessSessionId: input.harnessSessionId,
@@ -1454,7 +1488,7 @@ function extractTranscriptImportHints(
     fallbackHarnessSessionId?: string | undefined;
   },
 ): TranscriptImportHints {
-  if (input.harness === "codex") {
+  if (input.harness === 'codex') {
     return extractCodexTranscriptImportHints({
       contentType: input.contentType,
       rawContent: input.rawContent,
@@ -1471,23 +1505,29 @@ function extractTranscriptImportHints(
 
 function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSessionImportInput {
   const workspaceId = input.workspaceId.trim();
-  if (workspaceId === "") throw new RawSessionImportError({ message: "workspaceId is required" });
+  if (workspaceId === '') {
+    throw new RawSessionImportError({ message: 'workspaceId is required' });
+  }
   const hostId = input.host.id.trim();
-  if (hostId === "") throw new RawSessionImportError({ message: "host.id is required" });
+  if (hostId === '') {
+    throw new RawSessionImportError({ message: 'host.id is required' });
+  }
   const authorHandle = input.author.handle.trim();
-  if (authorHandle === "")
-    throw new RawSessionImportError({ message: "author.handle is required" });
+  if (authorHandle === '') {
+    throw new RawSessionImportError({ message: 'author.handle is required' });
+  }
   const triggerId = input.activity.settlementTriggerRawEventId.trim();
-  if (triggerId === "")
+  if (triggerId === '') {
     throw new RawSessionImportError({
-      message: "activity.settlementTriggerRawEventId is required",
+      message: 'activity.settlementTriggerRawEventId is required',
     });
+  }
 
   const locator = cleanOptional(input.locator);
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
   if (cleanOptional(input.harnessSessionId) === undefined && sourceLocatorHash === undefined) {
     throw new RawSessionImportError({
-      message: "harnessSessionId or locator is required to identify a raw session",
+      message: 'harnessSessionId or locator is required to identify a raw session',
     });
   }
 
@@ -1495,10 +1535,10 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
     activity: { ...input.activity, settlementTriggerRawEventId: triggerId },
     author: { ...input.author, handle: authorHandle },
     capturedAt:
-      typeof input.capturedAt === "string" ? new Date(input.capturedAt) : input.capturedAt,
+      typeof input.capturedAt === 'string' ? new Date(input.capturedAt) : input.capturedAt,
     contentBytes: 0,
-    contentHash: "",
-    contentType: "text",
+    contentHash: '',
+    contentType: 'text',
     harness: input.harness,
     harnessMetadata: input.harnessMetadata,
     harnessSessionId: cleanOptional(input.harnessSessionId),
@@ -1507,7 +1547,7 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
     metadata: input.metadata,
     model: input.model,
     provenance: input.provenance,
-    rawContent: "",
+    rawContent: '',
     sourceBindingId: cleanOptional(input.sourceBindingId),
     sourceLocatorHash,
     status: input.status,
@@ -1517,11 +1557,13 @@ function normalizeLifecycleInput(input: LifecycleBoundaryInput): NormalizedRawSe
 }
 
 async function findLifecycleNoop(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { input: NormalizedRawSessionImportInput; session: Session },
 ): Promise<ActivityInterval | undefined> {
   const trigger = input.input.activity?.settlementTriggerRawEventId;
-  if (trigger === undefined) return undefined;
+  if (trigger === undefined) {
+    return undefined;
+  }
   const [interval] = await tx
     .select()
     .from(activityIntervals)
@@ -1541,7 +1583,7 @@ async function findLifecycleNoop(
 }
 
 async function importLifecycleBoundaryEventInTransactionUnsafe(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: NormalizedRawSessionImportInput,
 ): Promise<LifecycleBoundaryResult> {
   const [workspace] = await tx
@@ -1549,10 +1591,11 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     .from(workspaces)
     .where(eq(workspaces.id, input.workspaceId))
     .limit(1);
-  if (workspace === undefined)
+  if (workspace === undefined) {
     throw new RawSessionImportError({
-      message: "workspace binding is required before lifecycle import",
+      message: 'workspace binding is required before lifecycle import',
     });
+  }
 
   const now = new Date();
   const authorUser = await upsertHostAuthor(tx, { input, now });
@@ -1568,7 +1611,7 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     return {
       activityInterval: noopInterval,
       authorUser,
-      operation: "unchanged",
+      operation: 'unchanged',
       session,
       sourceBinding,
     };
@@ -1585,20 +1628,20 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
   if (activeInterval === undefined) {
     const opened = await insertActivityInterval(tx, {
       input,
-      metadata: { importBoundary: "lifecycle_event", triggerRawEventId },
+      metadata: { importBoundary: 'lifecycle_event', triggerRawEventId },
       ordinal: latestOrdinal + 1,
       sessionId: session.id,
       startedAt: input.capturedAt,
     });
-    const isStop = cleanOptional(input.activity?.hookEventName) === "Stop";
+    const isStop = cleanOptional(input.activity?.hookEventName) === 'Stop';
     if (isStop) {
       await settleActivityInterval(tx, {
         interval: opened,
         now,
         settlement: {
           endedAt: input.capturedAt,
-          metadata: { settlementSource: "hook" },
-          reason: "stop_event",
+          metadata: { settlementSource: 'hook' },
+          reason: 'stop_event',
           settledAt: now,
           triggerRawEventId,
         },
@@ -1611,7 +1654,7 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
       return {
         activityInterval: settledInterval,
         authorUser,
-        operation: "settled",
+        operation: 'settled',
         session: updatedSession,
         sourceBinding,
       };
@@ -1620,7 +1663,7 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     return {
       activityInterval: opened,
       authorUser,
-      operation: "opened",
+      operation: 'opened',
       session: updatedSession,
       sourceBinding,
     };
@@ -1630,7 +1673,7 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
   const activityResolution = await resolveActivityInterval(tx, {
     input,
     now,
-    openedIntervalMetadata: { importBoundary: "lifecycle_event", triggerRawEventId },
+    openedIntervalMetadata: { importBoundary: 'lifecycle_event', triggerRawEventId },
     session,
     transcriptNormalization: undefined,
   });
@@ -1650,7 +1693,7 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
     return {
       activityInterval: settledInterval,
       authorUser,
-      operation: "settled",
+      operation: 'settled',
       session: updatedSession,
       sourceBinding,
     };
@@ -1660,8 +1703,8 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
   const updatedSession = await applyLifecycleSessionUpdate(tx, { input, now, session });
   const operation =
     activityResolution.activityInterval.ordinal > activeInterval.ordinal
-      ? "settled_opened"
-      : "updated";
+      ? 'settled_opened'
+      : 'updated';
   return {
     activityInterval: activityResolution.activityInterval,
     authorUser,
@@ -1672,39 +1715,40 @@ async function importLifecycleBoundaryEventInTransactionUnsafe(
 }
 
 async function applyLifecycleSessionUpdate(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { input: NormalizedRawSessionImportInput; now: Date; session: Session },
 ): Promise<Session> {
-  const isStop = cleanOptional(input.input.activity?.hookEventName) === "Stop";
+  const isStop = cleanOptional(input.input.activity?.hookEventName) === 'Stop';
   const [updated] = await tx
     .update(sessions)
     .set({
       endedAt: isStop ? input.input.capturedAt : input.session.endedAt,
       lastActivityAt: input.input.capturedAt,
-      status: isStop ? "completed" : (input.input.status ?? input.session.status),
+      status: isStop ? 'completed' : (input.input.status ?? input.session.status),
       updatedAt: input.now,
     })
     .where(eq(sessions.id, input.session.id))
     .returning();
-  if (updated === undefined)
-    throw new RawSessionImportError({ message: "session update returned no row" });
+  if (updated === undefined) {
+    throw new RawSessionImportError({ message: 'session update returned no row' });
+  }
   return updated;
 }
 
 function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImportInput {
   const workspaceId = input.workspaceId.trim();
-  if (workspaceId === "") {
-    throw new RawSessionImportError({ message: "workspaceId is required" });
+  if (workspaceId === '') {
+    throw new RawSessionImportError({ message: 'workspaceId is required' });
   }
 
   const hostId = input.host.id.trim();
-  if (hostId === "") {
-    throw new RawSessionImportError({ message: "host.id is required" });
+  if (hostId === '') {
+    throw new RawSessionImportError({ message: 'host.id is required' });
   }
 
   const authorHandle = input.author.handle.trim();
-  if (authorHandle === "") {
-    throw new RawSessionImportError({ message: "author.handle is required" });
+  if (authorHandle === '') {
+    throw new RawSessionImportError({ message: 'author.handle is required' });
   }
 
   const inputHarnessSessionId = cleanOptional(input.harnessSessionId);
@@ -1719,11 +1763,11 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
   const sourceLocatorHash = locator === undefined ? undefined : sha256(normalizeLocator(locator));
   if (harnessSessionId === undefined && sourceLocatorHash === undefined) {
     throw new RawSessionImportError({
-      message: "harnessSessionId or locator is required to identify a raw session",
+      message: 'harnessSessionId or locator is required to identify a raw session',
     });
   }
 
-  const capturedAt = parseDate(input.capturedAt ?? new Date(), "capturedAt");
+  const capturedAt = parseDate(input.capturedAt ?? new Date(), 'capturedAt');
   return {
     ...input,
     author: {
@@ -1731,7 +1775,7 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
       handle: authorHandle,
     },
     capturedAt,
-    contentBytes: Buffer.byteLength(input.rawContent, "utf8"),
+    contentBytes: Buffer.byteLength(input.rawContent, 'utf8'),
     contentHash: sha256(input.rawContent),
     harnessSessionId,
     host: {
@@ -1747,7 +1791,7 @@ function normalizeInput(input: RawSessionImportInput): NormalizedRawSessionImpor
 }
 
 async function findSessionWithoutAdoption(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     sourceBindingId: string;
@@ -1766,10 +1810,14 @@ async function findSessionWithoutAdoption(
         ),
       )
       .limit(1);
-    if (session !== undefined) return session;
+    if (session !== undefined) {
+      return session;
+    }
   }
 
-  if (input.input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) {
+    return undefined;
+  }
   const [session] = await tx
     .select()
     .from(sessions)
@@ -1787,7 +1835,7 @@ async function findSessionWithoutAdoption(
 }
 
 async function findSession(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     sourceBindingId: string;
@@ -1806,10 +1854,14 @@ async function findSession(
         ),
       )
       .limit(1);
-    if (session !== undefined) return session;
+    if (session !== undefined) {
+      return session;
+    }
   }
 
-  if (input.input.sourceLocatorHash === undefined) return undefined;
+  if (input.input.sourceLocatorHash === undefined) {
+    return undefined;
+  }
   const [session] = await tx
     .select()
     .from(sessions)
@@ -1834,7 +1886,7 @@ async function findSession(
       .returning();
     if (adoptedSession === undefined) {
       throw new RawSessionImportError({
-        message: "legacy locator session adoption returned no row",
+        message: 'legacy locator session adoption returned no row',
       });
     }
     return adoptedSession;
@@ -1843,7 +1895,7 @@ async function findSession(
 }
 
 async function resolveSession(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     authorUserId: string;
     input: NormalizedRawSessionImportInput;
@@ -1865,7 +1917,7 @@ async function resolveSession(
 }
 
 async function insertSession(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     authorUserId: string;
     input: NormalizedRawSessionImportInput;
@@ -1884,7 +1936,7 @@ async function insertSession(
     sourceLocator: input.input.locator,
     sourceLocatorHash: input.input.sourceLocatorHash,
     startedAt: input.input.capturedAt,
-    status: input.input.status ?? "active",
+    status: input.input.status ?? 'active',
     title: input.input.title,
     workspaceId: input.input.workspaceId,
   });
@@ -1913,20 +1965,22 @@ async function insertSession(
             where: sql`${sessions.harnessSessionId} is not null`,
           })
           .returning();
-  if (insertedSession !== undefined) return insertedSession;
+  if (insertedSession !== undefined) {
+    return insertedSession;
+  }
 
   const session = await findSession(tx, {
     input: input.input,
     sourceBindingId: input.sourceBindingId,
   });
   if (session === undefined) {
-    throw new RawSessionImportError({ message: "session insert returned no row" });
+    throw new RawSessionImportError({ message: 'session insert returned no row' });
   }
   return session;
 }
 
 async function resolveRawSessionSourceBinding(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     now: Date;
@@ -1955,7 +2009,7 @@ async function resolveRawSessionSourceBinding(
       .returning();
     if (sourceBinding === undefined) {
       throw new RawSessionImportError({
-        message: "source binding does not match the requested harness and host",
+        message: 'source binding does not match the requested harness and host',
       });
     }
     return sourceBinding;
@@ -1981,13 +2035,13 @@ async function resolveRawSessionSourceBinding(
     })
     .returning();
   if (sourceBinding === undefined) {
-    throw new RawSessionImportError({ message: "source binding returned no row" });
+    throw new RawSessionImportError({ message: 'source binding returned no row' });
   }
   return sourceBinding;
 }
 
 async function findCurrentRawSessionSourceBinding(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: NormalizedRawSessionImportInput,
 ): Promise<SourceBinding | undefined> {
   const sourceUri = harnessSourceUri(input.harness, input.host.id);
@@ -2007,7 +2061,9 @@ async function findCurrentRawSessionSourceBinding(
         ),
       )
       .limit(1);
-    if (sourceBinding === undefined) return undefined;
+    if (sourceBinding === undefined) {
+      return undefined;
+    }
     return sourceBinding.displayName === displayName && jsonEqual(sourceBinding.config, config)
       ? sourceBinding
       : undefined;
@@ -2024,7 +2080,9 @@ async function findCurrentRawSessionSourceBinding(
       ),
     )
     .limit(1);
-  if (sourceBinding === undefined) return undefined;
+  if (sourceBinding === undefined) {
+    return undefined;
+  }
   return sourceBinding.enabled &&
     sourceBinding.displayName === displayName &&
     jsonEqual(sourceBinding.config, config)
@@ -2033,7 +2091,7 @@ async function findCurrentRawSessionSourceBinding(
 }
 
 async function resolveActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     now: Date;
@@ -2061,8 +2119,8 @@ async function resolveActivityInterval(
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
   const shouldOpenAfterClear =
-    hookEventName === "SessionStart" &&
-    (sessionStartSource === "clear" || sessionStartSource === "compact") &&
+    hookEventName === 'SessionStart' &&
+    (sessionStartSource === 'clear' || sessionStartSource === 'compact') &&
     activeInterval !== undefined;
   const idleSettlement =
     activeInterval === undefined || shouldOpenAfterClear
@@ -2082,7 +2140,7 @@ async function resolveActivityInterval(
         metadata: {
           settlementSource: sessionStartSource,
         },
-        reason: "clear_context",
+        reason: 'clear_context',
         settledAt: input.now,
         triggerRawEventId,
       },
@@ -2125,13 +2183,13 @@ async function resolveActivityInterval(
     }));
 
   const stopSettlement =
-    hookEventName === "Stop"
+    hookEventName === 'Stop'
       ? {
           endedAt: observedLast,
           metadata: {
-            settlementSource: "hook",
+            settlementSource: 'hook',
           },
-          reason: "stop_event" as const,
+          reason: 'stop_event' as const,
           settledAt: input.now,
           triggerRawEventId,
         }
@@ -2149,8 +2207,8 @@ function observedActivityIntervalStart(input: {
 }): Date {
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   if (
-    cleanOptional(input.input.activity?.hookEventName) === "SessionStart" &&
-    (sessionStartSource === "clear" || sessionStartSource === "compact")
+    cleanOptional(input.input.activity?.hookEventName) === 'SessionStart' &&
+    (sessionStartSource === 'clear' || sessionStartSource === 'compact')
   ) {
     return input.input.capturedAt;
   }
@@ -2164,13 +2222,15 @@ function activityIntervalBoundaryRequiredForExistingRawSessionRecord(input: {
   session: Session;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): boolean {
-  if (input.activityInterval.status !== "active") return false;
+  if (input.activityInterval.status !== 'active') {
+    return false;
+  }
 
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
   if (
-    hookEventName === "SessionStart" &&
-    (sessionStartSource === "clear" || sessionStartSource === "compact")
+    hookEventName === 'SessionStart' &&
+    (sessionStartSource === 'clear' || sessionStartSource === 'compact')
   ) {
     return input.activityInterval.startedAt.getTime() < input.input.capturedAt.getTime();
   }
@@ -2189,18 +2249,22 @@ function repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRe
   input: NormalizedRawSessionImportInput;
   session: Session;
 }): boolean {
-  if (input.activityInterval.status !== "active") return false;
+  if (input.activityInterval.status !== 'active') {
+    return false;
+  }
   if (input.activityInterval.startedAt.getTime() !== input.input.capturedAt.getTime()) {
     return false;
   }
 
   const sessionStartSource = cleanOptional(input.input.activity?.sessionStartSource);
   const hookEventName = cleanOptional(input.input.activity?.hookEventName);
-  if (hookEventName === "Stop") return false;
+  if (hookEventName === 'Stop') {
+    return false;
+  }
 
   if (
-    hookEventName === "SessionStart" &&
-    (sessionStartSource === "clear" || sessionStartSource === "compact")
+    hookEventName === 'SessionStart' &&
+    (sessionStartSource === 'clear' || sessionStartSource === 'compact')
   ) {
     return true;
   }
@@ -2213,7 +2277,7 @@ function repeatedActivityIntervalBoundaryAlreadySatisfiedForExistingRawSessionRe
 }
 
 async function insertActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     input: NormalizedRawSessionImportInput;
     metadata?: Record<string, unknown> | undefined;
@@ -2226,20 +2290,22 @@ async function insertActivityInterval(
     .insert(activityIntervals)
     .values({
       metadata: {
-        importBoundary: "raw_session",
+        importBoundary: 'raw_session',
         ...input.metadata,
       },
       ordinal: input.ordinal,
       sessionId: input.sessionId,
       startedAt: input.startedAt,
-      status: "active",
+      status: 'active',
       workspaceId: input.input.workspaceId,
     })
     .onConflictDoNothing({
       target: [activityIntervals.sessionId, activityIntervals.ordinal],
     })
     .returning();
-  if (interval !== undefined) return interval;
+  if (interval !== undefined) {
+    return interval;
+  }
 
   const [existingInterval] = await tx
     .select()
@@ -2252,13 +2318,13 @@ async function insertActivityInterval(
     )
     .limit(1);
   if (existingInterval === undefined) {
-    throw new RawSessionImportError({ message: "activity interval returned no row" });
+    throw new RawSessionImportError({ message: 'activity interval returned no row' });
   }
   return existingInterval;
 }
 
 async function findActivityIntervalById(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { id: string; workspaceId: string },
 ): Promise<ActivityInterval> {
   const [interval] = await tx
@@ -2269,13 +2335,13 @@ async function findActivityIntervalById(
     )
     .limit(1);
   if (interval === undefined) {
-    throw new RawSessionImportError({ message: "raw session activity interval is missing" });
+    throw new RawSessionImportError({ message: 'raw session activity interval is missing' });
   }
   return interval;
 }
 
 async function findActiveActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { sessionId: string; workspaceId: string },
 ): Promise<ActivityInterval | undefined> {
   const [interval] = await tx
@@ -2285,7 +2351,7 @@ async function findActiveActivityInterval(
       and(
         eq(activityIntervals.sessionId, input.sessionId),
         eq(activityIntervals.workspaceId, input.workspaceId),
-        eq(activityIntervals.status, "active"),
+        eq(activityIntervals.status, 'active'),
       ),
     )
     .orderBy(desc(activityIntervals.ordinal))
@@ -2294,7 +2360,7 @@ async function findActiveActivityInterval(
 }
 
 async function findLatestActivityIntervalOrdinal(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { sessionId: string },
 ): Promise<number> {
   const [interval] = await tx
@@ -2307,7 +2373,7 @@ async function findLatestActivityIntervalOrdinal(
 }
 
 async function settleActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     interval: ActivityInterval;
     now: Date;
@@ -2325,24 +2391,24 @@ async function settleActivityInterval(
       settledAt: input.settlement.settledAt,
       settlementReason: input.settlement.reason,
       settlementTriggerRawEventId: input.settlement.triggerRawEventId,
-      status: "settled",
+      status: 'settled',
       updatedAt: input.now,
     })
     .where(
       and(
         eq(activityIntervals.id, input.interval.id),
         eq(activityIntervals.workspaceId, input.interval.workspaceId),
-        eq(activityIntervals.status, "active"),
+        eq(activityIntervals.status, 'active'),
       ),
     )
     .returning({ id: activityIntervals.id });
   if (settled === undefined) {
-    throw new RawSessionImportError({ message: "active activity interval changed during import" });
+    throw new RawSessionImportError({ message: 'active activity interval changed during import' });
   }
 }
 
 async function updateActiveRawSessionRecordActivityInterval(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     existingRecord: RawSessionRecord;
@@ -2365,7 +2431,7 @@ async function updateActiveRawSessionRecordActivityInterval(
     .returning();
   if (rawSessionRecord === undefined) {
     throw new RawSessionImportError({
-      message: "active raw session record changed during import",
+      message: 'active raw session record changed during import',
     });
   }
   return rawSessionRecord;
@@ -2376,16 +2442,20 @@ function idleTimeoutSettlement(input: {
   observedStart: Date;
   triggerRawEventId?: string | undefined;
 }): ActivityIntervalSettlement | undefined {
-  if (input.lastActivityAt === null) return undefined;
+  if (input.lastActivityAt === null) {
+    return undefined;
+  }
   const idleMs = input.observedStart.getTime() - input.lastActivityAt.getTime();
-  if (idleMs <= ACTIVITY_IDLE_TIMEOUT_MS) return undefined;
+  if (idleMs <= ACTIVITY_IDLE_TIMEOUT_MS) {
+    return undefined;
+  }
   const endedAt = new Date(input.lastActivityAt.getTime() + ACTIVITY_IDLE_TIMEOUT_MS);
   return {
     endedAt,
     metadata: {
       idleThresholdMinutes: 30,
     },
-    reason: "idle_timeout",
+    reason: 'idle_timeout',
     settledAt: input.observedStart,
     triggerRawEventId: input.triggerRawEventId,
   };
@@ -2397,24 +2467,28 @@ function settlementForExistingRawSessionRecord(input: {
   now: Date;
   transcriptNormalization?: TranscriptNormalization | undefined;
 }): ActivityIntervalSettlement | undefined {
-  if (input.activityInterval.status !== "active") return undefined;
-  if (cleanOptional(input.input.activity?.hookEventName) !== "Stop") return undefined;
+  if (input.activityInterval.status !== 'active') {
+    return undefined;
+  }
+  if (cleanOptional(input.input.activity?.hookEventName) !== 'Stop') {
+    return undefined;
+  }
   return {
     endedAt:
       input.transcriptNormalization?.session.lastActivityAt ??
       input.transcriptNormalization?.activityInterval.endedAt ??
       input.input.capturedAt,
     metadata: {
-      settlementSource: "hook",
+      settlementSource: 'hook',
     },
-    reason: "stop_event",
+    reason: 'stop_event',
     settledAt: input.now,
     triggerRawEventId: cleanOptional(input.input.activity?.settlementTriggerRawEventId),
   };
 }
 
 async function findRawSessionRecordByContentHash(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { contentHash: string; sessionId: string },
 ): Promise<RawSessionRecord | undefined> {
   const [record] = await tx
@@ -2437,15 +2511,19 @@ function assertExpectedActiveRawSessionRecord(
   const expectedActiveRawSessionRecordId = cleanOptional(
     input.rawRecord?.expectedActiveRawSessionRecordId,
   );
-  if (expectedActiveRawSessionRecordId === undefined) return;
-  if (activeRecord?.id === expectedActiveRawSessionRecordId) return;
+  if (expectedActiveRawSessionRecordId === undefined) {
+    return;
+  }
+  if (activeRecord?.id === expectedActiveRawSessionRecordId) {
+    return;
+  }
   throw new RawSessionImportError({
-    message: "active raw session record changed during import",
+    message: 'active raw session record changed during import',
   });
 }
 
 async function regenerateDerivedSessionRecords(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     input: NormalizedRawSessionImportInput;
@@ -2507,25 +2585,27 @@ async function regenerateDerivedSessionRecords(
   }
 
   const searchText = deriveSearchText(input.input);
-  if (searchText === "") return;
+  if (searchText === '') {
+    return;
+  }
 
   const [turn] = await tx
     .insert(sessionTurns)
     .values({
       activityIntervalId: input.activityIntervalId,
-      actorKind: "harness",
+      actorKind: 'harness',
       actorLabel: input.input.harness,
-      contentParts: [{ text: searchText, type: "text" }],
+      contentParts: [{ text: searchText, type: 'text' }],
       ordinal: 0,
       rawEventIds: [],
       rawSessionRecordId: input.rawSessionRecordId,
-      role: "system",
+      role: 'system',
       sessionId: input.sessionId,
       workspaceId: input.input.workspaceId,
     })
     .returning();
   if (turn === undefined) {
-    throw new RawSessionImportError({ message: "session turn insert returned no row" });
+    throw new RawSessionImportError({ message: 'session turn insert returned no row' });
   }
 
   await insertDerivedSessionSegments(tx, {
@@ -2536,7 +2616,7 @@ async function regenerateDerivedSessionRecords(
 }
 
 async function insertNormalizedTranscriptTurns(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: {
     activityIntervalId: string;
     input: NormalizedRawSessionImportInput;
@@ -2568,7 +2648,7 @@ async function insertNormalizedTranscriptTurns(
       })
       .returning();
     if (turn === undefined) {
-      throw new RawSessionImportError({ message: "session turn insert returned no row" });
+      throw new RawSessionImportError({ message: 'session turn insert returned no row' });
     }
   }
 }
@@ -2577,14 +2657,14 @@ function buildRawBody(input: NormalizedRawSessionImportInput): {
   bodyJson: JsonBody | undefined;
   bodyText: string | undefined;
 } {
-  if (input.contentType === "json") {
+  if (input.contentType === 'json') {
     return {
       bodyJson: parseJsonBody(input.rawContent),
       bodyText: input.rawContent,
     };
   }
 
-  if (input.contentType === "jsonl") {
+  if (input.contentType === 'jsonl') {
     return {
       bodyJson: parseJsonlBody(input.rawContent),
       bodyText: input.rawContent,
@@ -2599,6 +2679,9 @@ function buildRawBody(input: NormalizedRawSessionImportInput): {
 
 function parseJsonBody(rawContent: string): JsonBody | undefined {
   try {
+    // JSON.parse yields a value that is, by construction, a JsonBody (the full
+    // JSON value union); it returns `any`, so pin it to the declared shape.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.parse output is by definition a JsonBody
     return JSON.parse(rawContent) as JsonBody;
   } catch {
     return undefined;
@@ -2609,17 +2692,23 @@ function parseJsonlBody(rawContent: string): JsonBody[] | undefined {
   const values: JsonBody[] = [];
   for (const line of rawContent.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (trimmed === "") continue;
+    if (trimmed === '') {
+      continue;
+    }
     const parsed = parseJsonBody(trimmed);
-    if (parsed === undefined) return undefined;
+    if (parsed === undefined) {
+      return undefined;
+    }
     values.push(parsed);
   }
   return values;
 }
 
 function deriveSearchText(input: NormalizedRawSessionImportInput): string {
-  const normalized = input.rawContent.replaceAll(/\s+/g, " ").trim();
-  if (normalized.length <= 4000) return normalized;
+  const normalized = input.rawContent.replaceAll(/\s+/g, ' ').trim();
+  if (normalized.length <= 4000) {
+    return normalized;
+  }
   return normalized.slice(0, 4000);
 }
 
@@ -2628,7 +2717,7 @@ function harnessSourceUri(harness: RawSessionHarness, hostId: string): string {
 }
 
 function harnessDisplayName(harness: RawSessionHarness): string {
-  return harness === "claude" ? "Claude Code" : "Codex";
+  return harness === 'claude' ? 'Claude Code' : 'Codex';
 }
 
 function sourceBindingConfig(input: NormalizedRawSessionImportInput): Record<string, unknown> {
@@ -2644,7 +2733,7 @@ function sourceBindingDisplayName(input: NormalizedRawSessionImportInput): strin
 }
 
 async function upsertHostAuthor(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: { input: NormalizedRawSessionImportInput; now: Date },
 ): Promise<User> {
   const [authorUser] = await tx
@@ -2653,7 +2742,7 @@ async function upsertHostAuthor(
       displayName: input.input.author.displayName,
       externalSubject: input.input.author.externalSubject ?? input.input.host.id,
       handle: input.input.author.handle,
-      identitySource: "host",
+      identitySource: 'host',
       metadata: {
         hostId: input.input.host.id,
         hostLabel: input.input.host.label,
@@ -2674,13 +2763,13 @@ async function upsertHostAuthor(
     })
     .returning();
   if (authorUser === undefined) {
-    throw new RawSessionImportError({ message: "host user attribution returned no row" });
+    throw new RawSessionImportError({ message: 'host user attribution returned no row' });
   }
   return authorUser;
 }
 
 async function findCurrentHostUser(
-  tx: DatabaseService["db"],
+  tx: DatabaseService['db'],
   input: NormalizedRawSessionImportInput,
 ): Promise<User | undefined> {
   const [user] = await tx
@@ -2689,13 +2778,15 @@ async function findCurrentHostUser(
     .where(
       and(
         eq(users.workspaceId, input.workspaceId),
-        eq(users.identitySource, "host"),
+        eq(users.identitySource, 'host'),
         eq(users.handle, input.author.handle),
         eq(users.externalSubject, input.author.externalSubject ?? input.host.id),
       ),
     )
     .limit(1);
-  if (user === undefined) return undefined;
+  if (user === undefined) {
+    return undefined;
+  }
 
   const metadata = compactRecord({
     hostId: input.host.id,
@@ -2708,7 +2799,7 @@ async function findCurrentHostUser(
 }
 
 function normalizeLocator(locator: string): string {
-  return locator.trim().replaceAll(/\\/g, "/");
+  return locator.trim().replaceAll(/\\/g, '/');
 }
 
 function parseDate(value: Date | string, field: string): Date {
@@ -2721,37 +2812,41 @@ function parseDate(value: Date | string, field: string): Date {
 
 function cleanOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
 function sha256(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return isRecord(value) ? value : {};
 }
 
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return isRecord(value) ? value : undefined;
 }
 
 function arrayRecords(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
   const records: Record<string, unknown>[] = [];
   for (const entry of value) {
     const record = optionalRecord(entry);
-    if (record !== undefined) records.push(record);
+    if (record !== undefined) {
+      records.push(record);
+    }
   }
   return records;
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
@@ -2761,12 +2856,16 @@ function compactRecord(value: Record<string, unknown>): Record<string, unknown> 
 }
 
 function datesEqual(actual: Date | null, expected: Date | undefined): boolean {
-  if (actual === null || expected === undefined) return actual === null && expected === undefined;
+  if (actual === null || expected === undefined) {
+    return actual === null && expected === undefined;
+  }
   return actual.getTime() === expected.getTime();
 }
 
 function nullableDatesEqual(actual: Date | null, expected: Date | null): boolean {
-  if (actual === null || expected === null) return actual === null && expected === null;
+  if (actual === null || expected === null) {
+    return actual === null && expected === null;
+  }
   return actual.getTime() === expected.getTime();
 }
 
@@ -2775,12 +2874,18 @@ function jsonEqual(left: unknown, right: unknown): boolean {
 }
 
 function canonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    Object.entries(value)
+      .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(([key, entryValue]) => [key, canonicalJson(entryValue)]),
   );
 }
@@ -2791,21 +2896,25 @@ function errorMessage(cause: unknown): string {
 
 function isRetryableImportConflict(cause: unknown): boolean {
   if (cause instanceof RawSessionImportError) {
-    return cause.message === "active activity interval changed during import";
+    return cause.message === 'active activity interval changed during import';
   }
 
   const conflict = asRecord(cause);
-  if (conflict.code === "40001" || conflict.code === "40P01") return true;
-  if (conflict.code !== "23505") return false;
+  if (conflict.code === '40001' || conflict.code === '40P01') {
+    return true;
+  }
+  if (conflict.code !== '23505') {
+    return false;
+  }
 
   return (
-    conflict.constraint === "activity_intervals_session_ordinal_unique" ||
-    conflict.constraint === "raw_session_records_one_active_per_session_idx" ||
-    conflict.constraint === "raw_session_records_session_content_hash_unique" ||
-    conflict.constraint === "raw_session_records_session_snapshot_unique" ||
-    conflict.constraint === "sessions_workspace_harness_locator_unique" ||
-    conflict.constraint === "sessions_workspace_harness_session_unique" ||
-    conflict.constraint === "sessions_workspace_source_harness_locator_unique" ||
-    conflict.constraint === "sessions_workspace_source_harness_session_unique"
+    conflict.constraint === 'activity_intervals_session_ordinal_unique' ||
+    conflict.constraint === 'raw_session_records_one_active_per_session_idx' ||
+    conflict.constraint === 'raw_session_records_session_content_hash_unique' ||
+    conflict.constraint === 'raw_session_records_session_snapshot_unique' ||
+    conflict.constraint === 'sessions_workspace_harness_locator_unique' ||
+    conflict.constraint === 'sessions_workspace_harness_session_unique' ||
+    conflict.constraint === 'sessions_workspace_source_harness_locator_unique' ||
+    conflict.constraint === 'sessions_workspace_source_harness_session_unique'
   );
 }

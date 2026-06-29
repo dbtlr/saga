@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { eq } from "drizzle-orm";
-import { Effect } from "effect";
-import postgres from "postgres";
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { eq } from 'drizzle-orm';
+import { Effect } from 'effect';
+import postgres from 'postgres';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+
 import {
   insertClaimEventAndProject,
   insertClaimMaintenanceEventAndProject,
@@ -12,26 +14,22 @@ import {
   insertExtractedCandidateClaim,
   listActiveContextClaims,
   listCurrentClaims,
-} from "./claim.js";
-import {
-  DEFAULT_MIGRATIONS_FOLDER,
-  makeDatabase,
-  runMigrations,
-  type DatabaseService,
-} from "./database.js";
-import {
-  insertRawEvent,
-  listCodexActivationRawEvents,
-  listHarnessActivationRawEvents,
-  listRecentRawEvents,
-} from "./raw-event.js";
+} from './claim.js';
 import {
   listActiveContextIndexEntries,
   listContextIndexEntries,
   makeSagaContextLink,
   resolveSagaLink,
   upsertContextIndexEntry,
-} from "./context-index.js";
+} from './context-index.js';
+import { DEFAULT_MIGRATIONS_FOLDER, makeDatabase, runMigrations } from './database.js';
+import type { DatabaseService } from './database.js';
+import {
+  insertRawEvent,
+  listCodexActivationRawEvents,
+  listHarnessActivationRawEvents,
+  listRecentRawEvents,
+} from './raw-event.js';
 import {
   activityIntervals,
   claimEvents,
@@ -48,31 +46,33 @@ import {
   users,
   workspaceProfiles,
   workspaces,
-} from "./schema.js";
+} from './schema.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
-class RollbackMigrationFixture extends Error {}
+class RollbackMigrationFixtureError extends Error {
+  override name = 'RollbackMigrationFixtureError';
+}
 
-describePostgres("postgres integration", () => {
+describePostgres('postgres integration', () => {
   const databaseName = `saga_test_${Date.now().toString(36)}`;
-  const adminSql = postgres(databaseUrl ?? "", { max: 1 });
+  const adminSql = postgres(databaseUrl ?? '', { max: 1 });
   let service: DatabaseService | undefined;
 
   beforeAll(async () => {
     await adminSql.unsafe(`create database "${databaseName}"`);
-    const testDatabaseUrl = new URL(databaseUrl ?? "");
+    const testDatabaseUrl = new URL(databaseUrl ?? '');
     testDatabaseUrl.pathname = `/${databaseName}`;
 
     service = await Effect.runPromise(
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
-          environment: "test",
-          logLevel: "info",
+          environment: 'test',
+          logLevel: 'info',
           service: {
-            host: "127.0.0.1",
+            host: '127.0.0.1',
             port: 4766,
           },
           secrets: {
@@ -98,39 +98,49 @@ describePostgres("postgres integration", () => {
   });
 
   async function createWorkspaceWithCodexSource(handlePrefix: string) {
-    if (service === undefined) throw new Error("database service was not initialized");
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
         handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     return { sourceBinding, workspace };
   }
 
   async function createWorkspaceWithHarnessSource(
     handlePrefix: string,
-    sourceType: "claude" | "codex",
+    sourceType: 'claude' | 'codex',
   ) {
-    if (service === undefined) throw new Error("database service was not initialized");
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
         handle: `${handlePrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
@@ -140,7 +150,9 @@ describePostgres("postgres integration", () => {
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     return { sourceBinding, workspace };
   }
 
@@ -150,48 +162,54 @@ describePostgres("postgres integration", () => {
     turn: string;
     workspaceId: string;
   }) {
-    if (service === undefined) throw new Error("database service was not initialized");
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     return Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:${input.workspaceId}:${input.turn}`,
-        occurredAt: "2026-06-19T20:00:00.000Z",
+        occurredAt: '2026-06-19T20:00:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
+          hook_event_name: 'UserPromptSubmit',
           prompt: input.prompt,
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: input.sourceBindingId,
-        sourceId: "codex:local",
-        sourceType: "codex",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
         traceId: input.turn,
-        trustLevel: "raw",
+        trustLevel: 'raw',
         workspaceId: input.workspaceId,
       }),
     );
   }
 
-  test("runs migrations and persists workspace registration rows", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('runs migrations and persists workspace registration rows', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
-        displayName: "Saga Integration Workspace",
+        displayName: 'Saga Integration Workspace',
         handle: `saga-${Date.now().toString(36)}`,
       })
       .returning();
 
     expect(workspace).toBeDefined();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [profile] = await service.db
       .insert(workspaceProfiles)
       .values({
-        profile: { northstar: "integration test" },
-        summary: "integration profile",
+        profile: { northstar: 'integration test' },
+        summary: 'integration profile',
         workspaceId: workspace.id,
       })
       .returning();
@@ -199,10 +217,10 @@ describePostgres("postgres integration", () => {
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        config: { branch: "main" },
-        displayName: "Saga repository",
-        sourceType: "git",
-        sourceUri: "file:///Volumes/data/workspaces/saga",
+        config: { branch: 'main' },
+        displayName: 'Saga repository',
+        sourceType: 'git',
+        sourceUri: 'file:///Volumes/data/workspaces/saga',
         workspaceId: workspace.id,
       })
       .returning();
@@ -212,8 +230,10 @@ describePostgres("postgres integration", () => {
     expect(sourceBinding?.enabled).toBe(true);
   });
 
-  test("enforces user identity uniqueness with nullable external subjects", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('enforces user identity uniqueness with nullable external subjects', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -221,52 +241,58 @@ describePostgres("postgres integration", () => {
         handle: `user-identity-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     await service.db.insert(users).values({
-      handle: "drew",
-      identitySource: "host",
+      handle: 'drew',
+      identitySource: 'host',
       workspaceId: workspace.id,
     });
 
     await expect(
       service.db.insert(users).values({
-        handle: "drew",
-        identitySource: "host",
+        handle: 'drew',
+        identitySource: 'host',
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await service.db.insert(users).values({
-      externalSubject: "host-1",
-      handle: "drew",
-      identitySource: "host",
+      externalSubject: 'host-1',
+      handle: 'drew',
+      identitySource: 'host',
       workspaceId: workspace.id,
     });
 
     await expect(
       service.db.insert(users).values({
-        externalSubject: "host-1",
-        handle: "drew",
-        identitySource: "host",
+        externalSubject: 'host-1',
+        handle: 'drew',
+        identitySource: 'host',
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [otherHost] = await service.db
       .insert(users)
       .values({
-        externalSubject: "host-2",
-        handle: "drew",
-        identitySource: "host",
+        externalSubject: 'host-2',
+        handle: 'drew',
+        identitySource: 'host',
         workspaceId: workspace.id,
       })
       .returning();
-    expect(otherHost?.externalSubject).toBe("host-2");
+    expect(otherHost?.externalSubject).toBe('host-2');
   });
 
-  test("deduplicates existing nullable external-subject users before adding the unique constraint", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('deduplicates existing nullable external-subject users before adding the unique constraint', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     try {
       await service.sql.begin(async (tx) => {
@@ -278,28 +304,36 @@ describePostgres("postgres integration", () => {
           VALUES (${`user-identity-migration-${Date.now().toString(36)}`})
           RETURNING "id"
         `;
-        if (workspace === undefined) throw new Error("workspace insert returned no row");
+        if (workspace === undefined) {
+          throw new Error('workspace insert returned no row');
+        }
 
         const [sourceBinding] = await tx<{ id: string }[]>`
           INSERT INTO "source_bindings" ("workspace_id", "source_type", "source_uri")
           VALUES (${workspace.id}, 'codex', 'codex://migration-fixture')
           RETURNING "id"
         `;
-        if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+        if (sourceBinding === undefined) {
+          throw new Error('source binding insert returned no row');
+        }
 
         const [canonicalUser] = await tx<{ id: string }[]>`
           INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
           VALUES (${workspace.id}, 'drew', 'host', '2026-06-21T00:00:00.000Z')
           RETURNING "id"
         `;
-        if (canonicalUser === undefined) throw new Error("canonical user insert returned no row");
+        if (canonicalUser === undefined) {
+          throw new Error('canonical user insert returned no row');
+        }
 
         const [duplicateUser] = await tx<{ id: string }[]>`
           INSERT INTO "users" ("workspace_id", "handle", "identity_source", "created_at")
           VALUES (${workspace.id}, 'drew', 'host', '2026-06-22T00:00:00.000Z')
           RETURNING "id"
         `;
-        if (duplicateUser === undefined) throw new Error("duplicate user insert returned no row");
+        if (duplicateUser === undefined) {
+          throw new Error('duplicate user insert returned no row');
+        }
 
         const [canonicalSession] = await tx<{ id: string }[]>`
           INSERT INTO "sessions" (
@@ -312,8 +346,9 @@ describePostgres("postgres integration", () => {
           VALUES (${workspace.id}, ${sourceBinding.id}, ${canonicalUser.id}, 'codex', 'canonical-session')
           RETURNING "id"
         `;
-        if (canonicalSession === undefined)
-          throw new Error("canonical session insert returned no row");
+        if (canonicalSession === undefined) {
+          throw new Error('canonical session insert returned no row');
+        }
 
         const [duplicateSession] = await tx<{ id: string }[]>`
           INSERT INTO "sessions" (
@@ -326,8 +361,9 @@ describePostgres("postgres integration", () => {
           VALUES (${workspace.id}, ${sourceBinding.id}, ${duplicateUser.id}, 'codex', 'duplicate-session')
           RETURNING "id"
         `;
-        if (duplicateSession === undefined)
-          throw new Error("duplicate session insert returned no row");
+        if (duplicateSession === undefined) {
+          throw new Error('duplicate session insert returned no row');
+        }
 
         await tx`
           INSERT INTO "raw_session_records" (
@@ -364,11 +400,11 @@ describePostgres("postgres integration", () => {
         `;
 
         const migrationSql = readFileSync(
-          join(DEFAULT_MIGRATIONS_FOLDER, "0007_calm_meltdown.sql"),
-          "utf8",
+          join(DEFAULT_MIGRATIONS_FOLDER, '0007_calm_meltdown.sql'),
+          'utf8',
         );
         for (const statement of migrationSql
-          .split("--> statement-breakpoint")
+          .split('--> statement-breakpoint')
           .map((part) => part.trim())
           .filter((part) => part.length > 0)) {
           await tx.unsafe(statement);
@@ -382,6 +418,9 @@ describePostgres("postgres integration", () => {
             AND "handle" = 'drew'
             AND "external_subject" IS NULL
         `;
+        // postgres.js rows have a non-plain prototype; toStrictEqual fails on it
+        // even when contents match, so use structural toEqual here.
+        // oxlint-disable-next-line vitest/prefer-strict-equal
         expect(nullableUsers).toEqual([{ id: canonicalUser.id }]);
 
         const sessionAuthors = await tx<{ author_user_id: string }[]>`
@@ -389,6 +428,7 @@ describePostgres("postgres integration", () => {
           FROM "sessions"
           WHERE "workspace_id" = ${workspace.id}
         `;
+        // oxlint-disable-next-line vitest/prefer-strict-equal -- postgres.js row prototype
         expect(sessionAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
 
         const rawRecordAuthors = await tx<{ author_user_id: string }[]>`
@@ -396,19 +436,22 @@ describePostgres("postgres integration", () => {
           FROM "raw_session_records"
           WHERE "workspace_id" = ${workspace.id}
         `;
+        // oxlint-disable-next-line vitest/prefer-strict-equal -- postgres.js row prototype
         expect(rawRecordAuthors).toEqual([{ author_user_id: canonicalUser.id }]);
 
-        throw new RollbackMigrationFixture();
+        throw new RollbackMigrationFixtureError();
       });
     } catch (error) {
-      if (!(error instanceof RollbackMigrationFixture)) {
+      if (!(error instanceof RollbackMigrationFixtureError)) {
         throw error;
       }
     }
   });
 
-  test("persists phase-one session capture records and enforces one active raw snapshot", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('persists phase-one session capture records and enforces one active raw snapshot', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -416,28 +459,34 @@ describePostgres("postgres integration", () => {
         handle: `session-schema-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        config: { hostId: "host-1" },
-        sourceType: "codex",
-        sourceUri: "codex://host/host-1",
+        config: { hostId: 'host-1' },
+        sourceType: 'codex',
+        sourceUri: 'codex://host/host-1',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const [author] = await service.db
       .insert(users)
       .values({
-        handle: "drew",
-        identitySource: "host",
+        handle: 'drew',
+        identitySource: 'host',
         workspaceId: workspace.id,
       })
       .returning();
-    if (author === undefined) throw new Error("user insert returned no row");
+    if (author === undefined) {
+      throw new Error('user insert returned no row');
+    }
 
     const [otherWorkspace] = await service.db
       .insert(workspaces)
@@ -445,62 +494,72 @@ describePostgres("postgres integration", () => {
         handle: `session-schema-other-${Date.now().toString(36)}`,
       })
       .returning();
-    if (otherWorkspace === undefined) throw new Error("other workspace insert returned no row");
+    if (otherWorkspace === undefined) {
+      throw new Error('other workspace insert returned no row');
+    }
 
     const [otherSourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        config: { hostId: "host-2" },
-        sourceType: "codex",
-        sourceUri: "codex://host/host-2",
+        config: { hostId: 'host-2' },
+        sourceType: 'codex',
+        sourceUri: 'codex://host/host-2',
         workspaceId: otherWorkspace.id,
       })
       .returning();
-    if (otherSourceBinding === undefined) throw new Error("other source insert returned no row");
+    if (otherSourceBinding === undefined) {
+      throw new Error('other source insert returned no row');
+    }
 
     const [otherAuthor] = await service.db
       .insert(users)
       .values({
-        handle: "other",
-        identitySource: "host",
+        handle: 'other',
+        identitySource: 'host',
         workspaceId: otherWorkspace.id,
       })
       .returning();
-    if (otherAuthor === undefined) throw new Error("other user insert returned no row");
+    if (otherAuthor === undefined) {
+      throw new Error('other user insert returned no row');
+    }
 
     await expect(
       service.db.insert(sessions).values({
         authorUserId: author.id,
-        harness: "codex",
-        harnessSessionId: "cross-source",
+        harness: 'codex',
+        harnessSessionId: 'cross-source',
         sourceBindingId: otherSourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await expect(
       service.db.insert(sessions).values({
         authorUserId: otherAuthor.id,
-        harness: "codex",
-        harnessSessionId: "cross-author",
+        harness: 'codex',
+        harnessSessionId: 'cross-author',
         sourceBindingId: sourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [session] = await service.db
       .insert(sessions)
       .values({
         authorUserId: author.id,
-        harness: "codex",
-        harnessSessionId: "codex-session-1",
-        model: "gpt-5-codex",
+        harness: 'codex',
+        harnessSessionId: 'codex-session-1',
+        model: 'gpt-5-codex',
         sourceBindingId: sourceBinding.id,
-        startedAt: new Date("2026-06-22T00:00:00.000Z"),
+        startedAt: new Date('2026-06-22T00:00:00.000Z'),
         workspaceId: workspace.id,
       })
       .returning();
-    if (session === undefined) throw new Error("session insert returned no row");
+    if (session === undefined) {
+      throw new Error('session insert returned no row');
+    }
 
     const [interval] = await service.db
       .insert(activityIntervals)
@@ -508,64 +567,71 @@ describePostgres("postgres integration", () => {
         metadata: { idleTimeoutMinutes: 30 },
         ordinal: 0,
         sessionId: session.id,
-        settlementReason: "stop_event",
-        settledAt: new Date("2026-06-22T00:30:00.000Z"),
-        startedAt: new Date("2026-06-22T00:00:00.000Z"),
-        status: "settled",
+        settlementReason: 'stop_event',
+        settledAt: new Date('2026-06-22T00:30:00.000Z'),
+        startedAt: new Date('2026-06-22T00:00:00.000Z'),
+        status: 'settled',
         workspaceId: workspace.id,
       })
       .returning();
-    if (interval === undefined) throw new Error("interval insert returned no row");
+    if (interval === undefined) {
+      throw new Error('interval insert returned no row');
+    }
 
     const [rawRecord] = await service.db
       .insert(rawSessionRecords)
       .values({
         activityIntervalId: interval.id,
         authorUserId: author.id,
-        bodyJson: [{ type: "user", text: "Build SGA-119" }],
+        bodyJson: [{ type: 'user', text: 'Build SGA-119' }],
         bodyText: '{"type":"user","text":"Build SGA-119"}\n',
-        contentHash: "sha256:first",
-        contentType: "jsonl",
-        harness: "codex",
-        harnessSessionId: "codex-session-1",
+        contentHash: 'sha256:first',
+        contentType: 'jsonl',
+        harness: 'codex',
+        harnessSessionId: 'codex-session-1',
         sessionId: session.id,
         snapshotOrdinal: 0,
         sourceBindingId: sourceBinding.id,
-        sourceLocator: "/tmp/codex-session.jsonl",
+        sourceLocator: '/tmp/codex-session.jsonl',
         workspaceId: workspace.id,
       })
       .returning();
-    if (rawRecord === undefined) throw new Error("raw session record insert returned no row");
+    if (rawRecord === undefined) {
+      throw new Error('raw session record insert returned no row');
+    }
 
     await expect(
       service.db.insert(rawSessionRecords).values({
         authorUserId: otherAuthor.id,
-        contentHash: "sha256:cross-raw",
-        contentType: "jsonl",
-        harness: "codex",
+        contentHash: 'sha256:cross-raw',
+        contentType: 'jsonl',
+        harness: 'codex',
         sessionId: session.id,
         snapshotOrdinal: 0,
         sourceBindingId: otherSourceBinding.id,
         workspaceId: otherWorkspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [turn] = await service.db
       .insert(sessionTurns)
       .values({
         activityIntervalId: interval.id,
-        actorKind: "host_user",
-        actorLabel: "drew",
-        contentParts: [{ text: "Build SGA-119", type: "text" }],
+        actorKind: 'host_user',
+        actorLabel: 'drew',
+        contentParts: [{ text: 'Build SGA-119', type: 'text' }],
         ordinal: 0,
         rawEventIds: [],
         rawSessionRecordId: rawRecord.id,
-        role: "user",
+        role: 'user',
         sessionId: session.id,
         workspaceId: workspace.id,
       })
       .returning();
-    if (turn === undefined) throw new Error("turn insert returned no row");
+    if (turn === undefined) {
+      throw new Error('turn insert returned no row');
+    }
 
     const [segment] = await service.db
       .insert(sessionSegments)
@@ -573,24 +639,27 @@ describePostgres("postgres integration", () => {
         activityIntervalId: interval.id,
         ordinal: 0,
         rawSessionRecordId: rawRecord.id,
-        searchText: "Build SGA-119 session capture schema",
+        searchText: 'Build SGA-119 session capture schema',
         sessionId: session.id,
         turnId: turn.id,
         workspaceId: workspace.id,
       })
       .returning();
-    if (segment === undefined) throw new Error("segment insert returned no row");
+    if (segment === undefined) {
+      throw new Error('segment insert returned no row');
+    }
 
     await expect(
       service.db.insert(sessionSegments).values({
         activityIntervalId: interval.id,
         ordinal: 0,
         rawSessionRecordId: rawRecord.id,
-        searchText: "cross workspace segment",
+        searchText: 'cross workspace segment',
         sessionId: session.id,
         turnId: turn.id,
         workspaceId: otherWorkspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [embedding] = await service.db
@@ -598,9 +667,9 @@ describePostgres("postgres integration", () => {
       .values({
         dimensions: 1536,
         embedding: Array.from({ length: 1536 }, () => 0),
-        inputHash: "sha256:segment",
-        model: "text-embedding-3-small",
-        provider: "openai",
+        inputHash: 'sha256:segment',
+        model: 'text-embedding-3-small',
+        provider: 'openai',
         rawSessionRecordId: rawRecord.id,
         segmentId: segment.id,
         workspaceId: workspace.id,
@@ -612,33 +681,36 @@ describePostgres("postgres integration", () => {
       service.db.insert(sessionSegmentEmbeddings).values({
         dimensions: 2,
         embedding: [0, 0, 0],
-        inputHash: "sha256:dimension-mismatch",
-        model: "text-embedding-3-small",
-        provider: "openai",
+        inputHash: 'sha256:dimension-mismatch',
+        model: 'text-embedding-3-small',
+        provider: 'openai',
         rawSessionRecordId: rawRecord.id,
         segmentId: segment.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     const [childSession] = await service.db
       .insert(sessions)
       .values({
         authorUserId: author.id,
-        harness: "codex",
-        harnessSessionId: "codex-child-1",
+        harness: 'codex',
+        harnessSessionId: 'codex-child-1',
         sourceBindingId: sourceBinding.id,
         workspaceId: workspace.id,
       })
       .returning();
-    if (childSession === undefined) throw new Error("child session insert returned no row");
+    if (childSession === undefined) {
+      throw new Error('child session insert returned no row');
+    }
 
     const [relationship] = await service.db
       .insert(sessionRelationships)
       .values({
-        confidence: "inferred",
-        evidence: { reason: "subagent transcript" },
-        relationshipType: "child",
+        confidence: 'inferred',
+        evidence: { reason: 'subagent transcript' },
+        relationshipType: 'child',
         sourceSessionId: session.id,
         sourceTurnId: turn.id,
         targetSessionId: childSession.id,
@@ -650,15 +722,16 @@ describePostgres("postgres integration", () => {
     await expect(
       service.db.insert(rawSessionRecords).values({
         authorUserId: author.id,
-        contentHash: "sha256:second",
-        contentType: "jsonl",
-        harness: "codex",
+        contentHash: 'sha256:second',
+        contentType: 'jsonl',
+        harness: 'codex',
         isActive: true,
         sessionId: session.id,
         snapshotOrdinal: 1,
         sourceBindingId: sourceBinding.id,
         workspaceId: workspace.id,
       }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
     ).rejects.toThrow();
 
     await service.db
@@ -670,9 +743,9 @@ describePostgres("postgres integration", () => {
       .insert(rawSessionRecords)
       .values({
         authorUserId: author.id,
-        contentHash: "sha256:second",
-        contentType: "jsonl",
-        harness: "codex",
+        contentHash: 'sha256:second',
+        contentType: 'jsonl',
+        harness: 'codex',
         isActive: true,
         sessionId: session.id,
         snapshotOrdinal: 1,
@@ -683,25 +756,27 @@ describePostgres("postgres integration", () => {
     expect(replacement?.isActive).toBe(true);
   });
 
-  test("persists Context Index entries and resolves Saga Links through source bindings", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("context-index");
+  test('persists Context Index entries and resolves Saga Links through source bindings', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('context-index');
 
     const entry = await Effect.runPromise(
       upsertContextIndexEntry(service, {
-        description: "Architecture seed note.",
-        externalId: "notes/saga-v2-architecture-seed.md",
+        description: 'Architecture seed note.',
+        externalId: 'notes/saga-v2-architecture-seed.md',
         importance: 0.9,
-        includePolicy: "always",
-        key: "architecture-seed",
-        metadata: { section: "design-notes" },
+        includePolicy: 'always',
+        key: 'architecture-seed',
+        metadata: { section: 'design-notes' },
         sourceBindingId: sourceBinding.id,
-        title: "Architecture Seed",
+        title: 'Architecture Seed',
         workspaceId: workspace.id,
       }),
     );
 
-    expect(entry.sagaLink).toBe(makeSagaContextLink("architecture-seed"));
+    expect(entry.sagaLink).toBe(makeSagaContextLink('architecture-seed'));
 
     const activeEntries = await Effect.runPromise(
       listActiveContextIndexEntries(service, {
@@ -710,11 +785,11 @@ describePostgres("postgres integration", () => {
     );
     expect(activeEntries).toHaveLength(1);
     expect(activeEntries[0]).toMatchObject({
-      key: "architecture-seed",
+      key: 'architecture-seed',
       sourceBinding: {
         id: sourceBinding.id,
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
       },
     });
 
@@ -726,10 +801,10 @@ describePostgres("postgres integration", () => {
     );
     expect(resolved).toMatchObject({
       entry: {
-        externalId: "notes/saga-v2-architecture-seed.md",
+        externalId: 'notes/saga-v2-architecture-seed.md',
         sourceBinding: {
           id: sourceBinding.id,
-          sourceType: "codex",
+          sourceType: 'codex',
         },
       },
       provenance: {
@@ -741,25 +816,25 @@ describePostgres("postgres integration", () => {
 
     await Effect.runPromise(
       upsertContextIndexEntry(service, {
-        externalId: "notes/saga-v2-architecture-seed.md",
-        includePolicy: "when_relevant",
-        key: "architecture-seed",
+        externalId: 'notes/saga-v2-architecture-seed.md',
+        includePolicy: 'when_relevant',
+        key: 'architecture-seed',
         sourceBindingId: sourceBinding.id,
-        title: "Updated Architecture Seed",
+        title: 'Updated Architecture Seed',
         workspaceId: workspace.id,
       }),
     );
 
     const allEntries = await Effect.runPromise(
       listContextIndexEntries(service, {
-        includePolicies: ["always", "when_relevant"],
+        includePolicies: ['always', 'when_relevant'],
         workspaceId: workspace.id,
       }),
     );
     expect(allEntries).toHaveLength(1);
     expect(allEntries[0]).toMatchObject({
-      includePolicy: "when_relevant",
-      title: "Updated Architecture Seed",
+      includePolicy: 'when_relevant',
+      title: 'Updated Architecture Seed',
     });
 
     const rows = await service.db
@@ -769,36 +844,40 @@ describePostgres("postgres integration", () => {
     expect(rows).toHaveLength(1);
   });
 
-  test("rejects Context Index entries that reference another workspace source binding", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const first = await createWorkspaceWithCodexSource("context-index-first");
-    const second = await createWorkspaceWithCodexSource("context-index-second");
+  test('rejects Context Index entries that reference another workspace source binding', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const first = await createWorkspaceWithCodexSource('context-index-first');
+    const second = await createWorkspaceWithCodexSource('context-index-second');
 
     await expect(
       Effect.runPromise(
         upsertContextIndexEntry(service, {
-          externalId: "notes/cross-workspace.md",
-          key: "cross-workspace",
+          externalId: 'notes/cross-workspace.md',
+          key: 'cross-workspace',
           sourceBindingId: first.sourceBinding.id,
-          title: "Cross Workspace",
+          title: 'Cross Workspace',
           workspaceId: second.workspace.id,
         }),
       ),
-    ).rejects.toThrow("Context Index source binding must belong to the same workspace");
+    ).rejects.toThrow('Context Index source binding must belong to the same workspace');
   });
 
-  test("does not list or resolve Context Index entries for disabled source bindings", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('does not list or resolve Context Index entries for disabled source bindings', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const { sourceBinding, workspace } =
-      await createWorkspaceWithCodexSource("context-index-disabled");
+      await createWorkspaceWithCodexSource('context-index-disabled');
 
     const entry = await Effect.runPromise(
       upsertContextIndexEntry(service, {
-        externalId: "notes/disabled.md",
-        includePolicy: "always",
-        key: "disabled-entry",
+        externalId: 'notes/disabled.md',
+        includePolicy: 'always',
+        key: 'disabled-entry',
         sourceBindingId: sourceBinding.id,
-        title: "Disabled Entry",
+        title: 'Disabled Entry',
         workspaceId: workspace.id,
       }),
     );
@@ -814,7 +893,7 @@ describePostgres("postgres integration", () => {
           workspaceId: workspace.id,
         }),
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toStrictEqual([]);
     await expect(
       Effect.runPromise(
         resolveSagaLink(service, {
@@ -825,64 +904,70 @@ describePostgres("postgres integration", () => {
     ).rejects.toThrow(`Saga Link not found: ${entry.sagaLink}`);
   });
 
-  test("persists raw events", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('persists raw events', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
       .values({
-        displayName: "Raw Event Workspace",
+        displayName: 'Raw Event Workspace',
         handle: `raw-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const event = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.Stop",
-        externalEventId: "codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test",
-        occurredAt: "2026-06-19T20:00:00.000Z",
-        payload: { hook_event_name: "Stop" },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session-id",
+        actorId: 'codex',
+        eventType: 'codex.Stop',
+        externalEventId: 'codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test',
+        occurredAt: '2026-06-19T20:00:00.000Z',
+        payload: { hook_event_name: 'Stop' },
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session-id',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-id",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-id',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
 
     const rows = await service.db.select().from(rawEvents);
-    expect(event.eventType).toBe("codex.Stop");
+    expect(event.eventType).toBe('codex.Stop');
     expect(rows.some((row) => row.id === event.id)).toBe(true);
 
     const duplicate = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.Stop",
-        externalEventId: "codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test",
-        occurredAt: "2026-06-19T20:00:00.000Z",
-        payload: { hook_event_name: "Stop" },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session-id",
+        actorId: 'codex',
+        eventType: 'codex.Stop',
+        externalEventId: 'codex:Stop:session-id:turn-id:/tmp/transcript.jsonl:test',
+        occurredAt: '2026-06-19T20:00:00.000Z',
+        payload: { hook_event_name: 'Stop' },
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session-id',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-id",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-id',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
@@ -896,72 +981,74 @@ describePostgres("postgres integration", () => {
     expect(recent[0]?.id).toBe(event.id);
   });
 
-  test("lists Codex activation raw events for a workspace source binding", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const first = await createWorkspaceWithCodexSource("activation-first");
-    const second = await createWorkspaceWithCodexSource("activation-second");
+  test('lists Codex activation raw events for a workspace source binding', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const first = await createWorkspaceWithCodexSource('activation-first');
+    const second = await createWorkspaceWithCodexSource('activation-second');
 
     const sessionStart = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.SessionStart",
+        actorId: 'codex',
+        eventType: 'codex.SessionStart',
         externalEventId: `codex:activation:${first.workspace.id}:start`,
-        occurredAt: "2026-06-19T20:00:00.000Z",
-        payload: { hook_event_name: "SessionStart", source: "startup" },
-        provenance: { hookEventName: "SessionStart" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:00:00.000Z',
+        payload: { hook_event_name: 'SessionStart', source: 'startup' },
+        provenance: { hookEventName: 'SessionStart' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     const prompt = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:activation:${first.workspace.id}:prompt`,
-        occurredAt: "2026-06-19T20:01:00.000Z",
-        payload: { hook_event_name: "UserPromptSubmit" },
-        provenance: { hookEventName: "UserPromptSubmit" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:01:00.000Z',
+        payload: { hook_event_name: 'UserPromptSubmit' },
+        provenance: { hookEventName: 'UserPromptSubmit' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.Stop",
+        actorId: 'codex',
+        eventType: 'codex.Stop',
         externalEventId: `codex:activation:${first.workspace.id}:stop`,
-        occurredAt: "2026-06-19T20:02:00.000Z",
-        payload: { hook_event_name: "Stop" },
-        provenance: { hookEventName: "Stop" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:02:00.000Z',
+        payload: { hook_event_name: 'Stop' },
+        provenance: { hookEventName: 'Stop' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:activation:${second.workspace.id}:prompt`,
-        occurredAt: "2026-06-19T20:03:00.000Z",
-        payload: { hook_event_name: "UserPromptSubmit" },
-        provenance: { hookEventName: "UserPromptSubmit" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:03:00.000Z',
+        payload: { hook_event_name: 'UserPromptSubmit' },
+        provenance: { hookEventName: 'UserPromptSubmit' },
+        sessionId: 'session-id',
         sourceBindingId: second.sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        trustLevel: 'raw',
         workspaceId: second.workspace.id,
       }),
     );
@@ -973,75 +1060,77 @@ describePostgres("postgres integration", () => {
       }),
     );
 
-    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
+    expect(activationEvents.map((row) => row.id)).toStrictEqual([prompt.id, sessionStart.id]);
   });
 
-  test("lists Claude activation raw events for a workspace source binding", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const first = await createWorkspaceWithHarnessSource("claude-activation-first", "claude");
-    const second = await createWorkspaceWithHarnessSource("claude-activation-second", "claude");
+  test('lists Claude activation raw events for a workspace source binding', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const first = await createWorkspaceWithHarnessSource('claude-activation-first', 'claude');
+    const second = await createWorkspaceWithHarnessSource('claude-activation-second', 'claude');
 
     const sessionStart = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "claude",
-        eventType: "claude.SessionStart",
+        actorId: 'claude',
+        eventType: 'claude.SessionStart',
         externalEventId: `claude:activation:${first.workspace.id}:start`,
-        occurredAt: "2026-06-19T20:00:00.000Z",
-        payload: { hook_event_name: "SessionStart", source: "startup" },
-        provenance: { hookEventName: "SessionStart" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:00:00.000Z',
+        payload: { hook_event_name: 'SessionStart', source: 'startup' },
+        provenance: { hookEventName: 'SessionStart' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "claude:local",
-        sourceType: "claude",
-        trustLevel: "raw",
+        sourceId: 'claude:local',
+        sourceType: 'claude',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     const prompt = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "claude",
-        eventType: "claude.UserPromptSubmit",
+        actorId: 'claude',
+        eventType: 'claude.UserPromptSubmit',
         externalEventId: `claude:activation:${first.workspace.id}:prompt`,
-        occurredAt: "2026-06-19T20:01:00.000Z",
-        payload: { hook_event_name: "UserPromptSubmit" },
-        provenance: { hookEventName: "UserPromptSubmit" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:01:00.000Z',
+        payload: { hook_event_name: 'UserPromptSubmit' },
+        provenance: { hookEventName: 'UserPromptSubmit' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "claude:local",
-        sourceType: "claude",
-        trustLevel: "raw",
+        sourceId: 'claude:local',
+        sourceType: 'claude',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "claude",
-        eventType: "claude.Stop",
+        actorId: 'claude',
+        eventType: 'claude.Stop',
         externalEventId: `claude:activation:${first.workspace.id}:stop`,
-        occurredAt: "2026-06-19T20:02:00.000Z",
-        payload: { hook_event_name: "Stop" },
-        provenance: { hookEventName: "Stop" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:02:00.000Z',
+        payload: { hook_event_name: 'Stop' },
+        provenance: { hookEventName: 'Stop' },
+        sessionId: 'session-id',
         sourceBindingId: first.sourceBinding.id,
-        sourceId: "claude:local",
-        sourceType: "claude",
-        trustLevel: "raw",
+        sourceId: 'claude:local',
+        sourceType: 'claude',
+        trustLevel: 'raw',
         workspaceId: first.workspace.id,
       }),
     );
     await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "claude",
-        eventType: "claude.UserPromptSubmit",
+        actorId: 'claude',
+        eventType: 'claude.UserPromptSubmit',
         externalEventId: `claude:activation:${second.workspace.id}:prompt`,
-        occurredAt: "2026-06-19T20:03:00.000Z",
-        payload: { hook_event_name: "UserPromptSubmit" },
-        provenance: { hookEventName: "UserPromptSubmit" },
-        sessionId: "session-id",
+        occurredAt: '2026-06-19T20:03:00.000Z',
+        payload: { hook_event_name: 'UserPromptSubmit' },
+        provenance: { hookEventName: 'UserPromptSubmit' },
+        sessionId: 'session-id',
         sourceBindingId: second.sourceBinding.id,
-        sourceId: "claude:local",
-        sourceType: "claude",
-        trustLevel: "raw",
+        sourceId: 'claude:local',
+        sourceType: 'claude',
+        trustLevel: 'raw',
         workspaceId: second.workspace.id,
       }),
     );
@@ -1049,42 +1138,46 @@ describePostgres("postgres integration", () => {
     const activationEvents = await Effect.runPromise(
       listHarnessActivationRawEvents(service, {
         sourceBindingId: first.sourceBinding.id,
-        sourceType: "claude",
+        sourceType: 'claude',
         workspaceId: first.workspace.id,
       }),
     );
 
-    expect(activationEvents.map((row) => row.id)).toEqual([prompt.id, sessionStart.id]);
+    expect(activationEvents.map((row) => row.id)).toStrictEqual([prompt.id, sessionStart.id]);
   });
 
-  test("rejects raw events that reference another workspace source binding", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const first = await createWorkspaceWithCodexSource("raw-source-first");
-    const second = await createWorkspaceWithCodexSource("raw-source-second");
+  test('rejects raw events that reference another workspace source binding', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const first = await createWorkspaceWithCodexSource('raw-source-first');
+    const second = await createWorkspaceWithCodexSource('raw-source-second');
 
     await expect(
       Effect.runPromise(
         insertRawEvent(service, {
-          actorId: "codex",
-          eventType: "codex.Stop",
+          actorId: 'codex',
+          eventType: 'codex.Stop',
           externalEventId: `codex:cross-source:${Date.now().toString()}`,
-          occurredAt: "2026-06-19T20:00:00.000Z",
-          payload: { hook_event_name: "Stop" },
-          provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-          sessionId: "session-id",
+          occurredAt: '2026-06-19T20:00:00.000Z',
+          payload: { hook_event_name: 'Stop' },
+          provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+          sessionId: 'session-id',
           sourceBindingId: first.sourceBinding.id,
-          sourceId: "codex:local",
-          sourceType: "codex",
-          traceId: "turn-id",
-          trustLevel: "raw",
+          sourceId: 'codex:local',
+          sourceType: 'codex',
+          traceId: 'turn-id',
+          trustLevel: 'raw',
           workspaceId: second.workspace.id,
         }),
       ),
-    ).rejects.toThrow("raw event source binding must belong to the same workspace");
+    ).rejects.toThrow('raw event source binding must belong to the same workspace');
   });
 
-  test("scopes raw event idempotency to workspace", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('scopes raw event idempotency to workspace', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [firstWorkspace] = await service.db
       .insert(workspaces)
@@ -1099,41 +1192,41 @@ describePostgres("postgres integration", () => {
       })
       .returning();
     if (firstWorkspace === undefined || secondWorkspace === undefined) {
-      throw new Error("workspace insert returned no row");
+      throw new Error('workspace insert returned no row');
     }
 
     const [firstSource] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: firstWorkspace.id,
       })
       .returning();
     const [secondSource] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: secondWorkspace.id,
       })
       .returning();
     if (firstSource === undefined || secondSource === undefined) {
-      throw new Error("source binding insert returned no row");
+      throw new Error('source binding insert returned no row');
     }
 
     const sharedEvent = {
-      actorId: "codex",
-      eventType: "codex.Stop",
-      externalEventId: "codex:Stop:shared-session:shared-turn:/tmp/transcript.jsonl:test",
-      occurredAt: "2026-06-19T20:00:00.000Z",
-      payload: { hook_event_name: "Stop" },
-      provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-      sessionId: "shared-session",
-      sourceId: "codex:local",
-      sourceType: "codex",
-      traceId: "shared-turn",
-      trustLevel: "raw" as const,
+      actorId: 'codex',
+      eventType: 'codex.Stop',
+      externalEventId: 'codex:Stop:shared-session:shared-turn:/tmp/transcript.jsonl:test',
+      occurredAt: '2026-06-19T20:00:00.000Z',
+      payload: { hook_event_name: 'Stop' },
+      provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+      sessionId: 'shared-session',
+      sourceId: 'codex:local',
+      sourceType: 'codex',
+      traceId: 'shared-turn',
+      trustLevel: 'raw' as const,
     };
 
     const firstEvent = await Effect.runPromise(
@@ -1162,46 +1255,50 @@ describePostgres("postgres integration", () => {
     expect(firstDuplicate.id).toBe(firstEvent.id);
   });
 
-  test("rejects claim evidence that references another workspace raw event", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('rejects claim evidence that references another workspace raw event', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
-    const first = await createWorkspaceWithCodexSource("evidence-first");
-    const second = await createWorkspaceWithCodexSource("evidence-second");
+    const first = await createWorkspaceWithCodexSource('evidence-first');
+    const second = await createWorkspaceWithCodexSource('evidence-second');
     const rawEvent = await insertCodexPromptEvent({
-      prompt: "Agreed. Cross workspace evidence should fail.",
+      prompt: 'Agreed. Cross workspace evidence should fail.',
       sourceBindingId: first.sourceBinding.id,
-      turn: "turn-1",
+      turn: 'turn-1',
       workspaceId: first.workspace.id,
     });
 
     await expect(
       Effect.runPromise(
         insertClaimEventAndProject(service, {
-          attributes: { extractor: "deterministic-v1" },
-          claimKey: "cross-workspace-claim",
+          attributes: { extractor: 'deterministic-v1' },
+          claimKey: 'cross-workspace-claim',
           confidence: 0.72,
           evidence: {
             eventType: rawEvent.eventType,
             externalEventId: rawEvent.externalEventId,
             occurredAt: rawEvent.occurredAt.toISOString(),
-            quote: "Agreed. Cross workspace evidence should fail.",
+            quote: 'Agreed. Cross workspace evidence should fail.',
             rawEventId: rawEvent.id,
             sessionId: rawEvent.sessionId ?? undefined,
             sourceId: rawEvent.sourceId,
             sourceType: rawEvent.sourceType,
             traceId: rawEvent.traceId ?? undefined,
           },
-          eventType: "extracted",
-          kind: "decision",
-          text: "Cross workspace evidence should fail.",
+          eventType: 'extracted',
+          kind: 'decision',
+          text: 'Cross workspace evidence should fail.',
           workspaceId: second.workspace.id,
         }),
       ),
-    ).rejects.toThrow("claim evidence rawEventId belongs to a different workspace");
+    ).rejects.toThrow('claim evidence rawEventId belongs to a different workspace');
   });
 
-  test("stores extracted claim events and projects current claims", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('stores extracted claim events and projects current claims', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1209,55 +1306,59 @@ describePostgres("postgres integration", () => {
         handle: `claims-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const rawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
-        externalEventId: "codex:UserPromptSubmit:session:turn:/tmp/transcript.jsonl:test",
-        occurredAt: "2026-06-19T20:00:00.000Z",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
+        externalEventId: 'codex:UserPromptSubmit:session:turn:/tmp/transcript.jsonl:test',
+        occurredAt: '2026-06-19T20:00:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Agreed. We should compile Active Context from claims.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Agreed. We should compile Active Context from claims.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
 
     const candidate = {
-      attributes: { extractor: "deterministic-v1" },
+      attributes: { extractor: 'deterministic-v1' },
       confidence: 0.72,
       evidence: {
         eventType: rawEvent.eventType,
         externalEventId: rawEvent.externalEventId,
         occurredAt: rawEvent.occurredAt.toISOString(),
-        quote: "Agreed. We should compile Active Context from claims.",
+        quote: 'Agreed. We should compile Active Context from claims.',
         rawEventId: rawEvent.id,
         sessionId: rawEvent.sessionId ?? undefined,
         sourceId: rawEvent.sourceId,
         sourceType: rawEvent.sourceType,
         traceId: rawEvent.traceId ?? undefined,
       },
-      kind: "decision" as const,
-      text: "We should compile Active Context from claims.",
+      kind: 'decision' as const,
+      text: 'We should compile Active Context from claims.',
       workspaceId: workspace.id,
     };
 
@@ -1269,21 +1370,21 @@ describePostgres("postgres integration", () => {
     );
     const secondRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
-        externalEventId: "codex:UserPromptSubmit:session:turn-2:/tmp/transcript.jsonl:test",
-        occurredAt: "2026-06-19T20:05:00.000Z",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
+        externalEventId: 'codex:UserPromptSubmit:session:turn-2:/tmp/transcript.jsonl:test',
+        occurredAt: '2026-06-19T20:05:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Agreed. We should compile Active Context from claims.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Agreed. We should compile Active Context from claims.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-2",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-2',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
@@ -1303,7 +1404,7 @@ describePostgres("postgres integration", () => {
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.9,
         evidence: secondCandidate.evidence,
-        eventType: "supported",
+        eventType: 'supported',
         kind: secondCandidate.kind,
         text: secondCandidate.text,
         workspaceId: secondCandidate.workspaceId,
@@ -1329,88 +1430,90 @@ describePostgres("postgres integration", () => {
     });
     expect(supportedProjection.event.confidence).toBeGreaterThan(firstProjection.event.confidence);
     expect(staleProjection.currentClaim.id).toBe(supportedProjection.currentClaim.id);
-    expect(staleProjection.currentClaim.state).toBe("supported");
+    expect(staleProjection.currentClaim.state).toBe('supported');
     expect(staleProjection.currentClaim.attributes).toMatchObject({
       confidenceInputs: expect.objectContaining({
         base: 0.9,
       }),
     });
-    expect(current[0]?.claimText).toBe("We should compile Active Context from claims.");
-    expect(current[0]?.state).toBe("supported");
-    expect(await service.db.select().from(claimEvents)).toContainEqual(
+    expect(current[0]?.claimText).toBe('We should compile Active Context from claims.');
+    expect(current[0]?.state).toBe('supported');
+    await expect(service.db.select().from(claimEvents)).resolves.toContainEqual(
       expect.objectContaining({ id: firstProjection.event.id }),
     );
-    expect(await service.db.select().from(currentClaims)).toContainEqual(
+    await expect(service.db.select().from(currentClaims)).resolves.toContainEqual(
       expect.objectContaining({ id: firstProjection.currentClaim.id }),
     );
   });
 
-  test("excludes review flag churn from confidence recurrence", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('excludes review flag churn from confidence recurrence', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
-    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("recurrence");
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('recurrence');
     const firstRawEvent = await insertCodexPromptEvent({
-      prompt: "Agreed. Recurrence should count supporting evidence only.",
+      prompt: 'Agreed. Recurrence should count supporting evidence only.',
       sourceBindingId: sourceBinding.id,
-      turn: "turn-1",
+      turn: 'turn-1',
       workspaceId: workspace.id,
     });
     const firstProjection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.72,
         evidence: {
           eventType: firstRawEvent.eventType,
           externalEventId: firstRawEvent.externalEventId,
           occurredAt: firstRawEvent.occurredAt.toISOString(),
-          quote: "Agreed. Recurrence should count supporting evidence only.",
+          quote: 'Agreed. Recurrence should count supporting evidence only.',
           rawEventId: firstRawEvent.id,
           sessionId: firstRawEvent.sessionId ?? undefined,
           sourceId: firstRawEvent.sourceId,
           sourceType: firstRawEvent.sourceType,
           traceId: firstRawEvent.traceId ?? undefined,
         },
-        kind: "decision",
-        text: "Recurrence should count supporting evidence only.",
+        kind: 'decision',
+        text: 'Recurrence should count supporting evidence only.',
         workspaceId: workspace.id,
       }),
     );
-    for (const action of ["pin", "watch", "unwatch"] as const) {
+    for (const action of ['pin', 'watch', 'unwatch'] as const) {
       await Effect.runPromise(
         insertClaimReviewEventAndProject(service, {
           action,
           claimKey: firstProjection.currentClaim.claimKey,
-          occurredAt: "2026-06-19T20:01:00.000Z",
+          occurredAt: '2026-06-19T20:01:00.000Z',
           workspaceId: workspace.id,
         }),
       );
     }
 
     const secondRawEvent = await insertCodexPromptEvent({
-      prompt: "Agreed. Recurrence should count supporting evidence only.",
+      prompt: 'Agreed. Recurrence should count supporting evidence only.',
       sourceBindingId: sourceBinding.id,
-      turn: "turn-2",
+      turn: 'turn-2',
       workspaceId: workspace.id,
     });
     const secondProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.72,
         evidence: {
           eventType: secondRawEvent.eventType,
           externalEventId: secondRawEvent.externalEventId,
           occurredAt: secondRawEvent.occurredAt.toISOString(),
-          quote: "Agreed. Recurrence should count supporting evidence only.",
+          quote: 'Agreed. Recurrence should count supporting evidence only.',
           rawEventId: secondRawEvent.id,
           sessionId: secondRawEvent.sessionId ?? undefined,
           sourceId: secondRawEvent.sourceId,
           sourceType: secondRawEvent.sourceType,
           traceId: secondRawEvent.traceId ?? undefined,
         },
-        eventType: "supported",
-        kind: "decision",
-        text: "Recurrence should count supporting evidence only.",
+        eventType: 'supported',
+        kind: 'decision',
+        text: 'Recurrence should count supporting evidence only.',
         workspaceId: workspace.id,
       }),
     );
@@ -1422,13 +1525,17 @@ describePostgres("postgres integration", () => {
     });
   });
 
-  test("lists active context claims by filtering terminal states before limit", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('lists active context claims by filtering terminal states before limit', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
-    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("active-filter");
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('active-filter');
 
     async function insertClaim(text: string, turn: string) {
-      if (service === undefined) throw new Error("database service was not initialized");
+      if (service === undefined) {
+        throw new Error('database service was not initialized');
+      }
       const rawEvent = await insertCodexPromptEvent({
         prompt: text,
         sourceBindingId: sourceBinding.id,
@@ -1437,7 +1544,7 @@ describePostgres("postgres integration", () => {
       });
       return Effect.runPromise(
         insertExtractedCandidateClaim(service, {
-          attributes: { extractor: "deterministic-v1" },
+          attributes: { extractor: 'deterministic-v1' },
           confidence: 0.72,
           evidence: {
             eventType: rawEvent.eventType,
@@ -1450,7 +1557,7 @@ describePostgres("postgres integration", () => {
             sourceType: rawEvent.sourceType,
             traceId: rawEvent.traceId ?? undefined,
           },
-          kind: "decision",
+          kind: 'decision',
           text,
           workspaceId: workspace.id,
         }),
@@ -1464,14 +1571,14 @@ describePostgres("postgres integration", () => {
       );
       await Effect.runPromise(
         insertClaimMaintenanceEventAndProject(service, {
-          action: "supersede",
+          action: 'supersede',
           claimKey: projection.currentClaim.claimKey,
-          occurredAt: `2026-06-19T21:${index.toString().padStart(2, "0")}:00.000Z`,
+          occurredAt: `2026-06-19T21:${index.toString().padStart(2, '0')}:00.000Z`,
           workspaceId: workspace.id,
         }),
       );
     }
-    await insertClaim("Agreed. Live claim should survive terminal row pressure.", "live");
+    await insertClaim('Agreed. Live claim should survive terminal row pressure.', 'live');
 
     const activeClaims = await Effect.runPromise(
       listActiveContextClaims(service, {
@@ -1482,12 +1589,14 @@ describePostgres("postgres integration", () => {
 
     expect(activeClaims).toHaveLength(1);
     expect(activeClaims[0]?.claimText).toBe(
-      "Agreed. Live claim should survive terminal row pressure.",
+      'Agreed. Live claim should survive terminal row pressure.',
     );
   });
 
-  test("detects contradictory candidate evidence and marks existing claims contradicted", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('detects contradictory candidate evidence and marks existing claims contradicted', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1495,96 +1604,100 @@ describePostgres("postgres integration", () => {
         handle: `contradictions-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const firstRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:contradiction:${workspace.id}:turn-1`,
-        occurredAt: "2026-06-19T20:00:00.000Z",
+        occurredAt: '2026-06-19T20:00:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "We should use SSR for the control plane.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'We should use SSR for the control plane.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-1",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-1',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
     const firstProjection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.66,
         evidence: {
           eventType: firstRawEvent.eventType,
           externalEventId: firstRawEvent.externalEventId,
           occurredAt: firstRawEvent.occurredAt.toISOString(),
-          quote: "We should use SSR for the control plane.",
+          quote: 'We should use SSR for the control plane.',
           rawEventId: firstRawEvent.id,
           sessionId: firstRawEvent.sessionId ?? undefined,
           sourceId: firstRawEvent.sourceId,
           sourceType: firstRawEvent.sourceType,
           traceId: firstRawEvent.traceId ?? undefined,
         },
-        kind: "follow_up",
-        text: "We should use SSR for the control plane.",
+        kind: 'follow_up',
+        text: 'We should use SSR for the control plane.',
         workspaceId: workspace.id,
       }),
     );
 
     const secondRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:contradiction:${workspace.id}:turn-2`,
-        occurredAt: "2026-06-19T20:05:00.000Z",
+        occurredAt: '2026-06-19T20:05:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "We should not use SSR for the control plane.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'We should not use SSR for the control plane.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-2",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-2',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
     await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.66,
         evidence: {
           eventType: secondRawEvent.eventType,
           externalEventId: secondRawEvent.externalEventId,
           occurredAt: secondRawEvent.occurredAt.toISOString(),
-          quote: "We should not use SSR for the control plane.",
+          quote: 'We should not use SSR for the control plane.',
           rawEventId: secondRawEvent.id,
           sessionId: secondRawEvent.sessionId ?? undefined,
           sourceId: secondRawEvent.sourceId,
           sourceType: secondRawEvent.sourceType,
           traceId: secondRawEvent.traceId ?? undefined,
         },
-        kind: "follow_up",
-        text: "We should not use SSR for the control plane.",
+        kind: 'follow_up',
+        text: 'We should not use SSR for the control plane.',
         workspaceId: workspace.id,
       }),
     );
@@ -1598,16 +1711,18 @@ describePostgres("postgres integration", () => {
       (claim) => claim.claimKey === firstProjection.currentClaim.claimKey,
     );
 
-    expect(contradictedClaim?.state).toBe("contradicted");
+    expect(contradictedClaim?.state).toBe('contradicted');
     expect(contradictedClaim?.attributes).toMatchObject({
       contradiction: {
-        detectedByClaimText: "We should not use SSR for the control plane.",
+        detectedByClaimText: 'We should not use SSR for the control plane.',
       },
     });
   });
 
-  test("projects claim maintenance actions for decay and supersede", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('projects claim maintenance actions for decay and supersede', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1615,45 +1730,51 @@ describePostgres("postgres integration", () => {
         handle: `maintenance-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
     const maintenanceWorkspaceId = workspace.id;
     const maintenanceSourceBindingId = sourceBinding.id;
 
     async function seedClaim(text: string, turn: string) {
-      if (service === undefined) throw new Error("database service was not initialized");
+      if (service === undefined) {
+        throw new Error('database service was not initialized');
+      }
       const rawEvent = await Effect.runPromise(
         insertRawEvent(service, {
-          actorId: "codex",
-          eventType: "codex.UserPromptSubmit",
+          actorId: 'codex',
+          eventType: 'codex.UserPromptSubmit',
           externalEventId: `codex:maintenance:${maintenanceWorkspaceId}:${turn}`,
-          occurredAt: "2026-06-19T20:00:00.000Z",
+          occurredAt: '2026-06-19T20:00:00.000Z',
           payload: {
-            hook_event_name: "UserPromptSubmit",
+            hook_event_name: 'UserPromptSubmit',
             prompt: text,
           },
-          provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-          sessionId: "session",
+          provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+          sessionId: 'session',
           sourceBindingId: maintenanceSourceBindingId,
-          sourceId: "codex:local",
-          sourceType: "codex",
+          sourceId: 'codex:local',
+          sourceType: 'codex',
           traceId: turn,
-          trustLevel: "raw",
+          trustLevel: 'raw',
           workspaceId: maintenanceWorkspaceId,
         }),
       );
       return Effect.runPromise(
         insertExtractedCandidateClaim(service, {
-          attributes: { extractor: "deterministic-v1" },
+          attributes: { extractor: 'deterministic-v1' },
           confidence: 0.72,
           evidence: {
             eventType: rawEvent.eventType,
@@ -1666,50 +1787,52 @@ describePostgres("postgres integration", () => {
             sourceType: rawEvent.sourceType,
             traceId: rawEvent.traceId ?? undefined,
           },
-          kind: "decision",
+          kind: 'decision',
           text,
           workspaceId: maintenanceWorkspaceId,
         }),
       );
     }
 
-    const decayed = await seedClaim("Agreed. We should keep the old local cache.", "turn-1");
-    const superseded = await seedClaim("Agreed. We should keep the old CLI surface.", "turn-2");
+    const decayed = await seedClaim('Agreed. We should keep the old local cache.', 'turn-1');
+    const superseded = await seedClaim('Agreed. We should keep the old CLI surface.', 'turn-2');
     const decayedProjection = await Effect.runPromise(
       insertClaimMaintenanceEventAndProject(service, {
-        action: "decay",
+        action: 'decay',
         claimKey: decayed.currentClaim.claimKey,
-        occurredAt: "2026-06-19T21:00:00.000Z",
-        reason: "stale evidence",
+        occurredAt: '2026-06-19T21:00:00.000Z',
+        reason: 'stale evidence',
         workspaceId: maintenanceWorkspaceId,
       }),
     );
     const supersededProjection = await Effect.runPromise(
       insertClaimMaintenanceEventAndProject(service, {
-        action: "supersede",
+        action: 'supersede',
         claimKey: superseded.currentClaim.claimKey,
-        occurredAt: "2026-06-19T21:05:00.000Z",
-        reason: "new CLI contract",
+        occurredAt: '2026-06-19T21:05:00.000Z',
+        reason: 'new CLI contract',
         targetClaimKeys: [decayed.currentClaim.claimKey],
         workspaceId: maintenanceWorkspaceId,
       }),
     );
 
-    expect(decayedProjection.currentClaim.state).toBe("decayed");
+    expect(decayedProjection.currentClaim.state).toBe('decayed');
     expect(decayedProjection.currentClaim.confidence).toBeLessThan(decayed.currentClaim.confidence);
     expect(decayedProjection.currentClaim.attributes).toMatchObject({
-      maintenanceLastAction: "decayed",
-      maintenanceReason: "stale evidence",
+      maintenanceLastAction: 'decayed',
+      maintenanceReason: 'stale evidence',
     });
-    expect(supersededProjection.currentClaim.state).toBe("superseded");
+    expect(supersededProjection.currentClaim.state).toBe('superseded');
     expect(supersededProjection.currentClaim.attributes).toMatchObject({
-      maintenanceLastAction: "superseded",
+      maintenanceLastAction: 'superseded',
       maintenanceTargetClaimKeys: [decayed.currentClaim.claimKey],
     });
   });
 
-  test("projects claim review actions from append-only events", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('projects claim review actions from append-only events', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
 
     const [workspace] = await service.db
       .insert(workspaces)
@@ -1717,217 +1840,221 @@ describePostgres("postgres integration", () => {
         handle: `review-${Date.now().toString(36)}`,
       })
       .returning();
-    if (workspace === undefined) throw new Error("workspace insert returned no row");
+    if (workspace === undefined) {
+      throw new Error('workspace insert returned no row');
+    }
 
     const [sourceBinding] = await service.db
       .insert(sourceBindings)
       .values({
-        sourceType: "codex",
-        sourceUri: "codex://local",
+        sourceType: 'codex',
+        sourceUri: 'codex://local',
         workspaceId: workspace.id,
       })
       .returning();
-    if (sourceBinding === undefined) throw new Error("source binding insert returned no row");
+    if (sourceBinding === undefined) {
+      throw new Error('source binding insert returned no row');
+    }
 
     const rawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:review:${workspace.id}:turn-1`,
-        occurredAt: "2026-06-19T20:00:00.000Z",
+        occurredAt: '2026-06-19T20:00:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Agreed. Claim review should be durable.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Agreed. Claim review should be durable.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-1",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-1',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
 
     const firstProjection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.72,
         evidence: {
           eventType: rawEvent.eventType,
           externalEventId: rawEvent.externalEventId,
           occurredAt: rawEvent.occurredAt.toISOString(),
-          quote: "Agreed. Claim review should be durable.",
+          quote: 'Agreed. Claim review should be durable.',
           rawEventId: rawEvent.id,
           sessionId: rawEvent.sessionId ?? undefined,
           sourceId: rawEvent.sourceId,
           sourceType: rawEvent.sourceType,
           traceId: rawEvent.traceId ?? undefined,
         },
-        kind: "decision",
-        text: "Claim review should be durable.",
+        kind: 'decision',
+        text: 'Claim review should be durable.',
         workspaceId: workspace.id,
       }),
     );
 
     const acceptedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "accept",
+        action: 'accept',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:10:00.000Z",
+        occurredAt: '2026-06-19T20:10:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const pinnedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "pin",
+        action: 'pin',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:11:00.000Z",
+        occurredAt: '2026-06-19T20:11:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const watchedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "watch",
+        action: 'watch',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:12:00.000Z",
+        occurredAt: '2026-06-19T20:12:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const laterRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:review:${workspace.id}:turn-2`,
-        occurredAt: "2026-06-19T20:20:00.000Z",
+        occurredAt: '2026-06-19T20:20:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Agreed. Claim review should be durable.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Agreed. Claim review should be durable.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-2",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-2',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
     const laterSourceProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: "deterministic-v2" },
+        attributes: { extractor: 'deterministic-v2' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.91,
         evidence: {
           eventType: laterRawEvent.eventType,
           externalEventId: laterRawEvent.externalEventId,
           occurredAt: laterRawEvent.occurredAt.toISOString(),
-          quote: "Agreed. Claim review should be durable.",
+          quote: 'Agreed. Claim review should be durable.',
           rawEventId: laterRawEvent.id,
           sessionId: laterRawEvent.sessionId ?? undefined,
           sourceId: laterRawEvent.sourceId,
           sourceType: laterRawEvent.sourceType,
           traceId: laterRawEvent.traceId ?? undefined,
         },
-        eventType: "supported",
-        kind: "decision",
-        text: "Claim review should be durable.",
+        eventType: 'supported',
+        kind: 'decision',
+        text: 'Claim review should be durable.',
         workspaceId: workspace.id,
       }),
     );
     const unwatchedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "unwatch",
+        action: 'unwatch',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:20:30.000Z",
+        occurredAt: '2026-06-19T20:20:30.000Z',
         workspaceId: workspace.id,
       }),
     );
     const rejectedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "reject",
+        action: 'reject',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:21:00.000Z",
+        occurredAt: '2026-06-19T20:21:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const revivedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "accept",
+        action: 'accept',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:22:00.000Z",
+        occurredAt: '2026-06-19T20:22:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const contradictedRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:review:${workspace.id}:turn-3`,
-        occurredAt: "2026-06-19T20:23:00.000Z",
+        occurredAt: '2026-06-19T20:23:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Actually, claim review should not be durable.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Actually, claim review should not be durable.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "turn-3",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'turn-3',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
     const contradictedProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: "deterministic-v2" },
+        attributes: { extractor: 'deterministic-v2' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.87,
         evidence: {
           eventType: contradictedRawEvent.eventType,
           externalEventId: contradictedRawEvent.externalEventId,
           occurredAt: contradictedRawEvent.occurredAt.toISOString(),
-          quote: "Actually, claim review should not be durable.",
+          quote: 'Actually, claim review should not be durable.',
           rawEventId: contradictedRawEvent.id,
           sessionId: contradictedRawEvent.sessionId ?? undefined,
           sourceId: contradictedRawEvent.sourceId,
           sourceType: contradictedRawEvent.sourceType,
           traceId: contradictedRawEvent.traceId ?? undefined,
         },
-        eventType: "contradicted",
-        kind: "decision",
-        text: "Claim review should be durable.",
+        eventType: 'contradicted',
+        kind: 'decision',
+        text: 'Claim review should be durable.',
         workspaceId: workspace.id,
       }),
     );
     const revivedFromContradictedProjection = await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "accept",
+        action: 'accept',
         claimKey: firstProjection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T20:24:00.000Z",
+        occurredAt: '2026-06-19T20:24:00.000Z',
         workspaceId: workspace.id,
       }),
     );
     const staleProjection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.72,
         evidence: {
           eventType: rawEvent.eventType,
           externalEventId: rawEvent.externalEventId,
           occurredAt: rawEvent.occurredAt.toISOString(),
-          quote: "Agreed. Claim review should be durable.",
+          quote: 'Agreed. Claim review should be durable.',
           rawEventId: rawEvent.id,
           sessionId: rawEvent.sessionId ?? undefined,
           sourceId: rawEvent.sourceId,
           sourceType: rawEvent.sourceType,
           traceId: rawEvent.traceId ?? undefined,
         },
-        kind: "decision",
-        text: "Claim review should be durable.",
+        kind: 'decision',
+        text: 'Claim review should be durable.',
         workspaceId: workspace.id,
       }),
     );
@@ -1936,96 +2063,98 @@ describePostgres("postgres integration", () => {
       .from(claimEvents)
       .where(eq(claimEvents.claimKey, firstProjection.currentClaim.claimKey));
 
-    expect(acceptedProjection.event.eventType).toBe("supported");
+    expect(acceptedProjection.event.eventType).toBe('supported');
     expect(acceptedProjection.event.rawEventId).not.toBe(rawEvent.id);
-    expect(acceptedProjection.event.occurredAt.toISOString()).toBe("2026-06-19T20:10:00.000Z");
-    expect(pinnedProjection.event.eventType).toBe("pinned");
-    expect(pinnedProjection.currentClaim.state).toBe("supported");
+    expect(acceptedProjection.event.occurredAt.toISOString()).toBe('2026-06-19T20:10:00.000Z');
+    expect(pinnedProjection.event.eventType).toBe('pinned');
+    expect(pinnedProjection.currentClaim.state).toBe('supported');
     expect(pinnedProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "pinned",
+      reviewLastAction: 'pinned',
       reviewPinned: true,
     });
-    expect(watchedProjection.event.eventType).toBe("watched");
+    expect(watchedProjection.event.eventType).toBe('watched');
     expect(watchedProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "watched",
+      reviewLastAction: 'watched',
       reviewPinned: true,
       reviewWatched: true,
     });
     expect(laterSourceProjection.currentClaim.attributes).toMatchObject({
-      extractor: "deterministic-v2",
-      reviewLastAction: "watched",
+      extractor: 'deterministic-v2',
+      reviewLastAction: 'watched',
       reviewPinned: true,
       reviewWatched: true,
     });
-    expect(unwatchedProjection.event.eventType).toBe("unwatched");
+    expect(unwatchedProjection.event.eventType).toBe('unwatched');
     expect(unwatchedProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "unwatched",
+      reviewLastAction: 'unwatched',
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(rejectedProjection.currentClaim.state).toBe("rejected");
-    expect(revivedProjection.currentClaim.state).toBe("supported");
+    expect(rejectedProjection.currentClaim.state).toBe('rejected');
+    expect(revivedProjection.currentClaim.state).toBe('supported');
     expect(revivedProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "supported",
+      reviewLastAction: 'supported',
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(contradictedProjection.currentClaim.state).toBe("contradicted");
+    expect(contradictedProjection.currentClaim.state).toBe('contradicted');
     expect(contradictedProjection.currentClaim.attributes).toMatchObject({
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(revivedFromContradictedProjection.currentClaim.state).toBe("supported");
+    expect(revivedFromContradictedProjection.currentClaim.state).toBe('supported');
     expect(revivedFromContradictedProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "supported",
+      reviewLastAction: 'supported',
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(staleProjection.currentClaim.state).toBe("supported");
+    expect(staleProjection.currentClaim.state).toBe('supported');
     expect(staleProjection.currentClaim.attributes).toMatchObject({
-      reviewLastAction: "supported",
+      reviewLastAction: 'supported',
       reviewPinned: true,
       reviewWatched: false,
     });
-    expect(reviewEvents.map((event) => event.eventType)).toEqual(
+    expect(reviewEvents.map((event) => event.eventType)).toStrictEqual(
       expect.arrayContaining([
-        "contradicted",
-        "extracted",
-        "pinned",
-        "rejected",
-        "supported",
-        "unwatched",
-        "watched",
+        'contradicted',
+        'extracted',
+        'pinned',
+        'rejected',
+        'supported',
+        'unwatched',
+        'watched',
       ]),
     );
   });
 
-  test("promotes a current claim into an event-backed decision record", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
-    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("promotion");
+  test('promotes a current claim into an event-backed decision record', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('promotion');
     const rawEvent = await insertCodexPromptEvent({
-      prompt: "Observation: Saga should expose claim promotion from the governance UI.",
+      prompt: 'Observation: Saga should expose claim promotion from the governance UI.',
       sourceBindingId: sourceBinding.id,
-      turn: "promotion-1",
+      turn: 'promotion-1',
       workspaceId: workspace.id,
     });
     const projection = await Effect.runPromise(
       insertExtractedCandidateClaim(service, {
-        attributes: { extractor: "deterministic-v1" },
+        attributes: { extractor: 'deterministic-v1' },
         confidence: 0.62,
         evidence: {
           eventType: rawEvent.eventType,
           externalEventId: rawEvent.externalEventId,
           occurredAt: rawEvent.occurredAt.toISOString(),
-          quote: "Observation: Saga should expose claim promotion from the governance UI.",
+          quote: 'Observation: Saga should expose claim promotion from the governance UI.',
           rawEventId: rawEvent.id,
           sessionId: rawEvent.sessionId ?? undefined,
           sourceId: rawEvent.sourceId,
           sourceType: rawEvent.sourceType,
           traceId: rawEvent.traceId ?? undefined,
         },
-        kind: "observation",
-        text: "Saga should expose claim promotion from the governance UI.",
+        kind: 'observation',
+        text: 'Saga should expose claim promotion from the governance UI.',
         workspaceId: workspace.id,
       }),
     );
@@ -2033,8 +2162,8 @@ describePostgres("postgres integration", () => {
     const promoted = await Effect.runPromise(
       insertClaimPromotionEventAndProject(service, {
         claimKey: projection.currentClaim.claimKey,
-        occurredAt: "2026-06-19T21:00:00.000Z",
-        title: "Expose Claim Promotion",
+        occurredAt: '2026-06-19T21:00:00.000Z',
+        title: 'Expose Claim Promotion',
         workspaceId: workspace.id,
       }),
     );
@@ -2044,84 +2173,86 @@ describePostgres("postgres integration", () => {
       .where(eq(rawEvents.id, promoted.event.rawEventId))
       .limit(1);
 
-    expect(promoted.event.eventType).toBe("promoted");
-    expect(promoted.event.claimKind).toBe("decision");
+    expect(promoted.event.eventType).toBe('promoted');
+    expect(promoted.event.claimKind).toBe('decision');
     expect(promoted.event.evidence).toMatchObject({
-      eventType: "saga.claim.promotion",
-      quote: "Promoted to decision record: Expose Claim Promotion",
+      eventType: 'saga.claim.promotion',
+      quote: 'Promoted to decision record: Expose Claim Promotion',
     });
     expect(promoted.currentClaim).toMatchObject({
-      claimKind: "decision",
-      state: "supported",
+      claimKind: 'decision',
+      state: 'supported',
     });
     expect(promoted.currentClaim.confidence).toBeGreaterThan(projection.currentClaim.confidence);
     expect(promoted.currentClaim.attributes).toMatchObject({
       adrPromoted: true,
-      adrPromotedAt: "2026-06-19T21:00:00.000Z",
-      adrTitle: "Expose Claim Promotion",
+      adrPromotedAt: '2026-06-19T21:00:00.000Z',
+      adrTitle: 'Expose Claim Promotion',
     });
     expect(promotionRawEvent).toMatchObject({
-      eventType: "saga.claim.promotion",
-      sourceId: "saga:control-plane",
-      sourceType: "saga",
+      eventType: 'saga.claim.promotion',
+      sourceId: 'saga:control-plane',
+      sourceType: 'saga',
       workspaceId: workspace.id,
     });
 
     const laterRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
-        actorId: "codex",
-        eventType: "codex.UserPromptSubmit",
+        actorId: 'codex',
+        eventType: 'codex.UserPromptSubmit',
         externalEventId: `codex:${workspace.id}:promotion-2`,
-        occurredAt: "2026-06-19T21:05:00.000Z",
+        occurredAt: '2026-06-19T21:05:00.000Z',
         payload: {
-          hook_event_name: "UserPromptSubmit",
-          prompt: "Actually, Saga should not expose claim promotion from the governance UI.",
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Actually, Saga should not expose claim promotion from the governance UI.',
         },
-        provenance: { transcriptPath: "/tmp/transcript.jsonl" },
-        sessionId: "session",
+        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
+        sessionId: 'session',
         sourceBindingId: sourceBinding.id,
-        sourceId: "codex:local",
-        sourceType: "codex",
-        traceId: "promotion-2",
-        trustLevel: "raw",
+        sourceId: 'codex:local',
+        sourceType: 'codex',
+        traceId: 'promotion-2',
+        trustLevel: 'raw',
         workspaceId: workspace.id,
       }),
     );
     const contradicted = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: "deterministic-v2" },
+        attributes: { extractor: 'deterministic-v2' },
         claimKey: projection.currentClaim.claimKey,
         confidence: 0.84,
         evidence: {
           eventType: laterRawEvent.eventType,
           externalEventId: laterRawEvent.externalEventId,
           occurredAt: laterRawEvent.occurredAt.toISOString(),
-          quote: "Actually, Saga should not expose claim promotion from the governance UI.",
+          quote: 'Actually, Saga should not expose claim promotion from the governance UI.',
           rawEventId: laterRawEvent.id,
           sessionId: laterRawEvent.sessionId ?? undefined,
           sourceId: laterRawEvent.sourceId,
           sourceType: laterRawEvent.sourceType,
           traceId: laterRawEvent.traceId ?? undefined,
         },
-        eventType: "contradicted",
-        kind: "decision",
-        text: "Saga should expose claim promotion from the governance UI.",
+        eventType: 'contradicted',
+        kind: 'decision',
+        text: 'Saga should expose claim promotion from the governance UI.',
         workspaceId: workspace.id,
       }),
     );
 
     expect(contradicted.currentClaim.attributes).toMatchObject({
       adrPromoted: true,
-      adrPromotedAt: "2026-06-19T21:00:00.000Z",
-      adrTitle: "Expose Claim Promotion",
-      extractor: "deterministic-v2",
+      adrPromotedAt: '2026-06-19T21:00:00.000Z',
+      adrTitle: 'Expose Claim Promotion',
+      extractor: 'deterministic-v2',
     });
   });
 
-  test("does not promote terminal claims", async () => {
-    if (service === undefined) throw new Error("database service was not initialized");
+  test('does not promote terminal claims', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
     const db = service;
-    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource("terminal-promotion");
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource('terminal-promotion');
 
     async function seedClaim(text: string, turn: string) {
       const rawEvent = await insertCodexPromptEvent({
@@ -2132,7 +2263,7 @@ describePostgres("postgres integration", () => {
       });
       return Effect.runPromise(
         insertExtractedCandidateClaim(db, {
-          attributes: { extractor: "deterministic-v1" },
+          attributes: { extractor: 'deterministic-v1' },
           confidence: 0.68,
           evidence: {
             eventType: rawEvent.eventType,
@@ -2145,28 +2276,28 @@ describePostgres("postgres integration", () => {
             sourceType: rawEvent.sourceType,
             traceId: rawEvent.traceId ?? undefined,
           },
-          kind: "decision",
+          kind: 'decision',
           text,
           workspaceId: workspace.id,
         }),
       );
     }
 
-    const rejected = await seedClaim("Rejected claims should remain terminal.", "terminal-1");
+    const rejected = await seedClaim('Rejected claims should remain terminal.', 'terminal-1');
     await Effect.runPromise(
       insertClaimReviewEventAndProject(service, {
-        action: "reject",
+        action: 'reject',
         claimKey: rejected.currentClaim.claimKey,
-        occurredAt: "2026-06-19T21:10:00.000Z",
+        occurredAt: '2026-06-19T21:10:00.000Z',
         workspaceId: workspace.id,
       }),
     );
-    const superseded = await seedClaim("Superseded claims should remain terminal.", "terminal-2");
+    const superseded = await seedClaim('Superseded claims should remain terminal.', 'terminal-2');
     await Effect.runPromise(
       insertClaimMaintenanceEventAndProject(service, {
-        action: "supersede",
+        action: 'supersede',
         claimKey: superseded.currentClaim.claimKey,
-        occurredAt: "2026-06-19T21:11:00.000Z",
+        occurredAt: '2026-06-19T21:11:00.000Z',
         workspaceId: workspace.id,
       }),
     );
@@ -2178,7 +2309,7 @@ describePostgres("postgres integration", () => {
           workspaceId: workspace.id,
         }),
       ),
-    ).rejects.toThrow("terminal claims are not available for promotion");
+    ).rejects.toThrow('terminal claims are not available for promotion');
     await expect(
       Effect.runPromise(
         insertClaimPromotionEventAndProject(service, {
@@ -2186,6 +2317,6 @@ describePostgres("postgres integration", () => {
           workspaceId: workspace.id,
         }),
       ),
-    ).rejects.toThrow("terminal claims are not available for promotion");
+    ).rejects.toThrow('terminal claims are not available for promotion');
   });
 });
