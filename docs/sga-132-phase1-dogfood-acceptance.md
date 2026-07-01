@@ -38,7 +38,8 @@ Pass:
 - `saga recall search SGA132_CLAUDE_SENTINEL --no-embeddings`
 - `saga recall show <claude-segment> --window 1`
 - `saga recall search SGA132_SECOND_HOST_RECALL --no-embeddings`
-- Embedding index API probe with `indexSessionSegmentEmbeddings(...)`
+- `saga index` and `saga index --format json` (the embedding indexing command; SGA-153 replaced
+  the earlier ad-hoc `indexSessionSegmentEmbeddings(...)` API probe with this real CLI path)
 - `saga doctor`
 - `saga harness status`
 - `SAGA_TEST_DATABASE_URL=[redacted-dev-postgres-url] pnpm exec vp test run packages/db/src/raw-session-import.postgres.test.ts -t "keeps same-handle host users distinct"`
@@ -145,17 +146,49 @@ Follow-ups filed:
 - `SGA-142` Make the documented local saga CLI invocation replayable.
 - `SGA-143` Add Claude ambient activation evidence to harness status.
 
+## SGA-153 Embedding Indexing and Vector Recall Validation
+
+SGA-153 added the `saga index` CLI command — it indexes active session segments into recall
+embeddings through the ADR-0032 installation policy gate — and an automated end-to-end test proving
+the index → vector-recall loop.
+
+Real `saga index` in this environment (no local key; installation config absent, so the default-deny
+policy skips remote embeddings). The command runs, counts eligible segments, and reports the skip
+with actionable guidance instead of failing:
+
+```
+Embedding Index
+  status            skipped
+  provider          openai/text-embedding-3-small
+  dimensions        1536
+  eligible          2
+  indexed           0
+  skipped           2
+  skip reason       disabled-by-policy
+  guidance          Remote embeddings are disabled by installation policy; Saga uses lexical
+                    recall. Enable embeddings.remote in the installation config to use vector recall.
+```
+
+Re-running is idempotent (hash-based): once embeddings exist, `indexed` is `0` and prior rows are
+counted as `existing`.
+
+Vector recall is proven end-to-end by `apps/cli/src/index-command.postgres.test.ts`: `saga index`
+with a deterministic (fake) generator populates `session_segment_embeddings`, then `recall search`
+for a token that matches nothing lexically returns the target segment via the vector path with a
+perfect vector score and zero lexical score. This validates the loop without a remote provider; a
+live keyed run (policy enabled + `OPENAI_API_KEY`) remains the only skipped step.
+
 ## Acceptance Matrix
 
-| Criterion                                                                 | Result         | Evidence                                                                                             |
-| ------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
-| Import one Codex transcript                                               | Pass           | Codex Raw Session Record inserted from `fixture://sga-132/codex-fixture.jsonl`.                      |
-| Import one Claude transcript                                              | Pass           | Claude Raw Session Record inserted from `fixture://sga-132/claude-fixture.jsonl`.                    |
-| Verify sessions, Activity Intervals, Raw Session Records, turns, segments | Pass           | `sessions recent/show` and direct counts: `3/3/3/6/6` after cross-host probe.                        |
-| Search lexically                                                          | Pass           | Codex, Claude, and second-host sentinels returned matching segments.                                 |
-| Expand context                                                            | Pass           | `recall show --window 1` returned anchor and surrounding turn for Codex and Claude.                  |
-| Enable embeddings when key available                                      | Skipped        | No env `OPENAI_API_KEY`; Codex auth lacks cached key.                                                |
-| Verify vector recall when embeddings available                            | Skipped        | Embedding indexing skipped with lexical fallback active.                                             |
-| Run real ambient Codex session                                            | Skipped        | Harness missing/untrusted in this worktree.                                                          |
-| Run real ambient Claude session                                           | Skipped        | Harness missing; Claude activation verification not implemented.                                     |
-| Prove Postgres-backed recall across hosts when available                  | Pass after fix | Second host import recalled; host split is `2` local synthetic sessions and `1` second-host session. |
+| Criterion                                                                 | Result         | Evidence                                                                                                                                |
+| ------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Import one Codex transcript                                               | Pass           | Codex Raw Session Record inserted from `fixture://sga-132/codex-fixture.jsonl`.                                                         |
+| Import one Claude transcript                                              | Pass           | Claude Raw Session Record inserted from `fixture://sga-132/claude-fixture.jsonl`.                                                       |
+| Verify sessions, Activity Intervals, Raw Session Records, turns, segments | Pass           | `sessions recent/show` and direct counts: `3/3/3/6/6` after cross-host probe.                                                           |
+| Search lexically                                                          | Pass           | Codex, Claude, and second-host sentinels returned matching segments.                                                                    |
+| Expand context                                                            | Pass           | `recall show --window 1` returned anchor and surrounding turn for Codex and Claude.                                                     |
+| Enable embeddings when key available                                      | Skipped        | No local `OPENAI_API_KEY`; `saga index` reports `disabled-by-policy` (default-deny) with guidance (SGA-153).                            |
+| Verify vector recall when embeddings available                            | Pass (test)    | `index-command.postgres.test.ts`: `saga index` (fake generator) then `recall search` returns the segment via the vector path (SGA-153). |
+| Run real ambient Codex session                                            | Skipped        | Harness missing/untrusted in this worktree.                                                                                             |
+| Run real ambient Claude session                                           | Skipped        | Harness missing; Claude activation verification not implemented.                                                                        |
+| Prove Postgres-backed recall across hosts when available                  | Pass after fix | Second host import recalled; host split is `2` local synthetic sessions and `1` second-host session.                                    |

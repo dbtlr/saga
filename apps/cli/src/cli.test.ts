@@ -8,6 +8,7 @@ function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandl
     context: async () => 'context',
     doctor: async () => 'doctor',
     harness: async () => 'harness',
+    index: async () => 'index',
     ingest: async () => 'ingest',
     init: async () => 'init',
     mcp: async () => 'mcp',
@@ -82,6 +83,7 @@ describe('run', () => {
       'mcp',
       'context',
       'ingest',
+      'index',
       'recall',
       'sessions',
     ]);
