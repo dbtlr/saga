@@ -32,8 +32,13 @@ const DIMENSIONS = 1536;
 const PROVIDER = 'openai';
 const MODEL = 'text-embedding-3-small';
 const SEGMENTS_PER_SESSION = 50;
-// Query for `topic7` matches ~1/TOPIC_BUCKETS of segments — realistic lexical selectivity.
+// The recall target: a rare, trigram-distinct sentinel token seeded into segments where
+// `j % TOPIC_BUCKETS === RECALL_MATCH_BUCKET` (~1/200 of the corpus) — realistic lexical
+// selectivity. The letters z/q/x/j don't occur in the hex tokens around it, so the recall
+// query's fuzzy trigram predicate does not spuriously match non-target rows.
 const TOPIC_BUCKETS = 200;
+const RECALL_MATCH_BUCKET = 7;
+const RECALL_QUERY_TOKEN = 'zqxjneedle';
 const RECALL_LIMIT = 10;
 // normalizeVectorCandidateLimit(undefined, 10) => min(max(10*5, 10), 500) === 50
 const CANDIDATE_LIMIT = 50;
@@ -149,7 +154,7 @@ async function timeFullRecall(service: DatabaseService, runs: number): Promise<T
     await Effect.runPromise(
       searchSessionRecall(service, {
         limit: RECALL_LIMIT,
-        query: 'topic7',
+        query: RECALL_QUERY_TOKEN,
         queryEmbedding,
         workspaceId: WS,
       }),
@@ -182,16 +187,20 @@ async function seedSegments(service: DatabaseService, from: number, to: number):
   await service.sql.unsafe(`
     insert into sessions (id, workspace_id, source_binding_id, author_user_id, harness, harness_session_id, status, started_at, last_activity_at)
       select md5('sess-'||i)::uuid, '${WS}', '${SB}', '${USER}', 'codex', 'bench-'||i, 'active', now(), now()
-      from generate_series(${fromSession}, ${toSession}) i;
+      from generate_series(${fromSession}, ${toSession}) i
+      on conflict (id) do nothing;
     insert into activity_intervals (id, workspace_id, session_id, ordinal, status, started_at)
       select md5('int-'||i)::uuid, '${WS}', md5('sess-'||i)::uuid, 0, 'active', now()
-      from generate_series(${fromSession}, ${toSession}) i;
+      from generate_series(${fromSession}, ${toSession}) i
+      on conflict (id) do nothing;
     insert into raw_session_records (id, workspace_id, session_id, source_binding_id, author_user_id, activity_interval_id, snapshot_ordinal, is_active, status, harness, content_type, content_hash, captured_at)
       select md5('rec-'||i)::uuid, '${WS}', md5('sess-'||i)::uuid, '${SB}', '${USER}', md5('int-'||i)::uuid, 0, true, 'captured', 'codex', 'text', 'ch-'||i, now()
-      from generate_series(${fromSession}, ${toSession}) i;
+      from generate_series(${fromSession}, ${toSession}) i
+      on conflict (id) do nothing;
     insert into session_turns (id, workspace_id, session_id, activity_interval_id, raw_session_record_id, ordinal, role, actor_kind)
       select md5('turn-'||i)::uuid, '${WS}', md5('sess-'||i)::uuid, md5('int-'||i)::uuid, md5('rec-'||i)::uuid, 0, 'assistant', 'agent'
-      from generate_series(${fromSession}, ${toSession}) i;
+      from generate_series(${fromSession}, ${toSession}) i
+      on conflict (id) do nothing;
     insert into session_segments (id, workspace_id, session_id, activity_interval_id, turn_id, raw_session_record_id, ordinal, segment_kind, search_text)
       select md5('seg-'||j)::uuid, '${WS}',
         md5('sess-'||(j/${SEGMENTS_PER_SESSION}))::uuid,
@@ -199,9 +208,12 @@ async function seedSegments(service: DatabaseService, from: number, to: number):
         md5('turn-'||(j/${SEGMENTS_PER_SESSION}))::uuid,
         md5('rec-'||(j/${SEGMENTS_PER_SESSION}))::uuid,
         (j % ${SEGMENTS_PER_SESSION}), 'turn',
-        -- Realistic lexical selectivity: a query for one topic token matches ~1/${TOPIC_BUCKETS}
-        -- of the corpus, instead of every row, so full-recall timing is not an all-match artifact.
-        'segment '||j||' topic'||(j % ${TOPIC_BUCKETS})||' recall session memory'
+        -- Diverse per-segment text (hex tokens) so trigram/tsvector selectivity is realistic;
+        -- a rare, trigram-distinct sentinel token in ~1/${TOPIC_BUCKETS} of rows is the recall
+        -- target. A shared word stem would make the recall query's fuzzy trigram predicate
+        -- (search_text % query) match the whole corpus and inflate full-recall timing.
+        'seg '||j||' '||md5(j::text)||' '||md5((j*3+1)::text)||
+          (case when j % ${TOPIC_BUCKETS} = ${RECALL_MATCH_BUCKET} then ' ${RECALL_QUERY_TOKEN}' else '' end)
       from generate_series(${from}, ${to - 1}) j;
     insert into session_segment_embeddings (workspace_id, segment_id, raw_session_record_id, provider, model, dimensions, embedding, input_hash)
       select '${WS}', md5('seg-'||j)::uuid, md5('rec-'||(j/${SEGMENTS_PER_SESSION}))::uuid,
@@ -334,7 +346,10 @@ describeBench('pgvector recall bench (SGA-162)', () => {
         // eslint-disable-next-line no-console -- bench report output
         console.log(lines.slice(-6).join('\n'));
         shippingShapeUsesIndex = asIs.usesVectorIndex;
-        restructuredShapeUsesIndex = restructured.usesVectorIndex;
+        // Only enforce "distance-only uses the index" once the corpus is large enough that
+        // HNSW is unambiguously cheaper than a seq scan; below that the planner may cost-choose
+        // a scan, which is fine and not a regression.
+        restructuredShapeUsesIndex = seeded >= 20_000 ? restructured.usesVectorIndex : true;
       }
       expect(lines.length).toBeGreaterThan(SWEEP.length);
       // Regression guards for the ANN-index decision (SGA-162): the shipping ORDER BY
