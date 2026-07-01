@@ -276,6 +276,7 @@ export const sessions = pgTable(
     uniqueIndex('sessions_workspace_source_harness_locator_unique')
       .on(table.workspaceId, table.sourceBindingId, table.harness, table.sourceLocatorHash)
       .where(sql`${table.harnessSessionId} is null and ${table.sourceLocatorHash} is not null`),
+    check('sessions_status_check', sql`${table.status} in ('active', 'completed')`),
     foreignKey({
       columns: [table.sourceBindingId, table.workspaceId],
       foreignColumns: [sourceBindings.id, sourceBindings.workspaceId],
@@ -316,10 +317,18 @@ export const activityIntervals = pgTable(
     index('activity_intervals_workspace_started_idx').on(table.workspaceId, table.startedAt),
     index('activity_intervals_session_status_idx').on(table.sessionId, table.status),
     uniqueIndex('activity_intervals_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('activity_intervals_id_session_unique').on(table.id, table.sessionId),
     uniqueIndex('activity_intervals_session_ordinal_unique').on(table.sessionId, table.ordinal),
     check(
       'activity_intervals_settlement_reason_check',
       sql`${table.settlementReason} is null or ${table.settlementReason} in ('stop_event', 'idle_timeout', 'clear_context', 'manual')`,
+    ),
+    check('activity_intervals_ordinal_check', sql`${table.ordinal} >= 0`),
+    // Constrains status to exactly {active, settled}: any other value satisfies neither
+    // branch, so a separate status enum check would be redundant.
+    check(
+      'activity_intervals_settled_coherence_check',
+      sql`(${table.status} = 'active' and ${table.settledAt} is null) or (${table.status} = 'settled' and ${table.settledAt} is not null)`,
     ),
     foreignKey({
       columns: [table.sessionId, table.workspaceId],
@@ -382,6 +391,7 @@ export const rawSessionRecords = pgTable(
       table.snapshotOrdinal,
     ),
     uniqueIndex('raw_session_records_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('raw_session_records_id_session_unique').on(table.id, table.sessionId),
     uniqueIndex('raw_session_records_session_content_hash_unique').on(
       table.sessionId,
       table.contentHash,
@@ -393,11 +403,17 @@ export const rawSessionRecords = pgTable(
       'raw_session_records_content_type_check',
       sql`${table.contentType} in ('jsonl', 'json', 'text')`,
     ),
+    check('raw_session_records_snapshot_ordinal_check', sql`${table.snapshotOrdinal} >= 0`),
     foreignKey({
       columns: [table.sessionId, table.workspaceId],
       foreignColumns: [sessions.id, sessions.workspaceId],
       name: 'raw_session_records_session_workspace_fk',
     }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.activityIntervalId, table.sessionId],
+      foreignColumns: [activityIntervals.id, activityIntervals.sessionId],
+      name: 'raw_session_records_activity_interval_session_fk',
+    }),
     foreignKey({
       columns: [table.sourceBindingId, table.workspaceId],
       foreignColumns: [sourceBindings.id, sourceBindings.workspaceId],
@@ -459,6 +475,7 @@ export const sessionTurns = pgTable(
     index('session_turns_interval_ordinal_idx').on(table.activityIntervalId, table.ordinal),
     index('session_turns_raw_record_idx').on(table.rawSessionRecordId),
     uniqueIndex('session_turns_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('session_turns_id_session_unique').on(table.id, table.sessionId),
     uniqueIndex('session_turns_raw_record_ordinal_unique').on(
       table.rawSessionRecordId,
       table.ordinal,
@@ -466,6 +483,7 @@ export const sessionTurns = pgTable(
     uniqueIndex('session_turns_harness_turn_unique')
       .on(table.sessionId, table.harnessTurnId)
       .where(sql`${table.harnessTurnId} is not null`),
+    check('session_turns_ordinal_check', sql`${table.ordinal} >= 0`),
     check(
       'session_turns_role_check',
       sql`${table.role} in ('user', 'assistant', 'tool', 'system', 'subagent')`,
@@ -485,14 +503,29 @@ export const sessionTurns = pgTable(
       name: 'session_turns_activity_interval_workspace_fk',
     }).onDelete('cascade'),
     foreignKey({
+      columns: [table.activityIntervalId, table.sessionId],
+      foreignColumns: [activityIntervals.id, activityIntervals.sessionId],
+      name: 'session_turns_activity_interval_session_fk',
+    }).onDelete('cascade'),
+    foreignKey({
       columns: [table.rawSessionRecordId, table.workspaceId],
       foreignColumns: [rawSessionRecords.id, rawSessionRecords.workspaceId],
       name: 'session_turns_raw_record_workspace_fk',
     }).onDelete('cascade'),
     foreignKey({
+      columns: [table.rawSessionRecordId, table.sessionId],
+      foreignColumns: [rawSessionRecords.id, rawSessionRecords.sessionId],
+      name: 'session_turns_raw_record_session_fk',
+    }).onDelete('cascade'),
+    foreignKey({
       columns: [table.parentTurnId, table.workspaceId],
       foreignColumns: [table.id, table.workspaceId],
       name: 'session_turns_parent_workspace_fk',
+    }),
+    foreignKey({
+      columns: [table.parentTurnId, table.sessionId],
+      foreignColumns: [table.id, table.sessionId],
+      name: 'session_turns_parent_session_fk',
     }),
   ],
 );
@@ -537,6 +570,10 @@ export const sessionRelationships = pgTable(
       'session_relationships_confidence_check',
       sql`${table.confidence} in ('explicit', 'inferred')`,
     ),
+    check(
+      'session_relationships_no_self_reference_check',
+      sql`${table.sourceSessionId} <> ${table.targetSessionId}`,
+    ),
     foreignKey({
       columns: [table.sourceSessionId, table.workspaceId],
       foreignColumns: [sessions.id, sessions.workspaceId],
@@ -551,6 +588,11 @@ export const sessionRelationships = pgTable(
       columns: [table.sourceTurnId, table.workspaceId],
       foreignColumns: [sessionTurns.id, sessionTurns.workspaceId],
       name: 'session_relationships_source_turn_workspace_fk',
+    }),
+    foreignKey({
+      columns: [table.sourceTurnId, table.sourceSessionId],
+      foreignColumns: [sessionTurns.id, sessionTurns.sessionId],
+      name: 'session_relationships_source_turn_session_fk',
     }),
   ],
 );
@@ -596,10 +638,12 @@ export const sessionSegments = pgTable(
     ),
     index('session_segments_search_trgm_idx').using('gin', table.searchText.op('gin_trgm_ops')),
     uniqueIndex('session_segments_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('session_segments_id_raw_record_unique').on(table.id, table.rawSessionRecordId),
     uniqueIndex('session_segments_raw_record_ordinal_unique').on(
       table.rawSessionRecordId,
       table.ordinal,
     ),
+    check('session_segments_ordinal_check', sql`${table.ordinal} >= 0`),
     foreignKey({
       columns: [table.sessionId, table.workspaceId],
       foreignColumns: [sessions.id, sessions.workspaceId],
@@ -611,14 +655,29 @@ export const sessionSegments = pgTable(
       name: 'session_segments_activity_interval_workspace_fk',
     }).onDelete('cascade'),
     foreignKey({
+      columns: [table.activityIntervalId, table.sessionId],
+      foreignColumns: [activityIntervals.id, activityIntervals.sessionId],
+      name: 'session_segments_activity_interval_session_fk',
+    }).onDelete('cascade'),
+    foreignKey({
       columns: [table.turnId, table.workspaceId],
       foreignColumns: [sessionTurns.id, sessionTurns.workspaceId],
       name: 'session_segments_turn_workspace_fk',
     }).onDelete('cascade'),
     foreignKey({
+      columns: [table.turnId, table.sessionId],
+      foreignColumns: [sessionTurns.id, sessionTurns.sessionId],
+      name: 'session_segments_turn_session_fk',
+    }).onDelete('cascade'),
+    foreignKey({
       columns: [table.rawSessionRecordId, table.workspaceId],
       foreignColumns: [rawSessionRecords.id, rawSessionRecords.workspaceId],
       name: 'session_segments_raw_record_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.rawSessionRecordId, table.sessionId],
+      foreignColumns: [rawSessionRecords.id, rawSessionRecords.sessionId],
+      name: 'session_segments_raw_record_session_fk',
     }).onDelete('cascade'),
   ],
 );
@@ -661,6 +720,11 @@ export const sessionSegmentEmbeddings = pgTable(
       columns: [table.segmentId, table.workspaceId],
       foreignColumns: [sessionSegments.id, sessionSegments.workspaceId],
       name: 'session_segment_embeddings_segment_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.segmentId, table.rawSessionRecordId],
+      foreignColumns: [sessionSegments.id, sessionSegments.rawSessionRecordId],
+      name: 'session_segment_embeddings_segment_raw_record_fk',
     }).onDelete('cascade'),
     foreignKey({
       columns: [table.rawSessionRecordId, table.workspaceId],
