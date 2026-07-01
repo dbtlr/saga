@@ -38,8 +38,8 @@ Pass:
 - `saga recall search SGA132_CLAUDE_SENTINEL --no-embeddings`
 - `saga recall show <claude-segment> --window 1`
 - `saga recall search SGA132_SECOND_HOST_RECALL --no-embeddings`
-- `saga index` and `saga index --format json` (the embedding indexing command; SGA-153 replaced
-  the earlier ad-hoc `indexSessionSegmentEmbeddings(...)` API probe with this real CLI path)
+- Embedding index API probe with `indexSessionSegmentEmbeddings(...)` (superseded by the `saga index`
+  command in SGA-153; see the SGA-153 section below)
 - `saga doctor`
 - `saga harness status`
 - `SAGA_TEST_DATABASE_URL=[redacted-dev-postgres-url] pnpm exec vp test run packages/db/src/raw-session-import.postgres.test.ts -t "keeps same-handle host users distinct"`
@@ -103,6 +103,10 @@ Embedding workflow:
   }
 }
 ```
+
+> This run predates the ADR-0032 default-deny embedding policy (SGA-152). The current `saga index`
+> command short-circuits at policy resolution and reports `disabled-by-policy` before credentials
+> are checked, rather than `login-without-api-key`; see the SGA-153 section.
 
 Cross-host recall:
 

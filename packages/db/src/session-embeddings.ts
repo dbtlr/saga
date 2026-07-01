@@ -368,9 +368,10 @@ function resolveEmbeddingGenerator(
     // fake in tests or a future local, non-remote generator), so it is not gated here. ADR
     // 0032 governs *remote* embedding data flow; the only remote generator in this package
     // (createOpenAiSessionEmbeddingGenerator) is constructed below, behind the policy gate.
-    // WARNING: there is no production caller of indexSessionSegmentEmbeddings yet. When one is
-    // added, it MUST NOT pass a remote generator here — let the policy-gated path below build
-    // it, or resolve installation policy before supplying any remote generator.
+    // WARNING: production callers pass no generator here and rely on the policy-gated path
+    // below, so in practice this branch is test-only. Any caller MUST NOT pass a remote
+    // generator — let the policy-gated path below build it, or resolve installation policy
+    // before supplying any remote generator.
     return {
       generator: input.generator,
       lexicalFallback: {
