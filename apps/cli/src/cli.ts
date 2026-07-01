@@ -1,6 +1,7 @@
 import { runContextCommand } from './context.js';
 import { runDoctor } from './doctor.js';
 import { runHarnessCommand } from './harness.js';
+import { runIndexCommand } from './index-command.js';
 import { runIngestCommand } from './ingest.js';
 import { runInit } from './init.js';
 import { runMcpCommand } from './mcp.js';
@@ -50,6 +51,7 @@ export const COMMANDS = {
     description: 'manually ingest source data for debugging',
     subcommands: ['claude-hook', 'codex-hook', 'recent', 'claims'],
   },
+  index: { description: 'index active session segments into recall embeddings' },
   recall: {
     description: 'search and expand captured session memory',
     subcommands: ['search', 'show'],
@@ -94,6 +96,7 @@ export type CommandHandlers = {
   doctor: typeof runDoctor;
   context: typeof runContextCommand;
   harness: typeof runHarnessCommand;
+  index: typeof runIndexCommand;
   ingest: typeof runIngestCommand;
   init: typeof runInit;
   mcp: typeof runMcpCommand;
@@ -107,6 +110,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   context: runContextCommand,
   doctor: runDoctor,
   harness: runHarnessCommand,
+  index: runIndexCommand,
   ingest: runIngestCommand,
   init: runInit,
   mcp: runMcpCommand,
@@ -274,6 +278,10 @@ export async function run(
     }
     if (parsed.command === 'ingest') {
       write(await handlers.ingest(parsed.args, renderOptions));
+      return 0;
+    }
+    if (parsed.command === 'index') {
+      write(await handlers.index(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === 'mcp') {
