@@ -162,7 +162,7 @@ describe('runRecallCommand', () => {
     expect(output).toContain('Raw Session Record');
     expect(output).toContain('Turn 0');
     expect(output).toContain('Segment 0 anchor');
-    expect(output).toContain('1 before / 3 after');
+    expect(output).toContain('1 turns before / 3 turns after');
     expect(output).toContain('provenance');
     expect(output).toContain('expanded segment text');
     expect(output).toContain('[local-path-redacted]');
@@ -172,6 +172,45 @@ describe('runRecallCommand', () => {
     expect(output).not.toContain('/Users/example/.codex/transcripts/session.jsonl');
     expect(output).not.toContain('projectRoot');
     expect(output).not.toContain('/work/saga');
+    // A clean expansion renders no Warnings block.
+    expect(output).not.toContain('Warnings');
+  });
+
+  it('renders a Warnings block when expansion content is withheld or redacted', async () => {
+    const projectRoot = boundProject();
+    const output = await runRecallCommand(
+      ['show', 'segment-id'],
+      {
+        ...renderOptions,
+        format: 'records',
+      },
+      {
+        cwd: projectRoot,
+        expandContext: async () => ({
+          ...recallContextExpansion(),
+          warnings: [
+            {
+              detail:
+                'The anchor raw session record was hard-redacted (ADR 0034); expansion shows the scrubbed content.',
+              kind: 'hard_redacted',
+              scope: 'record',
+            },
+            {
+              detail: 'Turn payload omitted (secret); 1 segment(s) withheld.',
+              kind: 'skipped_content',
+              scope: 'turn',
+              turnId: 'turn-id',
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(output).toContain('Warnings');
+    expect(output).toContain('hard_redacted');
+    expect(output).toContain('skipped_content');
+    expect(output).toContain('hard-redacted (ADR 0034)');
+    expect(output).toContain('(turn turn-id)');
   });
 
   it('lets specific context window flags override each side independently', async () => {
@@ -524,6 +563,7 @@ function recallContextExpansion(): RecallContextExpansion {
     ],
     afterTurns: 3,
     beforeTurns: 1,
+    warnings: [],
     windowTurns: 3,
     workspaceId: 'workspace-id',
   };

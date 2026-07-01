@@ -103,7 +103,7 @@ describePostgres('recall CLI postgres integration', () => {
     expect(showOutput).toContain('Postgres recall sentinel');
     expect(showOutput).toContain('surrounding context');
     expect(showOutput).toContain('provenance');
-    expect(showOutput).toContain('1 before / 1 after');
+    expect(showOutput).toContain('1 turns before / 1 turns after');
     expect(showOutput).not.toContain(inputPath);
     expect(showOutput).not.toContain(projectRoot);
   });

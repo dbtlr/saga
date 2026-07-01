@@ -10,6 +10,7 @@ import type {
   RecallContextExpansionInput,
   RecallExpandedSegment,
   RecallExpandedTurn,
+  RecallExpansionWarning,
   RecallQueryEmbedding,
   RecallSearchInput,
   RecallSearchResult,
@@ -420,11 +421,32 @@ function renderRecallContext(result: RecallContextExpansion, options: RenderOpti
     ),
   ];
 
+  if (result.warnings.length > 0) {
+    blocks.push(renderExpansionWarnings(result.warnings, options));
+  }
+
   for (const turn of result.turns) {
     blocks.push(renderExpandedTurn(turn, result.anchor.segment.id, options));
   }
 
   return blocks.join(`\n${separator(options)}\n`);
+}
+
+function renderExpansionWarnings(
+  warnings: readonly RecallExpansionWarning[],
+  options: RenderOptions,
+): string {
+  return recordBlock(
+    'Warnings',
+    warnings.map((warning) => ({
+      label: warning.kind,
+      value:
+        warning.turnId === undefined
+          ? warning.detail
+          : `${warning.detail} (turn ${warning.turnId})`,
+    })),
+    options,
+  );
 }
 
 function renderExpandedTurn(
@@ -622,7 +644,7 @@ function formatScore(value: number): string {
 function formatContextWindow(result: RecallContextExpansion): string {
   const beforeTurns = result.beforeTurns ?? result.windowTurns;
   const afterTurns = result.afterTurns ?? result.windowTurns;
-  return `${String(beforeTurns)} before / ${String(afterTurns)} after`;
+  return `${String(beforeTurns)} turns before / ${String(afterTurns)} turns after`;
 }
 
 function compactJson(value: unknown): string {

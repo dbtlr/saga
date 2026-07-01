@@ -788,7 +788,7 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
     '',
     `- Anchor segment: ${result.anchor.segment.id}`,
     `- Anchor turn: ${result.anchor.turn.id}`,
-    `- Window: ${String(result.beforeTurns)} before / ${String(result.afterTurns)} after`,
+    `- Window: ${String(result.beforeTurns)} turns before / ${String(result.afterTurns)} turns after`,
     `- Session: ${result.session.id}`,
     `- Activity Interval: ${result.activityInterval.id} (ordinal ${String(result.activityInterval.ordinal)})`,
     `- Raw record: ${result.rawSessionRecord.id} (snapshot ${String(result.rawSessionRecord.snapshotOrdinal)}, ${result.rawSessionRecord.status})`,
@@ -797,9 +797,17 @@ function renderSessionContextMarkdown(result: RecallContextExpansion): string {
     `- Host user: ${result.session.authorUser.handle} (${result.session.authorUser.identitySource})`,
     `- Source: ${formatSourceBinding(result.sourceBinding)}`,
     `- Provenance: session=${compactSafeJson(result.session.provenance)} raw=${compactSafeJson(result.rawSessionRecord.provenance)}`,
-    '',
-    '## Retrieved Context',
   ];
+
+  if (result.warnings.length > 0) {
+    lines.push('', '## Warnings');
+    for (const warning of result.warnings) {
+      const turnRef = warning.turnId === undefined ? '' : ` (turn ${warning.turnId})`;
+      lines.push(`- ${warning.kind}${turnRef}: ${warning.detail}`);
+    }
+  }
+
+  lines.push('', '## Retrieved Context');
 
   for (const turn of result.turns) {
     lines.push(

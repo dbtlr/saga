@@ -490,6 +490,55 @@ describePostgres('session recall', () => {
       corpus.primary.turnIds.authentication,
     ]);
   });
+
+  test('enforces the turn-window contract and surfaces expansion warnings (SGA-160)', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const corpus = await seedRecallCorpus(service, 'warnings');
+    const anchor = {
+      segmentId: corpus.primary.segmentIds.authentication,
+      workspaceId: corpus.workspaceId,
+    };
+
+    // A clean corpus produces no warnings.
+    const clean = await Effect.runPromise(
+      expandRecallContext(service, { ...anchor, windowTurns: 1 }),
+    );
+    expect(clean.warnings).toStrictEqual([]);
+
+    // The window clamps to the maximum (20) per side.
+    const clamped = await Effect.runPromise(
+      expandRecallContext(service, { ...anchor, windowTurns: 100 }),
+    );
+    expect(clamped.beforeTurns).toBe(20);
+    expect(clamped.afterTurns).toBe(20);
+    expect(clamped.windowTurns).toBe(20);
+
+    // A directional value overrides the base window on its side (window 5, before 2 => 2/5).
+    const directional = await Effect.runPromise(
+      expandRecallContext(service, { ...anchor, beforeTurns: 2, windowTurns: 5 }),
+    );
+    expect(directional.beforeTurns).toBe(2);
+    expect(directional.afterTurns).toBe(5);
+
+    // A hard-redacted active record surfaces an explicit warning, and expansion never exposes
+    // the raw body even when one is present.
+    await service.sql`
+      update raw_session_records
+      set status = 'redacted',
+        body_text = 'RAWBODYSENTINEL must never appear in expansion output'
+      where id = ${corpus.primary.rawSessionRecordId}
+    `;
+    const redacted = await Effect.runPromise(
+      expandRecallContext(service, { ...anchor, windowTurns: 1 }),
+    );
+    expect(redacted.rawSessionRecord.status).toBe('redacted');
+    expect(redacted.warnings).toContainEqual(
+      expect.objectContaining({ kind: 'hard_redacted', scope: 'record' }),
+    );
+    expect(JSON.stringify(redacted)).not.toContain('RAWBODYSENTINEL');
+  });
 });
 
 type SeededCorpus = {

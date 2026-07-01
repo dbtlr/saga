@@ -30,14 +30,16 @@ export function safeContentPartsForSkippedSegments(
   ];
 }
 
-function summarizeSkippedSegments(segments: readonly SkippedContentSegment[]):
-  | {
-      filterReasons: string[];
-      skippedPartCount: number;
-      skippedSegmentCount: number;
-      segmentKinds: string[];
-    }
-  | undefined {
+export type SkippedContentSummary = {
+  filterReasons: string[];
+  skippedPartCount: number;
+  skippedSegmentCount: number;
+  segmentKinds: string[];
+};
+
+export function summarizeSkippedSegments(
+  segments: readonly SkippedContentSegment[],
+): SkippedContentSummary | undefined {
   const filterReasons = new Set<string>();
   const segmentKinds = new Set<string>();
   let skippedPartCount = 0;

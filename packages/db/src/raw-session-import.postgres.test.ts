@@ -4710,6 +4710,11 @@ describePostgres('raw session import', () => {
     expect(
       expansion.turns.flatMap((turn) => turn.segments).map((segment) => segment.searchText),
     ).toContain(safeText);
+    // The withheld payload is also surfaced as an aggregate warning (ADR 0036 / SGA-160).
+    expect(expansion.warnings).toContainEqual(
+      expect.objectContaining({ kind: 'skipped_content', scope: 'turn' }),
+    );
+    expect(expansion.warnings.some((warning) => warning.detail.includes('secret'))).toBe(true);
 
     const rawDetail = await Effect.runPromise(
       getSessionDetail(service, {
