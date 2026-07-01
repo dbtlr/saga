@@ -195,15 +195,17 @@ export const SAGA_MCP_TOOLS = [
   },
   {
     description:
-      'Expand session context around a recalled segment for the current workspace, including surrounding turns, segment text, pointers, and provenance.',
+      'Expand session context around a recalled segment for the current workspace, including surrounding turns, segment text, pointers, and provenance. The window is measured in normalized Turns within the same Session, Activity Interval, and Raw Session Record. Withheld or transformed content (skipped payloads, hard-redacted records) stays explicit in a `warnings` array rather than being replaced with indexed text.',
     inputSchema: {
       additionalProperties: false,
       properties: {
         afterTurns: {
+          description: 'Turns after the anchor; overrides windowTurns on the after side.',
           minimum: 0,
           type: 'number',
         },
         beforeTurns: {
+          description: 'Turns before the anchor; overrides windowTurns on the before side.',
           minimum: 0,
           type: 'number',
         },
@@ -211,6 +213,8 @@ export const SAGA_MCP_TOOLS = [
           type: 'string',
         },
         windowTurns: {
+          description:
+            'Base number of Turns to expand before and after the anchor (default 2, max 20).',
           minimum: 0,
           type: 'number',
         },

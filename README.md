@@ -35,6 +35,12 @@ pnpm --filter @saga/cli saga recall search "what changed in recall"
 pnpm --filter @saga/cli saga recall show <segment-id> --window 2
 ```
 
+`recall show` expands context by **Turn** window: `--window N` returns up to N normalized Turns
+before and after the anchor within the same Session, Activity Interval, and Raw Session Record.
+`--before`/`--after` override each side (`--window 5 --before 2` = 2 Turns before, 5 after).
+Withheld or transformed content (skipped payloads, hard-redacted records) stays explicit and is
+listed under a `Warnings` block rather than being replaced with indexed text.
+
 Stop dependencies when finished:
 
 ```sh

@@ -2,7 +2,10 @@ import type { EmbeddingProviderBoundary } from '@saga/runtime';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
+import {
+  safeContentPartsForSkippedSegments,
+  summarizeSkippedSegments,
+} from './session-content-redaction.js';
 import {
   redactAgentFacingJsonRecord,
   redactAgentFacingSourceLocator,
@@ -103,8 +106,22 @@ export type RecallContextExpansion = {
   session: RecallSessionMetadata;
   sourceBinding: RecallSourceBindingMetadata;
   turns: RecallExpandedTurn[];
+  // Content that is withheld or transformed stays explicit here rather than being silently
+  // replaced with indexed text (ADR 0036): skipped payloads keep an inline `omitted`
+  // placeholder in the turn content, and each is also surfaced as an aggregate warning so a
+  // consumer can tell at a glance whether the expansion is complete.
+  warnings: RecallExpansionWarning[];
   windowTurns: number;
   workspaceId: string;
+};
+
+export type RecallExpansionWarningKind = 'skipped_content' | 'hard_redacted';
+
+export type RecallExpansionWarning = {
+  detail: string;
+  kind: RecallExpansionWarningKind;
+  scope: 'record' | 'turn';
+  turnId?: string | undefined;
 };
 
 export type RecallContextAnchor = {
@@ -1081,10 +1098,36 @@ function mapContextRows(
     }
   }
 
+  const rawSessionRecord = mapRawSessionRecord(first);
+  const warnings: RecallExpansionWarning[] = [];
+  // Record-scope first: the anchor's active raw record is itself the hard-redacted
+  // (scrubbed) snapshot when its status is 'redacted' (ADR 0034).
+  if (rawSessionRecord.status === 'redacted') {
+    warnings.push({
+      detail:
+        'The anchor raw session record was hard-redacted (ADR 0034); expansion shows the scrubbed content.',
+      kind: 'hard_redacted',
+      scope: 'record',
+    });
+  }
+
   for (const turn of turns.values()) {
+    // Detect skips before replacing content parts, so the warning and the inline `omitted`
+    // placeholder describe the same withheld payload.
+    const skipped = summarizeSkippedSegments(turn.segments);
     turn.contentParts = redactAgentFacingSessionArray(
       safeContentPartsForSkippedSegments(turn.contentParts, turn.segments),
     );
+    if (skipped !== undefined) {
+      const reasons =
+        skipped.filterReasons.length > 0 ? skipped.filterReasons.join(', ') : 'skipped';
+      warnings.push({
+        detail: `Turn payload omitted (${reasons}); ${String(skipped.skippedSegmentCount)} segment(s) withheld.`,
+        kind: 'skipped_content',
+        scope: 'turn',
+        turnId: turn.id,
+      });
+    }
   }
 
   return {
@@ -1095,10 +1138,11 @@ function mapContextRows(
     },
     afterTurns: input.afterTurns,
     beforeTurns: input.beforeTurns,
-    rawSessionRecord: mapRawSessionRecord(first),
+    rawSessionRecord,
     session: mapSession(first),
     sourceBinding: mapSourceBinding(first),
     turns: [...turns.values()],
+    warnings,
     windowTurns: input.windowTurns,
     workspaceId: input.workspaceId,
   };
