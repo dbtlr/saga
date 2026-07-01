@@ -47,19 +47,19 @@ Sequential-scan baseline (no vector index — current production state):
 
 | corpus (embeddings) | pure KNN | vector_candidates | full recall p50 |
 | ------------------- | -------- | ----------------- | --------------- |
-| 1,000               | 2.9 ms   | 4.4 ms            | 55 ms           |
-| 10,000              | 28 ms    | 47 ms             | 582 ms          |
-| 50,000              | 173 ms   | 287 ms            | 1,697 ms        |
-| 100,000             | 299 ms   | 582 ms            | 3,446 ms        |
+| 1,000               | 2.9 ms   | 4.3 ms            | 40 ms           |
+| 10,000              | 28 ms    | 45 ms             | 260 ms          |
+| 50,000              | 190 ms   | 300 ms            | 1,024 ms        |
+| 100,000             | 302 ms   | 622 ms            | 1,961 ms        |
 
 After migrating the column to `vector(1536)` and building HNSW (`vector_cosine_ops`) at
 100,000 rows (build ≈ 8 s):
 
 | KNN shape                         | exec   | index used |
 | --------------------------------- | ------ | ---------- |
-| as-is (distance + `segment_id`)   | ~1 s   | no         |
-| distance-only, joined to eligible | 575 ms | no         |
-| distance-only, embeddings table   | 0.4 ms | **yes**    |
+| as-is (distance + `segment_id`)   | 287 ms | no         |
+| distance-only, joined to eligible | 574 ms | no         |
+| distance-only, embeddings table   | 0.5 ms | **yes**    |
 
 The bench asserts these last two verdicts (shipping shape cannot use HNSW; restructured
 distance-only shape can) as regression guards.
@@ -67,10 +67,10 @@ distance-only shape can) as regression guards.
 ## Findings
 
 1. **The exact vector scan scales linearly** and crosses a ~150 ms interactive budget at
-   roughly **40,000–50,000 embeddings per workspace** (173 ms at 50k). Below ~10k it is
-   single-digit-to-tens of milliseconds.
+   roughly **40,000–50,000 embeddings per workspace** (28 ms at 10k, 190 ms at 50k). Below
+   ~10k it is single-digit-to-tens of milliseconds.
 
-2. **An HNSW index is highly effective — sub-millisecond at 100k (0.4 ms, ~750× the seq
+2. **An HNSW index is highly effective — sub-millisecond at 100k (0.5 ms, ~600× the seq
    scan) — but only for a distance-only KNN on the embeddings table.** Three properties of
    the current query each independently prevent index use:
    - **Column type.** The shipping `embedding` column is a dimensionless `vector`
@@ -81,18 +81,27 @@ distance-only shape can) as regression guards.
      so even with the index present the planner falls back to a sequential scan (453 ms vs
      0.7 ms in isolation at 100k).
    - **Join before the limit.** The ANN ordering is computed on `vector_candidates` joined
-     to the multi-join `eligible_segments` CTE. Even distance-only, this keeps the index
-     unused; the ANN top-k must be taken on the bare embeddings table first (its
-     `workspace_id`/`provider`/`model`/`dimensions` are index-compatible WHERE filters),
-     then joined to eligibility and given the `segment_id` tiebreaker in an outer step.
+     to the multi-join `eligible_segments` CTE (materialize/hash-join). Even distance-only,
+     that specific shape keeps the index unused (574 ms at 100k). A simple indexed join
+     preserves index use via a nested loop over the ordered HNSW scan — it is the
+     multi-join CTE materialization that defeats it. The remedy: take the ANN top-k on the
+     bare embeddings table first (its `workspace_id`/`provider`/`model`/`dimensions` are
+     index-compatible WHERE filters), then join eligibility and apply the `segment_id`
+     tiebreaker in an outer step.
 
-3. **The vector scan is not the dominant recall cost.** At 100k, `vector_candidates` is
-   ~582 ms of a ~3,446 ms full recall (~17%). The remainder is the lexical path:
-   `eligible_segments` computes `to_tsvector(search_text) @@ ts_query` as a _projected_
-   column over every workspace segment, which the GIN index cannot serve (measured ~419 ms
-   at 100k in isolation), plus per-candidate `ts_rank_cd`/`ts_headline`/trigram scoring.
-   Even a perfect ANN index would only reduce full recall from ~3.4 s to ~2.9 s at 100k —
-   the lexical scan is the larger lever.
+3. **The vector scan is not the dominant recall cost.** At 100k (realistic lexical
+   selectivity — the query token matches ~0.5% of segments), `vector_candidates` is ~622 ms
+   of a ~1,961 ms full recall (~32%); the aggregate lexical path is the remaining ~68%.
+   That lexical cost is two independent O(N) predicates that `eligible_segments` evaluates
+   over every workspace segment, neither of which the GIN indexes can serve because they run
+   on CTE rows as projected/`OR`-ed predicates: `to_tsvector(search_text) @@ ts_query`
+   (~221–419 ms at 100k in isolation) and the fuzzy trigram `search_text % query`. Even a
+   perfect ANN index (622 ms → ~0.5 ms) would only cut full recall from ~1.96 s to ~1.34 s
+   at 100k — the lexical predicates are the larger lever.
+
+   (An earlier revision of this harness shared a word stem across all seed segments, which
+   made the fuzzy trigram predicate match the whole corpus and inflated full recall to
+   ~3.4 s; the numbers above use a diverse corpus with a rare, trigram-distinct query token.)
 
 ## Threshold
 
@@ -100,6 +109,11 @@ Revisit ANN indexing when a single workspace approaches **~40,000 embeddings** (
 exact vector scan alone approaches the ~150 ms budget). Phase 1/1.5 local corpora are far
 below this; at Phase-1 dogfood scale recall is tens of milliseconds. The trigger is a
 per-workspace row count, not a hard Phase-1.5 gate.
+
+The threshold is per-workspace. Measurements are on a single-workspace table, so
+per-workspace equals whole-table here; in a multi-workspace install the exact scan reads
+the whole embeddings table but the distance work is effectively per-workspace after the
+eligibility join, so the per-workspace framing still roughly holds.
 
 Because enabling HNSW requires the column migration **and** the query restructure above,
 "add the index" is a scoped change, not a one-line addition — another reason to defer it
@@ -113,9 +127,10 @@ until the trigger is real.
   applying the `segment_id` tiebreaker; add the HNSW `vector_cosine_ops` index; validate
   with this harness that the index is used and recall stays correct.
 - **Reduce the O(N) lexical `eligible_segments` cost in recall** (`SGA-175`, the larger latency lever
-  at scale): `eligible_segments` builds a tsvector per row rather than filtering through
-  the GIN index. Investigate a stored/generated tsvector column or restructuring so the
-  candidate set is index-driven.
+  at scale): `eligible_segments` evaluates both `to_tsvector(search_text) @@ ts_query` and
+  the fuzzy trigram `search_text % query` per row rather than through the GIN indexes.
+  Investigate a stored/generated tsvector column and driving the candidate set through the
+  GIN/trgm indexes instead of a full projected scan.
 
 Neither follow-up gates `SGA-148`: at Phase-1/1.5 local scale, recall latency is
 acceptable and the ANN index is not yet needed.
