@@ -2319,4 +2319,358 @@ describePostgres('postgres integration', () => {
       ),
     ).rejects.toThrow('terminal claims are not available for promotion');
   });
+
+  type CoherenceFixture = {
+    author: { id: string };
+    sourceBinding: { id: string };
+    workspace: { id: string };
+  };
+
+  type SessionGraph = {
+    interval: { id: string };
+    rawRecord: { id: string };
+    segment: { id: string };
+    session: { id: string };
+    turn: { id: string };
+  };
+
+  async function createCoherenceFixture(label: string): Promise<CoherenceFixture> {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const { sourceBinding, workspace } = await createWorkspaceWithCodexSource(`coherence-${label}`);
+    const [author] = await service.db
+      .insert(users)
+      .values({ handle: `author-${label}`, identitySource: 'host', workspaceId: workspace.id })
+      .returning();
+    if (author === undefined) {
+      throw new Error('author insert returned no row');
+    }
+    return { author, sourceBinding, workspace };
+  }
+
+  // Build a full, coherent session graph inside a shared fixture. Two graphs from the same
+  // fixture share a workspace, so cross-wiring one graph's row to another graph's parent keeps
+  // the row's workspace correct — only the new session-threading composite FKs can reject it.
+  async function buildSessionGraph(
+    fixture: CoherenceFixture,
+    label: string,
+  ): Promise<SessionGraph> {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const [session] = await service.db
+      .insert(sessions)
+      .values({
+        authorUserId: fixture.author.id,
+        harness: 'codex',
+        harnessSessionId: `coherence-${label}`,
+        sourceBindingId: fixture.sourceBinding.id,
+        workspaceId: fixture.workspace.id,
+      })
+      .returning();
+    if (session === undefined) {
+      throw new Error('session insert returned no row');
+    }
+    const [interval] = await service.db
+      .insert(activityIntervals)
+      .values({
+        ordinal: 0,
+        sessionId: session.id,
+        startedAt: new Date('2026-06-30T00:00:00.000Z'),
+        status: 'active',
+        workspaceId: fixture.workspace.id,
+      })
+      .returning();
+    if (interval === undefined) {
+      throw new Error('interval insert returned no row');
+    }
+    const [rawRecord] = await service.db
+      .insert(rawSessionRecords)
+      .values({
+        activityIntervalId: interval.id,
+        authorUserId: fixture.author.id,
+        contentHash: `sha256:${label}`,
+        contentType: 'jsonl',
+        harness: 'codex',
+        sessionId: session.id,
+        snapshotOrdinal: 0,
+        sourceBindingId: fixture.sourceBinding.id,
+        workspaceId: fixture.workspace.id,
+      })
+      .returning();
+    if (rawRecord === undefined) {
+      throw new Error('raw record insert returned no row');
+    }
+    const [turn] = await service.db
+      .insert(sessionTurns)
+      .values({
+        activityIntervalId: interval.id,
+        actorKind: 'host_user',
+        contentParts: [{ text: label, type: 'text' }],
+        ordinal: 0,
+        rawEventIds: [],
+        rawSessionRecordId: rawRecord.id,
+        role: 'user',
+        sessionId: session.id,
+        workspaceId: fixture.workspace.id,
+      })
+      .returning();
+    if (turn === undefined) {
+      throw new Error('turn insert returned no row');
+    }
+    const [segment] = await service.db
+      .insert(sessionSegments)
+      .values({
+        activityIntervalId: interval.id,
+        ordinal: 0,
+        rawSessionRecordId: rawRecord.id,
+        searchText: `${label} segment text`,
+        sessionId: session.id,
+        turnId: turn.id,
+        workspaceId: fixture.workspace.id,
+      })
+      .returning();
+    if (segment === undefined) {
+      throw new Error('segment insert returned no row');
+    }
+    return { interval, rawRecord, segment, session, turn };
+  }
+
+  test('rejects session derived rows whose parents disagree on the owning session', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    // Two coherent graphs sharing one workspace. Every cross-wiring below keeps the row's own
+    // workspace correct, so only the new session-threading composite FKs can reject it.
+    const fixture = await createCoherenceFixture('cross');
+    const a = await buildSessionGraph(fixture, 'a');
+    const b = await buildSessionGraph(fixture, 'b');
+    const w = fixture.workspace.id;
+
+    // Turn citing another session's activity interval.
+    await expect(
+      service.db.insert(sessionTurns).values({
+        activityIntervalId: b.interval.id,
+        actorKind: 'host_user',
+        contentParts: [{ text: 'x', type: 'text' }],
+        ordinal: 1,
+        rawEventIds: [],
+        rawSessionRecordId: a.rawRecord.id,
+        role: 'user',
+        sessionId: a.session.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Turn citing another session's raw record (distinct ordinal avoids the raw-record/ordinal unique).
+    await expect(
+      service.db.insert(sessionTurns).values({
+        activityIntervalId: a.interval.id,
+        actorKind: 'host_user',
+        contentParts: [{ text: 'x', type: 'text' }],
+        ordinal: 5,
+        rawEventIds: [],
+        rawSessionRecordId: b.rawRecord.id,
+        role: 'user',
+        sessionId: a.session.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Turn whose parent turn belongs to another session.
+    await expect(
+      service.db.insert(sessionTurns).values({
+        activityIntervalId: a.interval.id,
+        actorKind: 'host_user',
+        contentParts: [{ text: 'x', type: 'text' }],
+        ordinal: 6,
+        parentTurnId: b.turn.id,
+        rawEventIds: [],
+        rawSessionRecordId: a.rawRecord.id,
+        role: 'user',
+        sessionId: a.session.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Raw record citing another session's activity interval (inactive avoids the one-active-per-session unique).
+    await expect(
+      service.db.insert(rawSessionRecords).values({
+        activityIntervalId: b.interval.id,
+        authorUserId: fixture.author.id,
+        contentHash: 'sha256:a-cross-interval',
+        contentType: 'jsonl',
+        harness: 'codex',
+        isActive: false,
+        sessionId: a.session.id,
+        snapshotOrdinal: 5,
+        sourceBindingId: fixture.sourceBinding.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Segment citing another session's turn.
+    await expect(
+      service.db.insert(sessionSegments).values({
+        activityIntervalId: a.interval.id,
+        ordinal: 1,
+        rawSessionRecordId: a.rawRecord.id,
+        searchText: 'cross turn',
+        sessionId: a.session.id,
+        turnId: b.turn.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Segment citing another session's raw record.
+    await expect(
+      service.db.insert(sessionSegments).values({
+        activityIntervalId: a.interval.id,
+        ordinal: 2,
+        rawSessionRecordId: b.rawRecord.id,
+        searchText: 'cross record',
+        sessionId: a.session.id,
+        turnId: a.turn.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Segment citing another session's activity interval.
+    await expect(
+      service.db.insert(sessionSegments).values({
+        activityIntervalId: b.interval.id,
+        ordinal: 3,
+        rawSessionRecordId: a.rawRecord.id,
+        searchText: 'cross interval',
+        sessionId: a.session.id,
+        turnId: a.turn.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Embedding whose raw record differs from its segment's raw record.
+    await expect(
+      service.db.insert(sessionSegmentEmbeddings).values({
+        dimensions: 1536,
+        embedding: Array.from({ length: 1536 }, () => 0),
+        inputHash: 'sha256:cross-record-embedding',
+        model: 'text-embedding-3-small',
+        provider: 'openai',
+        rawSessionRecordId: b.rawRecord.id,
+        segmentId: a.segment.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Relationship whose source turn belongs to a different session than its source session.
+    await expect(
+      service.db.insert(sessionRelationships).values({
+        confidence: 'inferred',
+        relationshipType: 'child',
+        sourceSessionId: a.session.id,
+        sourceTurnId: b.turn.id,
+        targetSessionId: b.session.id,
+        workspaceId: w,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+  });
+
+  test('rejects self-referential session relationships', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const fixture = await createCoherenceFixture('self-rel');
+    const a = await buildSessionGraph(fixture, 'self-rel');
+    await expect(
+      service.db.insert(sessionRelationships).values({
+        confidence: 'inferred',
+        relationshipType: 'continuation',
+        sourceSessionId: a.session.id,
+        targetSessionId: a.session.id,
+        workspaceId: fixture.workspace.id,
+      }),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+  });
+
+  test('constrains session and activity-interval status to their finite vocabularies', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const fixture = await createCoherenceFixture('finite');
+    const a = await buildSessionGraph(fixture, 'finite');
+
+    // Session status: only active/completed, guarded by sessions_status_check.
+    await expect(
+      service.db.update(sessions).set({ status: 'archived' }).where(eq(sessions.id, a.session.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Interval status: only active/settled — a bogus value satisfies neither branch of the
+    // settlement-state coherence check, which is what rejects it (no separate status enum).
+    await expect(
+      service.db
+        .update(activityIntervals)
+        .set({ status: 'paused' })
+        .where(eq(activityIntervals.id, a.interval.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+  });
+
+  test('enforces activity interval settlement-state coherence', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const fixture = await createCoherenceFixture('settle');
+    const a = await buildSessionGraph(fixture, 'settle');
+
+    // Settled without a settlement timestamp.
+    await expect(
+      service.db
+        .update(activityIntervals)
+        .set({ status: 'settled', settledAt: null })
+        .where(eq(activityIntervals.id, a.interval.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    // Active but carrying a settlement timestamp.
+    await expect(
+      service.db
+        .update(activityIntervals)
+        .set({ status: 'active', settledAt: new Date('2026-06-30T01:00:00.000Z') })
+        .where(eq(activityIntervals.id, a.interval.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+  });
+
+  test('rejects negative ordinals on session derived rows', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const fixture = await createCoherenceFixture('ordinal');
+    const a = await buildSessionGraph(fixture, 'ordinal');
+
+    await expect(
+      service.db.update(sessionTurns).set({ ordinal: -1 }).where(eq(sessionTurns.id, a.turn.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+
+    await expect(
+      service.db
+        .update(rawSessionRecords)
+        .set({ snapshotOrdinal: -1 })
+        .where(eq(rawSessionRecords.id, a.rawRecord.id)),
+      // oxlint-disable-next-line vitest/require-to-throw-message -- DB constraint-violation diagnostic text is Postgres-version-specific and unverifiable in this no-DB environment.
+    ).rejects.toThrow();
+  });
 });

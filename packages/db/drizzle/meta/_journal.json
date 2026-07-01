@@ -64,6 +64,13 @@
       "when": 1782182790863,
       "tag": "0008_premium_slayback",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782890010483,
+      "tag": "0009_absurd_doomsday",
+      "breakpoints": true
     }
   ]
 }
