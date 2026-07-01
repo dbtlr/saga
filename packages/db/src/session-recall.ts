@@ -1116,7 +1116,7 @@ function mapContextRows(
     // placeholder describe the same withheld payload.
     const skipped = summarizeSkippedSegments(turn.segments);
     turn.contentParts = redactAgentFacingSessionArray(
-      safeContentPartsForSkippedSegments(turn.contentParts, turn.segments),
+      safeContentPartsForSkippedSegments(turn.contentParts, turn.segments, skipped),
     );
     if (skipped !== undefined) {
       const reasons =

@@ -507,7 +507,8 @@ describePostgres('session recall', () => {
     );
     expect(clean.warnings).toStrictEqual([]);
 
-    // The window clamps to the maximum (20) per side.
+    // An over-large window is clamped: the reported window caps at MAX_CONTEXT_WINDOW_TURNS (20)
+    // per side rather than the requested 100.
     const clamped = await Effect.runPromise(
       expandRecallContext(service, { ...anchor, windowTurns: 100 }),
     );
@@ -522,8 +523,9 @@ describePostgres('session recall', () => {
     expect(directional.beforeTurns).toBe(2);
     expect(directional.afterTurns).toBe(5);
 
-    // A hard-redacted active record surfaces an explicit warning, and expansion never exposes
-    // the raw body even when one is present.
+    // When the anchor's active raw record is the hard-redacted (scrubbed) snapshot, expansion
+    // emits an explicit record-scope warning. (A real redaction re-derives scrubbed turns via
+    // redactSessionSafety; here we set the status directly to exercise the warning trigger.)
     await service.sql`
       update raw_session_records
       set status = 'redacted',
@@ -537,6 +539,9 @@ describePostgres('session recall', () => {
     expect(redacted.warnings).toContainEqual(
       expect.objectContaining({ kind: 'hard_redacted', scope: 'record' }),
     );
+    // Structural guard: expansion returns normalized Turn content and never projects the raw
+    // record body, so a body sentinel can never leak into the output (regression guard against
+    // anyone adding body_text to the expansion projection).
     expect(JSON.stringify(redacted)).not.toContain('RAWBODYSENTINEL');
   });
 });

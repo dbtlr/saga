@@ -10,8 +10,10 @@ export type SkippedContentSegment = {
 export function safeContentPartsForSkippedSegments(
   contentParts: unknown[],
   segments: readonly SkippedContentSegment[],
+  // Callers that already computed the summary (e.g. to also emit a warning) can pass it to
+  // avoid recomputing; otherwise it is derived from the segments.
+  summary: SkippedContentSummary | undefined = summarizeSkippedSegments(segments),
 ): unknown[] {
-  const summary = summarizeSkippedSegments(segments);
   if (summary === undefined) {
     return contentParts;
   }
