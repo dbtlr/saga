@@ -2,17 +2,19 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
 import type { RegisterWorkspaceResult } from '@saga/db';
-import { loadRuntimeConfig } from '@saga/runtime';
+import { findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
 import type { RenderOptions } from './render.js';
+
+export { findProjectRoot } from '@saga/runtime';
 
 export const BINDING_FILE_NAME = '.saga.local.json';
 
@@ -149,18 +151,6 @@ export async function initProject(input: {
     };
   } finally {
     await Effect.runPromise(service.close());
-  }
-}
-
-export function findProjectRoot(cwd: string): string {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return resolve(cwd);
   }
 }
 
