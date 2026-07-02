@@ -83,7 +83,7 @@ export async function validateDatabaseReady(config: RuntimeConfig): Promise<void
 
 // postgres.js reports connection refusal as an AggregateError with an empty
 // message; unwrap it so the startup log names the unreachable target.
-function describeReadinessCause(cause: unknown): string {
+export function describeReadinessCause(cause: unknown): string {
   if (cause instanceof AggregateError && cause.errors.length > 0) {
     return cause.errors.map((error) => describeReadinessCause(error)).join('; ');
   }

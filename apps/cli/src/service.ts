@@ -16,6 +16,12 @@ import type { RenderOptions } from './render.js';
 const execFileAsync = promisify(execFile);
 const LAUNCHD_LABEL = 'com.saga.service';
 
+// Shared by every service health wait (lifecycle verbs here and saga start's
+// poll loop): a cold start imports the monorepo through tsx and runs up to 5s
+// of database validation before binding, so the window must exceed that.
+export const SERVICE_HEALTH_PROBE_ATTEMPTS = 30;
+export const SERVICE_HEALTH_PROBE_INTERVAL_MS = 500;
+
 export type ServiceSupervisorState =
   | 'installed'
   | 'not installed'
@@ -260,6 +266,7 @@ export type LaunchdSupervisorOptions = {
 export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): ServiceSupervisor {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const paths = launchdPaths(input.home);
+  const domain = `gui/${String(process.getuid?.() ?? '')}`;
   const unavailable = (action: ServiceLifecycleReport['action']) =>
     launchdUnavailableReport(paths, action);
   const launchctl =
@@ -278,10 +285,25 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       writeFileSync(paths.plistPath, renderLaunchdPlist({ paths, projectRoot }), {
         mode: 0o600,
       });
-      await launchctl(['bootstrap', `gui/${String(process.getuid?.() ?? '')}`, paths.plistPath]);
+      // An already-bootstrapped agent makes a bare bootstrap fail before
+      // kickstart runs, so reinstall boots the old agent out first. launchd
+      // reports "5: Input/output error" both when nothing is loaded and on
+      // real bootout failures (probed empirically), so the error cannot be
+      // classified; keep it only as context for a bootstrap failure.
+      const bootoutFailure = await launchctl(['bootout', domain, paths.plistPath]).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      try {
+        // Bootout can return before launchd finishes tearing the job down;
+        // retry briefly so the reinstall path does not fail on that race.
+        await retryLaunchctl(() => launchctl(['bootstrap', domain, paths.plistPath]));
+      } catch (error) {
+        throw describeBootstrapFailure(error, bootoutFailure);
+      }
       // RunAtLoad is false, so bootstrap alone loads the agent without launching
       // the process; kickstart is what actually starts the service.
-      await launchctl(['kickstart', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
+      await launchctl(['kickstart', `${domain}/${LAUNCHD_LABEL}`]);
       return {
         action: 'install',
         detail: 'installed, bootstrapped, and started launchd agent',
@@ -294,11 +316,7 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       if (process.platform !== 'darwin') {
         return unavailable('restart');
       }
-      await launchctl([
-        'kickstart',
-        '-k',
-        `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`,
-      ]);
+      await launchctl(['kickstart', '-k', `${domain}/${LAUNCHD_LABEL}`]);
       return {
         action: 'restart',
         detail: 'restarted launchd agent',
@@ -311,7 +329,7 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       if (process.platform !== 'darwin') {
         return unavailable('start');
       }
-      await launchctl(['kickstart', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
+      await launchctl(['kickstart', `${domain}/${LAUNCHD_LABEL}`]);
       return {
         action: 'start',
         detail: 'started launchd agent',
@@ -324,7 +342,7 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       if (process.platform !== 'darwin') {
         return unavailable('stop');
       }
-      await launchctl(['kill', 'TERM', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
+      await launchctl(['kill', 'TERM', `${domain}/${LAUNCHD_LABEL}`]);
       return {
         action: 'stop',
         detail: 'sent TERM to launchd agent',
@@ -337,11 +355,7 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       if (process.platform !== 'darwin') {
         return unavailable('uninstall');
       }
-      await launchctl([
-        'bootout',
-        `gui/${String(process.getuid?.() ?? '')}`,
-        paths.plistPath,
-      ]).catch(() => undefined);
+      await launchctl(['bootout', domain, paths.plistPath]).catch(() => undefined);
       rmSync(paths.plistPath, { force: true });
       return {
         action: 'uninstall',
@@ -352,6 +366,41 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       };
     },
   };
+}
+
+const BOOTSTRAP_RETRY_ATTEMPTS = 3;
+const BOOTSTRAP_RETRY_INTERVAL_MS = 250;
+
+async function retryLaunchctl(run: () => Promise<void>): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await run();
+      return;
+    } catch (error) {
+      if (attempt >= BOOTSTRAP_RETRY_ATTEMPTS) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BOOTSTRAP_RETRY_INTERVAL_MS));
+    }
+  }
+}
+
+function describeBootstrapFailure(error: unknown, bootoutFailure: unknown): Error {
+  const bootstrapMessage = launchctlFailureMessage(error);
+  if (bootoutFailure === undefined) {
+    return error instanceof Error ? error : new Error(bootstrapMessage);
+  }
+  return new Error(
+    `${bootstrapMessage} (bootout beforehand also failed: ${launchctlFailureMessage(bootoutFailure)})`,
+    { cause: error },
+  );
+}
+
+function launchctlFailureMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return typeof error === 'string' ? error : JSON.stringify(error);
 }
 
 export function renderLaunchdPlist(input: {
@@ -508,8 +557,8 @@ export async function waitForServiceHealth(
   healthCheck: (url: string) => Promise<string> = checkHealth,
   options: ServiceHealthProbeOptions = {},
 ): Promise<string> {
-  const attempts = options.attempts ?? 20;
-  const intervalMs = options.intervalMs ?? 250;
+  const attempts = options.attempts ?? SERVICE_HEALTH_PROBE_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? SERVICE_HEALTH_PROBE_INTERVAL_MS;
   let last = 'unreachable';
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {

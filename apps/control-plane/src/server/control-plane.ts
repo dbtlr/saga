@@ -1,6 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { compileActiveContext } from '@saga/active-context';
 import type { ActiveContextDocument } from '@saga/active-context';
@@ -17,7 +16,7 @@ import {
   workspaces,
 } from '@saga/db';
 import type { CurrentClaim, DatabaseService, RawEvent, SourceBinding } from '@saga/db';
-import { loadRuntimeConfig } from '@saga/runtime';
+import { findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
 import type { SagaEnvironment } from '@saga/runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
@@ -371,18 +370,6 @@ async function withBoundDatabase<T>(
     return await run({ binding: bindingResult.binding, service });
   } finally {
     await Effect.runPromise(service.close());
-  }
-}
-
-function findProjectRoot(cwd: string): string {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return resolve(cwd);
   }
 }
 

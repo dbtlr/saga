@@ -178,45 +178,148 @@ describe('launchdPrintProcess', () => {
 });
 
 describe('createLaunchdSupervisor', () => {
-  it('bootstraps and then starts the agent on install', async () => {
-    if (process.platform !== 'darwin') {
-      return;
-    }
-    const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
-    const calls: string[][] = [];
-    try {
-      const supervisor = createLaunchdSupervisor({
-        cwd: process.cwd(),
-        home,
-        launchctl: async (args) => {
-          calls.push([...args]);
-        },
+  it.skipIf(process.platform !== 'darwin')(
+    'boots out, bootstraps, and then starts the agent on install',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
+      const calls: string[][] = [];
+      try {
+        const supervisor = createLaunchdSupervisor({
+          cwd: process.cwd(),
+          home,
+          launchctl: async (args) => {
+            calls.push([...args]);
+          },
+        });
+
+        const report = await supervisor.install();
+
+        expect(report.state).toBe('installed');
+        expect(report.plistPath.startsWith(home)).toBe(true);
+        expect(existsSync(report.plistPath)).toBe(true);
+        expect(readFileSync(report.plistPath, 'utf8')).toContain('com.saga.service');
+        const domain = `gui/${String(process.getuid?.() ?? '')}`;
+        expect(calls).toStrictEqual([
+          ['bootout', domain, report.plistPath],
+          ['bootstrap', domain, report.plistPath],
+          ['kickstart', `${domain}/com.saga.service`],
+        ]);
+      } finally {
+        rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'installs even when there is no previous agent to boot out',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
+      const calls: string[][] = [];
+      try {
+        const supervisor = createLaunchdSupervisor({
+          cwd: process.cwd(),
+          home,
+          launchctl: async (args) => {
+            calls.push([...args]);
+            if (args[0] === 'bootout') {
+              throw new Error('Boot-out failed: 3: No such process');
+            }
+          },
+        });
+
+        const report = await supervisor.install();
+
+        expect(report.state).toBe('installed');
+        expect(calls.map((args) => args[0])).toStrictEqual(['bootout', 'bootstrap', 'kickstart']);
+      } finally {
+        rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'retries bootstrap when launchd is still tearing the old agent down',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
+      const calls: string[][] = [];
+      let bootstrapAttempts = 0;
+      try {
+        const supervisor = createLaunchdSupervisor({
+          cwd: process.cwd(),
+          home,
+          launchctl: async (args) => {
+            calls.push([...args]);
+            if (args[0] === 'bootstrap') {
+              bootstrapAttempts += 1;
+              if (bootstrapAttempts === 1) {
+                throw new Error('Bootstrap failed: 5: Input/output error');
+              }
+            }
+          },
+        });
+
+        const report = await supervisor.install();
+
+        expect(report.state).toBe('installed');
+        expect(calls.map((args) => args[0])).toStrictEqual([
+          'bootout',
+          'bootstrap',
+          'bootstrap',
+          'kickstart',
+        ]);
+      } finally {
+        rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'surfaces the swallowed bootout error when bootstrap fails for good',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
+      const calls: string[][] = [];
+      try {
+        const supervisor = createLaunchdSupervisor({
+          cwd: process.cwd(),
+          home,
+          launchctl: async (args) => {
+            calls.push([...args]);
+            if (args[0] === 'bootout') {
+              throw new Error('Boot-out failed: 5: Input/output error');
+            }
+            if (args[0] === 'bootstrap') {
+              throw new Error('Bootstrap failed: 5: Input/output error');
+            }
+          },
+        });
+
+        await expect(supervisor.install()).rejects.toThrow(
+          /Bootstrap failed.*bootout beforehand also failed.*Boot-out failed/,
+        );
+        expect(calls.map((args) => args[0])).toStrictEqual([
+          'bootout',
+          'bootstrap',
+          'bootstrap',
+          'bootstrap',
+        ]);
+      } finally {
+        rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'darwin')(
+    'does not mutate launchd state on non-macOS',
+    async () => {
+      const report = await createLaunchdSupervisor({ cwd: process.cwd() }).install();
+
+      expect(report).toMatchObject({
+        action: 'install',
+        detail: 'launchd is only available on macOS',
+        state: 'unavailable',
       });
-
-      const report = await supervisor.install();
-
-      expect(report.state).toBe('installed');
-      expect(report.plistPath.startsWith(home)).toBe(true);
-      expect(existsSync(report.plistPath)).toBe(true);
-      expect(readFileSync(report.plistPath, 'utf8')).toContain('com.saga.service');
-      expect(calls.map((args) => args[0])).toStrictEqual(['bootstrap', 'kickstart']);
-    } finally {
-      rmSync(home, { force: true, recursive: true });
-    }
-  });
-
-  it('does not mutate launchd state on non-macOS', async () => {
-    if (process.platform === 'darwin') {
-      return;
-    }
-    const report = await createLaunchdSupervisor({ cwd: process.cwd() }).install();
-
-    expect(report).toMatchObject({
-      action: 'install',
-      detail: 'launchd is only available on macOS',
-      state: 'unavailable',
-    });
-  });
+    },
+  );
 });
 
 function fakeSupervisor(state: 'running' | 'stopped' = 'running'): ServiceSupervisor {
