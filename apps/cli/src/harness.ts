@@ -80,7 +80,9 @@ export type HarnessStatus = {
   hooksPath: string;
   state: HarnessIntegrationState;
   stateDetail: string;
-  mcp: 'deferred';
+  mcp: 'installed' | 'divergent' | 'missing' | 'manual';
+  mcpDetail: string;
+  mcpPath: string;
   nextStep: string | undefined;
   sessionStartCoverage: HookCoverage;
   sessionStartDetail: string;
@@ -141,6 +143,21 @@ type HooksSettingsReadResult =
   | { file: HooksSettingsFile; ok: true }
   | { error: HooksSettingsParseError; ok: false };
 
+type McpConfigFile = Record<string, unknown> & {
+  mcpServers?: Record<string, unknown>;
+};
+
+type McpConfigParseError = {
+  message: string;
+  path: string;
+};
+
+type McpConfigReadResult =
+  | { file: McpConfigFile; ok: true }
+  | { error: McpConfigParseError; ok: false };
+
+type HarnessMcpStatus = Pick<HarnessStatus, 'mcp' | 'mcpDetail' | 'mcpPath'>;
+
 const HARNESS_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const;
 const SESSION_START_SOURCES = ['startup', 'resume', 'clear', 'compact'] as const;
 const ACTIVATION_RECENT_WINDOW_HOURS = 24;
@@ -151,11 +168,12 @@ const LEGACY_HOOK_COMMANDS = {
 } as const;
 const LEGACY_CODEX_HOOK_COMMAND = 'saga ingest codex-hook';
 const HOOK_TIMEOUT_SECONDS = 30;
+const CODEX_MCP_CONFIG_LABEL = '~/.codex/config.toml';
 const HARNESS_TARGET_ORDER = ['codex', 'claude'] as const satisfies readonly HarnessTarget[];
 const HARNESS_ADAPTERS = {
   claude: {
     displayName: 'Claude Code',
-    gitignoreEntries: ['.claude/settings.local.json', '.claude/saga-claude-hook.sh'],
+    gitignoreEntries: ['.claude/settings.local.json', '.claude/saga-claude-hook.sh', '.mcp.json'],
     hooksPath: (projectRoot: string) => join(projectRoot, '.claude', 'settings.local.json'),
     ingestCommand: 'claude-hook',
     settingsLabel: 'Claude settings file',
@@ -226,6 +244,8 @@ export async function installHarness(input: {
   const hooksPath = adapter.hooksPath(projectRoot);
   const hookCommand = hookShimCommand(projectRoot, adapter);
   const hooksFile = readHooksSettingsFile(hooksPath, adapter);
+  const mcpConfig =
+    input.target === 'claude' ? readMcpConfigFile(claudeMcpConfigPath(projectRoot)) : undefined;
   const sourceBinding = await registerHarnessSourceBinding(input)(
     projectRoot,
     binding.workspace.id,
@@ -256,6 +276,9 @@ export async function installHarness(input: {
     ensureGitignoreEntry(projectRoot, adapter.gitignoreEntries);
     installHookShim(projectRoot, adapter);
     writeJsonFile(hooksPath, installSagaHooks(hooksFile, hookCommand));
+    if (mcpConfig !== undefined) {
+      writeJsonFile(claudeMcpConfigPath(projectRoot), installSagaMcpServer(mcpConfig));
+    }
   } catch (error) {
     writeBindingFile(projectRoot, binding);
     throw error;
@@ -276,6 +299,10 @@ export function uninstallHarness(input: { cwd?: string; target: HarnessTarget })
       hooksPath,
       uninstallSagaHooks(hooksFile, binding?.harnesses?.[input.target]?.hookCommand, input.target),
     );
+  }
+
+  if (input.target === 'claude') {
+    removeSagaMcpServer(projectRoot);
   }
 
   if (binding !== undefined) {
@@ -343,6 +370,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
   const harnessBinding = binding?.harnesses?.[adapter.target];
   const expectedHookCommand = hookShimCommand(projectRoot, adapter);
   const hookCommand = harnessBinding?.hookCommand ?? expectedHookCommand;
+  const mcpStatus = inspectMcpStatus(projectRoot, adapter);
   const hooksFile = tryReadHooksSettingsFile(hooksPath, adapter);
   if (!hooksFile.ok) {
     return {
@@ -355,7 +383,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hooksError: formatHooksSettingsParseError(hooksFile.error),
       hookTrust: 'not installed',
       hooksPath,
-      mcp: 'deferred',
+      ...mcpStatus,
       nextStep: undefined,
       sessionStartCoverage: 'none',
       sessionStartDetail: 'SessionStart hook configuration could not be read',
@@ -382,7 +410,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
       hooksCoverage: sagaHookCoverage.hooksCoverage,
       hooks: hooksInstalled ? 'installed' : 'missing',
       hooksPath,
-      mcp: 'deferred',
+      ...mcpStatus,
       nextStep: undefined,
       sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
       sessionStartDetail: sagaHookCoverage.sessionStartDetail,
@@ -413,7 +441,7 @@ function inspectTargetHarness(projectRoot: string, adapter: HarnessAdapter): Har
     hooksCoverage: sagaHookCoverage.hooksCoverage,
     hooks: hooksInstalled ? 'installed' : 'missing',
     hooksPath,
-    mcp: 'deferred',
+    ...mcpStatus,
     nextStep: nextStepForHarnessState(adapter.target, state.state),
     sessionStartCoverage: sagaHookCoverage.sessionStartCoverage,
     sessionStartDetail: sagaHookCoverage.sessionStartDetail,
@@ -987,7 +1015,8 @@ function formatHarnessRecord(title: string, status: HarnessStatus, options: Rend
       ...(status.nextStep === undefined ? [] : [{ label: 'next step', value: status.nextStep }]),
       { label: 'hooks path', value: status.hooksPath },
       { label: 'hook command', value: status.hookCommand },
-      { label: 'mcp', value: 'deferred until saga mcp is implemented' },
+      { label: 'mcp', value: `${status.mcp}; ${status.mcpDetail}` },
+      { label: 'mcp path', value: status.mcpPath },
       { label: 'skills', value: 'deferred until Saga skills are packaged' },
     ],
     options,
@@ -1097,6 +1126,152 @@ async function registerAgentSourceBinding(
   } finally {
     await Effect.runPromise(service.close());
   }
+}
+
+function claudeMcpConfigPath(projectRoot: string): string {
+  return join(projectRoot, '.mcp.json');
+}
+
+function sagaCliPath(): string {
+  return fileURLToPath(new URL('../bin/saga.js', import.meta.url));
+}
+
+function sagaMcpServerEntry(): { args: string[]; command: string } {
+  return { args: ['mcp'], command: sagaCliPath() };
+}
+
+function readMcpConfigFile(path: string): McpConfigFile {
+  const result = tryReadMcpConfigFile(path);
+  if (result.ok) {
+    return result.file;
+  }
+  throw new Error(formatMcpConfigParseError(result.error));
+}
+
+function tryReadMcpConfigFile(path: string): McpConfigReadResult {
+  if (!existsSync(path)) {
+    return { file: {}, ok: true };
+  }
+  try {
+    return { file: parseMcpConfigFile(JSON.parse(readFileSync(path, 'utf8'))), ok: true };
+  } catch (error) {
+    return {
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        path,
+      },
+      ok: false,
+    };
+  }
+}
+
+function formatMcpConfigParseError(error: McpConfigParseError): string {
+  return `invalid Claude MCP config file ${error.path}: ${error.message}`;
+}
+
+function parseMcpConfigFile(value: unknown): McpConfigFile {
+  if (!isRecord(value)) {
+    throw new Error('expected a JSON object');
+  }
+  if (value.mcpServers !== undefined && !isRecord(value.mcpServers)) {
+    throw new Error('expected mcpServers to be an object');
+  }
+  return value as McpConfigFile;
+}
+
+function installSagaMcpServer(file: McpConfigFile): McpConfigFile {
+  const servers = isRecord(file.mcpServers) ? file.mcpServers : {};
+  return { ...file, mcpServers: { ...servers, saga: sagaMcpServerEntry() } };
+}
+
+function removeSagaMcpServer(projectRoot: string): void {
+  const path = claudeMcpConfigPath(projectRoot);
+  if (!existsSync(path)) {
+    return;
+  }
+  const file = readMcpConfigFile(path);
+  const servers = isRecord(file.mcpServers) ? file.mcpServers : {};
+  const { saga: _saga, ...remainingServers } = servers;
+  const hasOtherTopLevelKeys = Object.keys(file).some((key) => key !== 'mcpServers');
+  if (!hasOtherTopLevelKeys && Object.keys(remainingServers).length === 0) {
+    rmSync(path, { force: true });
+    return;
+  }
+  writeJsonFile(path, { ...file, mcpServers: remainingServers });
+}
+
+function inspectMcpStatus(projectRoot: string, adapter: HarnessAdapter): HarnessMcpStatus {
+  if (adapter.target === 'codex') {
+    return {
+      mcp: 'manual',
+      mcpDetail: codexMcpManualDetail(),
+      mcpPath: CODEX_MCP_CONFIG_LABEL,
+    };
+  }
+
+  const mcpPath = claudeMcpConfigPath(projectRoot);
+  const result = tryReadMcpConfigFile(mcpPath);
+  if (!result.ok) {
+    return {
+      mcp: 'divergent',
+      mcpDetail: `${formatMcpConfigParseError(result.error)}; fix or remove the file, then run saga harness install claude`,
+      mcpPath,
+    };
+  }
+
+  const servers = isRecord(result.file.mcpServers) ? result.file.mcpServers : {};
+  const sagaEntry = servers.saga;
+  if (sagaEntry === undefined) {
+    return {
+      mcp: 'missing',
+      mcpDetail: 'Saga MCP server is not registered; run saga harness install claude',
+      mcpPath,
+    };
+  }
+
+  const differences = sagaMcpEntryDifferences(sagaEntry);
+  if (differences.length > 0) {
+    return {
+      mcp: 'divergent',
+      mcpDetail: `mcpServers.saga diverges: ${differences.join('; ')}; run saga harness install claude to rewrite it`,
+      mcpPath,
+    };
+  }
+
+  return {
+    mcp: 'installed',
+    mcpDetail: 'mcpServers.saga launches the Saga CLI MCP server',
+    mcpPath,
+  };
+}
+
+function sagaMcpEntryDifferences(entry: unknown): string[] {
+  if (!isRecord(entry)) {
+    return ['entry is not an object'];
+  }
+  const expected = sagaMcpServerEntry();
+  const differences: string[] = [];
+  if (entry.command !== expected.command) {
+    differences.push('command does not match the expected Saga CLI path');
+  }
+  const args = entry.args;
+  const argsMatch =
+    Array.isArray(args) &&
+    args.length === expected.args.length &&
+    expected.args.every((arg, index) => args[index] === arg);
+  if (!argsMatch) {
+    differences.push('args do not equal ["mcp"]');
+  }
+  return differences;
+}
+
+function codexMcpManualDetail(): string {
+  return [
+    `Codex MCP servers are user-global; add to ${CODEX_MCP_CONFIG_LABEL}:`,
+    '[mcp_servers.saga]',
+    `command = "${sagaCliPath()}"`,
+    'args = ["mcp"]',
+  ].join('\n');
 }
 
 function readHooksSettingsFile(path: string, adapter: HarnessAdapter): HooksSettingsFile {

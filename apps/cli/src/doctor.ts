@@ -344,14 +344,29 @@ async function checkHarnesses(
         ? { cwd: projectRoot }
         : { cwd: projectRoot, verifyActivation },
     );
-    return statuses.map((harness) => ({
-      detail:
-        harness.nextStep === undefined
-          ? `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}`
-          : `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}; next step: ${harness.nextStep}`,
-      label: `harness:${harness.target}`,
-      status: harnessDoctorStatus(harness.state, harness.activation.state),
-    }));
+    return statuses.flatMap((harness) => {
+      const checks: DoctorCheck[] = [
+        {
+          detail:
+            harness.nextStep === undefined
+              ? `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}`
+              : `${harness.state}; ${harness.stateDetail}; activation: ${harness.activation.state}; ${harness.activation.detail}; next step: ${harness.nextStep}`,
+          label: `harness:${harness.target}`,
+          status: harnessDoctorStatus(harness.state, harness.activation.state),
+        },
+      ];
+      if (
+        harness.binding === 'installed' &&
+        (harness.mcp === 'missing' || harness.mcp === 'divergent')
+      ) {
+        checks.push({
+          detail: `${harness.mcp}; ${harness.mcpDetail}`,
+          label: `harness:${harness.target}:mcp`,
+          status: 'warn',
+        });
+      }
+      return checks;
+    });
   } catch (error) {
     return [
       {

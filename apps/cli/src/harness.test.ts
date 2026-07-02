@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -1206,6 +1207,222 @@ describe('uninstallHarness', () => {
       hooks: { Stop?: { hooks: { type: string }[] }[] };
     };
     expect(hooks.hooks.Stop?.[0]?.hooks.map((hook) => hook.type)).toStrictEqual(['prompt']);
+  });
+});
+
+async function installClaude(projectRoot: string) {
+  return installHarness({
+    cwd: projectRoot,
+    registerClaudeSource: async () => ({ id: 'claude-source-id' }),
+    target: 'claude',
+  });
+}
+
+describe('claude MCP registration', () => {
+  const expectedMcpCommand = fileURLToPath(new URL('../bin/saga.js', import.meta.url));
+
+  it('registers the Saga MCP server in .mcp.json on install', async () => {
+    const projectRoot = boundProject();
+
+    const status = await installClaude(projectRoot);
+
+    expect(status.mcp).toBe('installed');
+    expect(status.mcpPath).toBe(join(projectRoot, '.mcp.json'));
+    expect(status.mcpDetail).toContain('mcpServers.saga');
+    expect(JSON.parse(readFileSync(join(projectRoot, '.mcp.json'), 'utf8'))).toStrictEqual({
+      mcpServers: {
+        saga: {
+          args: ['mcp'],
+          command: expectedMcpCommand,
+        },
+      },
+    });
+    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf8')).toContain('.mcp.json\n');
+  });
+
+  it('preserves foreign servers and unknown top-level keys on install', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({
+        customTopLevel: { keep: true },
+        mcpServers: {
+          other: { args: ['serve'], command: '/usr/local/bin/other', env: { TOKEN: 'secret' } },
+        },
+      })}\n`,
+    );
+
+    await installClaude(projectRoot);
+
+    expect(JSON.parse(readFileSync(join(projectRoot, '.mcp.json'), 'utf8'))).toStrictEqual({
+      customTopLevel: { keep: true },
+      mcpServers: {
+        other: { args: ['serve'], command: '/usr/local/bin/other', env: { TOKEN: 'secret' } },
+        saga: { args: ['mcp'], command: expectedMcpCommand },
+      },
+    });
+  });
+
+  it('is idempotent across reinstalls', async () => {
+    const projectRoot = boundProject();
+
+    await installClaude(projectRoot);
+    const firstInstall = readFileSync(join(projectRoot, '.mcp.json'), 'utf8');
+    const status = await installClaude(projectRoot);
+
+    expect(status.mcp).toBe('installed');
+    expect(readFileSync(join(projectRoot, '.mcp.json'), 'utf8')).toBe(firstInstall);
+  });
+
+  it('removes only the saga entry on uninstall and preserves foreign servers', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({
+        mcpServers: {
+          other: { args: ['serve'], command: '/usr/local/bin/other' },
+        },
+      })}\n`,
+    );
+
+    await installClaude(projectRoot);
+    const status = uninstallHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('missing');
+    expect(JSON.parse(readFileSync(join(projectRoot, '.mcp.json'), 'utf8'))).toStrictEqual({
+      mcpServers: {
+        other: { args: ['serve'], command: '/usr/local/bin/other' },
+      },
+    });
+  });
+
+  it('deletes .mcp.json on uninstall when only the saga entry remains', async () => {
+    const projectRoot = boundProject();
+
+    await installClaude(projectRoot);
+    uninstallHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(existsSync(join(projectRoot, '.mcp.json'))).toBe(false);
+  });
+
+  it('keeps .mcp.json on uninstall when unknown top-level keys exist', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({ customTopLevel: { keep: true }, mcpServers: {} })}\n`,
+    );
+
+    await installClaude(projectRoot);
+    uninstallHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(JSON.parse(readFileSync(join(projectRoot, '.mcp.json'), 'utf8'))).toStrictEqual({
+      customTopLevel: { keep: true },
+      mcpServers: {},
+    });
+  });
+
+  it('classifies a different command as divergent without printing other servers', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({
+        mcpServers: {
+          other: { command: '/usr/local/bin/other', env: { TOKEN: 'other-secret' } },
+          saga: { args: ['mcp'], command: '/somewhere/else/saga.js' },
+        },
+      })}\n`,
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('divergent');
+    expect(status.mcpDetail).toContain('command does not match the expected Saga CLI path');
+    expect(status.mcpDetail).not.toContain('other-secret');
+    expect(status.mcpDetail).not.toContain('/usr/local/bin/other');
+  });
+
+  it('classifies divergent args on the saga entry', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({
+        mcpServers: { saga: { args: ['serve'], command: expectedMcpCommand } },
+      })}\n`,
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('divergent');
+    expect(status.mcpDetail).toContain('args do not equal ["mcp"]');
+  });
+
+  it('classifies a missing .mcp.json as missing', () => {
+    const projectRoot = boundProject();
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('missing');
+    expect(status.mcpDetail).toContain('run saga harness install claude');
+  });
+
+  it('classifies a .mcp.json without a saga entry as missing', async () => {
+    const projectRoot = boundProject();
+    writeFileSync(
+      join(projectRoot, '.mcp.json'),
+      `${JSON.stringify({ mcpServers: { other: { command: '/usr/local/bin/other' } } })}\n`,
+    );
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('missing');
+    expect(status.mcpDetail).toContain('run saga harness install claude');
+  });
+
+  it('fails install on malformed .mcp.json without registering source bindings', async () => {
+    const projectRoot = boundProject();
+    const mcpPath = join(projectRoot, '.mcp.json');
+    writeFileSync(mcpPath, '{invalid-json');
+    let registered = false;
+
+    await expect(
+      installHarness({
+        cwd: projectRoot,
+        registerClaudeSource: async () => {
+          registered = true;
+          return { id: 'claude-source-id' };
+        },
+        target: 'claude',
+      }),
+    ).rejects.toThrow(`invalid Claude MCP config file ${mcpPath}:`);
+
+    expect(registered).toBe(false);
+    expect(readBindingFile(projectRoot)?.harnesses?.claude).toBeUndefined();
+  });
+
+  it('reports malformed .mcp.json as divergent with a parse detail in status', () => {
+    const projectRoot = boundProject();
+    const mcpPath = join(projectRoot, '.mcp.json');
+    writeFileSync(mcpPath, '{invalid-json');
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'claude' });
+
+    expect(status.mcp).toBe('divergent');
+    expect(status.mcpDetail).toContain(`invalid Claude MCP config file ${mcpPath}:`);
+  });
+});
+
+describe('codex MCP posture', () => {
+  it('reports manual registration with a config.toml snippet', () => {
+    const projectRoot = boundProject();
+    const expectedMcpCommand = fileURLToPath(new URL('../bin/saga.js', import.meta.url));
+
+    const status = inspectHarness({ cwd: projectRoot, target: 'codex' });
+
+    expect(status.mcp).toBe('manual');
+    expect(status.mcpPath).toBe('~/.codex/config.toml');
+    expect(status.mcpDetail).toContain('[mcp_servers.saga]');
+    expect(status.mcpDetail).toContain(`command = "${expectedMcpCommand}"`);
+    expect(status.mcpDetail).toContain('args = ["mcp"]');
   });
 });
 
