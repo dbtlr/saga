@@ -1,9 +1,26 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readClaimReviewAttributes, readControlPlaneSnapshot } from './control-plane.js';
+
+// Pin the installation config to an empty temp home so snapshot checks never read
+// the developer's real ~/.saga/config.json.
+let previousSagaHome: string | undefined;
+beforeAll(() => {
+  previousSagaHome = process.env.SAGA_HOME;
+  process.env.SAGA_HOME = mkdtempSync(join(tmpdir(), 'saga-control-plane-saga-home-'));
+});
+
+afterAll(() => {
+  if (previousSagaHome === undefined) {
+    delete process.env.SAGA_HOME;
+  } else {
+    process.env.SAGA_HOME = previousSagaHome;
+  }
+});
 
 describe('readControlPlaneSnapshot', () => {
   it('returns an unbound snapshot when no local binding exists', async () => {

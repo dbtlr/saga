@@ -36,6 +36,7 @@ describePostgres('session recall', () => {
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
+          databaseUrlSource: 'environment',
           environment: 'test',
           logLevel: 'info',
           service: {

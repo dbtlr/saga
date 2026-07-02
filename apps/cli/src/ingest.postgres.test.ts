@@ -44,6 +44,7 @@ describePostgres('ambient hook ingest postgres integration', () => {
       makeDatabase(
         {
           databaseUrl: url.toString(),
+          databaseUrlSource: 'environment',
           environment: 'test',
           logLevel: 'info',
           service: {

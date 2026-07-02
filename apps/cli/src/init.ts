@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 
 import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
 import type { RegisterWorkspaceResult } from '@saga/db';
-import { findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
+import { findProjectRoot, installationConfigLocation, loadRuntimeConfig } from '@saga/runtime';
+import type { LoadRuntimeConfigOptions } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { formatCommandOutput } from './output.js';
@@ -99,13 +100,24 @@ export async function runInit(args: readonly string[], options: RenderOptions): 
 export async function initProject(input: {
   cwd?: string;
   handle?: string | undefined;
+  runtimeConfig?: Omit<LoadRuntimeConfigOptions, 'cwd'>;
 }): Promise<InitResult> {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const gitRemote = readGitRemote(projectRoot);
   const handle = normalizeHandle(input.handle ?? basename(projectRoot));
   const sourceUri = pathToFileURL(projectRoot).href;
 
-  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
+  const runtimeConfig = input.runtimeConfig ?? {};
+  const config = await Effect.runPromise(loadRuntimeConfig({ ...runtimeConfig, cwd: projectRoot }));
+  if (config.databaseUrl === undefined) {
+    const installationConfig = installationConfigLocation({
+      env: runtimeConfig.env ?? process.env,
+      ...(runtimeConfig.homeDir === undefined ? {} : { homeDir: runtimeConfig.homeDir }),
+    });
+    throw new Error(
+      `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`,
+    );
+  }
   const service = await Effect.runPromise(makeDatabase(config));
 
   try {

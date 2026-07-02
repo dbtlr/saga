@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   checkNodeVersion,
@@ -17,6 +17,22 @@ import type { DoctorCheck } from './doctor.js';
 import type { HarnessActivationStatus } from './harness.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
+
+// Pin the installation config to an empty temp home so doctor checks never read
+// the developer's real ~/.saga/config.json.
+let previousSagaHome: string | undefined;
+beforeAll(() => {
+  previousSagaHome = process.env.SAGA_HOME;
+  process.env.SAGA_HOME = mkdtempSync(join(tmpdir(), 'saga-doctor-saga-home-'));
+});
+
+afterAll(() => {
+  if (previousSagaHome === undefined) {
+    delete process.env.SAGA_HOME;
+  } else {
+    process.env.SAGA_HOME = previousSagaHome;
+  }
+});
 
 const fixtureChecks: DoctorCheck[] = [
   {
@@ -659,6 +675,113 @@ describe('doctorProject', () => {
     });
 
     expect(checks).not.toContainEqual(expect.objectContaining({ label: 'harness:claude:mcp' }));
+  });
+
+  it('reports a database config row sourced from the environment', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: {
+        env: { DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
+        installationConfig: false,
+      },
+    });
+
+    expect(checks).toContainEqual({
+      detail: 'DATABASE_URL from environment',
+      label: 'database config',
+      status: 'ok',
+    });
+  });
+
+  it('reports a database config row sourced from a project env file', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://127.0.0.1:9/saga\n');
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: { env: {}, installationConfig: false },
+    });
+
+    expect(checks).toContainEqual({
+      detail: 'DATABASE_URL from project env file',
+      label: 'database config',
+      status: 'ok',
+    });
+  });
+
+  it('reports a database config row sourced from the installation config', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
+        readInstallationFile: () =>
+          JSON.stringify({ database: { url: 'postgres://127.0.0.1:9/saga' } }),
+      },
+    });
+
+    expect(checks).toContainEqual({
+      detail: 'DATABASE_URL from installation config',
+      label: 'database config',
+      status: 'ok',
+    });
+  });
+
+  it('fails the database config row with three-source guidance when unset', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: { env: {}, installationConfig: false },
+    });
+
+    expect(checks).toContainEqual({
+      detail: `DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json`,
+      label: 'database config',
+      status: 'fail',
+    });
+  });
+
+  it('warns on the database config row when the installation config is malformed', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: {
+        env: { DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
+        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
+        readInstallationFile: () => 'not json',
+      },
+    });
+
+    expect(checks).toContainEqual({
+      detail: 'DATABASE_URL from environment; could not parse ~/.saga/config.json',
+      label: 'database config',
+      status: 'warn',
+    });
+  });
+
+  it('fails the database config row and appends the issue when unset and the installation config is malformed', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+
+    const checks = await doctorProject({
+      cwd,
+      runtimeConfig: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
+        readInstallationFile: () => 'not json',
+      },
+    });
+
+    expect(checks).toContainEqual({
+      detail: `DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json; could not parse ~/.saga/config.json`,
+      label: 'database config',
+      status: 'fail',
+    });
   });
 
   it('reports invalid binding files as binding failures', async () => {

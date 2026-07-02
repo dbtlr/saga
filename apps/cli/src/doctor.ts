@@ -4,11 +4,17 @@ import { join } from 'node:path';
 
 import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
 import type { DatabaseService } from '@saga/db';
-import { inspectEmbeddingWorkflow, loadRuntimeConfig } from '@saga/runtime';
+import {
+  inspectEmbeddingWorkflow,
+  installationConfigLocation,
+  loadRuntimeConfig,
+} from '@saga/runtime';
 import type {
   CodexAuthResolutionOptions,
   EmbeddingPolicyResolutionOptions,
   EmbeddingWorkflowBoundary,
+  LoadRuntimeConfigOptions,
+  RuntimeConfig,
 } from '@saga/runtime';
 import { Effect } from 'effect';
 
@@ -49,6 +55,7 @@ export async function doctorProject(
     cwd?: string;
     embeddingAuth?: CodexAuthResolutionOptions;
     embeddingPolicy?: EmbeddingPolicyResolutionOptions;
+    runtimeConfig?: Omit<LoadRuntimeConfigOptions, 'cwd'>;
     verifyHarnessActivation?: HarnessActivationVerifier;
   } = {},
 ): Promise<DoctorCheck[]> {
@@ -59,7 +66,7 @@ export async function doctorProject(
     checkBinding(projectRoot),
   ];
 
-  checks.push(...(await checkPostgres(projectRoot)));
+  checks.push(...(await checkPostgres(projectRoot, input.runtimeConfig ?? {})));
   const service = await inspectService();
   checks.push({
     detail: `${service.process}; ${service.health}`,
@@ -232,39 +239,13 @@ function checkBinding(projectRoot: string): DoctorCheck {
   };
 }
 
-async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
+async function checkPostgres(
+  projectRoot: string,
+  runtimeConfig: Omit<LoadRuntimeConfigOptions, 'cwd'>,
+): Promise<DoctorCheck[]> {
+  let config: RuntimeConfig;
   try {
-    const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
-    if (config.databaseUrl === undefined) {
-      return [
-        {
-          detail: 'DATABASE_URL is not set',
-          label: 'postgres',
-          status: 'warn',
-        },
-        {
-          detail: 'skipped because Postgres is not configured',
-          label: 'migrations',
-          status: 'warn',
-        },
-      ];
-    }
-
-    const service = await Effect.runPromise(makeDatabase(config));
-    try {
-      await service.sql`select 1`;
-      const migrationCheck = await checkMigrations(service);
-      return [
-        {
-          detail: 'connected',
-          label: 'postgres',
-          status: 'ok',
-        },
-        migrationCheck,
-      ];
-    } finally {
-      await Effect.runPromise(service.close());
-    }
+    config = await Effect.runPromise(loadRuntimeConfig({ ...runtimeConfig, cwd: projectRoot }));
   } catch (error) {
     return [
       {
@@ -279,6 +260,96 @@ async function checkPostgres(projectRoot: string): Promise<DoctorCheck[]> {
       },
     ];
   }
+
+  const checks: DoctorCheck[] = [checkDatabaseConfig(config, projectRoot, runtimeConfig)];
+  if (config.databaseUrl === undefined) {
+    return [
+      ...checks,
+      {
+        detail: 'DATABASE_URL is not set',
+        label: 'postgres',
+        status: 'warn',
+      },
+      {
+        detail: 'skipped because Postgres is not configured',
+        label: 'migrations',
+        status: 'warn',
+      },
+    ];
+  }
+
+  try {
+    const service = await Effect.runPromise(makeDatabase(config));
+    try {
+      await service.sql`select 1`;
+      const migrationCheck = await checkMigrations(service);
+      return [
+        ...checks,
+        {
+          detail: 'connected',
+          label: 'postgres',
+          status: 'ok',
+        },
+        migrationCheck,
+      ];
+    } finally {
+      await Effect.runPromise(service.close());
+    }
+  } catch (error) {
+    return [
+      ...checks,
+      {
+        detail: error instanceof Error ? error.message : String(error),
+        label: 'postgres',
+        status: 'fail',
+      },
+      {
+        detail: 'skipped because Postgres check failed',
+        label: 'migrations',
+        status: 'warn',
+      },
+    ];
+  }
+}
+
+function checkDatabaseConfig(
+  config: RuntimeConfig,
+  projectRoot: string,
+  runtimeConfig: Omit<LoadRuntimeConfigOptions, 'cwd'>,
+): DoctorCheck {
+  if (config.databaseUrlSource === 'missing') {
+    const installationConfig = installationConfigLocation({
+      env: runtimeConfig.env ?? process.env,
+      ...(runtimeConfig.homeDir === undefined ? {} : { homeDir: runtimeConfig.homeDir }),
+    });
+    const guidance = `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`;
+    return {
+      detail:
+        config.installationConfigIssue === undefined
+          ? guidance
+          : `${guidance}; ${config.installationConfigIssue}`,
+      label: 'database config',
+      status: 'fail',
+    };
+  }
+
+  const sourceDetail: Record<Exclude<RuntimeConfig['databaseUrlSource'], 'missing'>, string> = {
+    environment: 'DATABASE_URL from environment',
+    'installation-config': 'DATABASE_URL from installation config',
+    'project-env-file': 'DATABASE_URL from project env file',
+  };
+  if (config.installationConfigIssue !== undefined) {
+    return {
+      detail: `${sourceDetail[config.databaseUrlSource]}; ${config.installationConfigIssue}`,
+      label: 'database config',
+      status: 'warn',
+    };
+  }
+  return {
+    detail: sourceDetail[config.databaseUrlSource],
+    label: 'database config',
+    status: 'ok',
+  };
 }
 
 async function checkMigrations(service: DatabaseService): Promise<DoctorCheck> {

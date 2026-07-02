@@ -13,6 +13,7 @@ describe('startSagaService', () => {
     const service = await startSagaService(
       {
         databaseUrl: 'postgres://test/saga',
+        databaseUrlSource: 'environment',
         environment: 'test',
         logLevel: 'info',
         service: {
@@ -43,6 +44,7 @@ describe('startSagaService', () => {
     await expect(
       startSagaService({
         databaseUrl: undefined,
+        databaseUrlSource: 'missing',
         environment: 'test',
         logLevel: 'info',
         service: {
@@ -62,6 +64,7 @@ describe('validateDatabaseReady', () => {
     await expect(
       validateDatabaseReady({
         databaseUrl: 'postgres://127.0.0.1:9/saga',
+        databaseUrlSource: 'environment',
         environment: 'test',
         logLevel: 'info',
         service: {
