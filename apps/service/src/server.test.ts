@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { startSagaService, validateDatabaseReady } from './server.js';
+import { describeReadinessCause, startSagaService, validateDatabaseReady } from './server.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -74,6 +74,32 @@ describe('validateDatabaseReady', () => {
       }),
     ).rejects.toThrow(/database is not ready: .*ECONNREFUSED/);
   }, 15_000);
+});
+
+describe('describeReadinessCause', () => {
+  it('unwraps the empty-message AggregateError postgres.js throws on refusal', () => {
+    const refused = new AggregateError(
+      [
+        new Error('connect ECONNREFUSED ::1:55433'),
+        new Error('connect ECONNREFUSED 127.0.0.1:55433'),
+      ],
+      // oxlint-disable-next-line unicorn/error-message -- replicates postgres.js's empty-message refusal error
+      '',
+    );
+
+    expect(describeReadinessCause(refused)).toBe(
+      'connect ECONNREFUSED ::1:55433; connect ECONNREFUSED 127.0.0.1:55433',
+    );
+  });
+
+  it('falls back to the error name when the message is empty', () => {
+    // oxlint-disable-next-line unicorn/error-message -- the empty message is the case under test
+    expect(describeReadinessCause(new Error(''))).toBe('Error');
+  });
+
+  it('stringifies non-error causes', () => {
+    expect(describeReadinessCause('boom')).toBe('boom');
+  });
 });
 
 describe('service entrypoint', () => {

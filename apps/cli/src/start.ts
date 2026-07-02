@@ -10,7 +10,11 @@ import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
 import type { RenderOptions } from './render.js';
-import { checkHealth } from './service.js';
+import {
+  SERVICE_HEALTH_PROBE_ATTEMPTS,
+  SERVICE_HEALTH_PROBE_INTERVAL_MS,
+  checkHealth,
+} from './service.js';
 
 export type SagaStartReport = {
   controlPlaneUrl: string;
@@ -39,8 +43,6 @@ export type SpawnServiceInput = {
 
 const CONTROL_PLANE_HOST = '127.0.0.1';
 const CONTROL_PLANE_PORT = 4767;
-const SERVICE_HEALTH_ATTEMPTS = 25;
-const SERVICE_HEALTH_INTERVAL_MS = 200;
 
 export class StartInterruptedError extends Error {
   readonly exitCode: number;
@@ -230,7 +232,7 @@ async function pollServiceHealth(input: {
   healthUrl: string;
   interruptedSignal: () => NodeJS.Signals | undefined;
 }): Promise<void> {
-  for (let attempt = 0; attempt < SERVICE_HEALTH_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < SERVICE_HEALTH_PROBE_ATTEMPTS; attempt += 1) {
     const interruptedSignal = input.interruptedSignal();
     if (interruptedSignal !== undefined) {
       throw new StartInterruptedError(exitCodeForSignal(interruptedSignal));
@@ -249,7 +251,7 @@ async function pollServiceHealth(input: {
     if (health.startsWith('ok ')) {
       return;
     }
-    await delay(SERVICE_HEALTH_INTERVAL_MS);
+    await delay(SERVICE_HEALTH_PROBE_INTERVAL_MS);
   }
 
   throw new Error(`service did not become healthy at ${input.healthUrl}`);
