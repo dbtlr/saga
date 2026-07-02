@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { startSagaService } from './server.js';
+import { startSagaService, validateDatabaseReady } from './server.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -55,6 +55,25 @@ describe('startSagaService', () => {
       }),
     ).rejects.toThrow('DATABASE_URL is required');
   });
+});
+
+describe('validateDatabaseReady', () => {
+  it('fails readiness with an actionable error when the database is unreachable', async () => {
+    await expect(
+      validateDatabaseReady({
+        databaseUrl: 'postgres://127.0.0.1:9/saga',
+        environment: 'test',
+        logLevel: 'info',
+        service: {
+          host: '127.0.0.1',
+          port: 0,
+        },
+        secrets: {
+          openaiApiKey: undefined,
+        },
+      }),
+    ).rejects.toThrow(/database is not ready: .*ECONNREFUSED/);
+  }, 15_000);
 });
 
 describe('service entrypoint', () => {

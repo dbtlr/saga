@@ -61,14 +61,36 @@ export async function startSagaService(
   };
 }
 
+// Bounded so a wrong or filtered database target fails startup with a clear
+// error instead of hanging on postgres.js's 30s default before binding the port.
+const DATABASE_READY_CONNECT_TIMEOUT_SECONDS = 5;
+
 export async function validateDatabaseReady(config: RuntimeConfig): Promise<void> {
-  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+  const service = await Effect.runPromise(
+    makeDatabase(config, {
+      postgres: { connect_timeout: DATABASE_READY_CONNECT_TIMEOUT_SECONDS, max: 1 },
+    }),
+  );
   try {
     await service.sql`select 1`;
     await Effect.runPromise(assertMigrationsCurrent(service));
+  } catch (cause) {
+    throw new Error(`saga database is not ready: ${describeReadinessCause(cause)}`, { cause });
   } finally {
     await Effect.runPromise(service.close());
   }
+}
+
+// postgres.js reports connection refusal as an AggregateError with an empty
+// message; unwrap it so the startup log names the unreachable target.
+function describeReadinessCause(cause: unknown): string {
+  if (cause instanceof AggregateError && cause.errors.length > 0) {
+    return cause.errors.map((error) => describeReadinessCause(error)).join('; ');
+  }
+  if (cause instanceof Error) {
+    return cause.message === '' ? cause.name : cause.message;
+  }
+  return String(cause);
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {

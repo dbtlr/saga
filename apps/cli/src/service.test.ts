@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -177,6 +178,33 @@ describe('launchdPrintProcess', () => {
 });
 
 describe('createLaunchdSupervisor', () => {
+  it('bootstraps and then starts the agent on install', async () => {
+    if (process.platform !== 'darwin') {
+      return;
+    }
+    const home = mkdtempSync(join(tmpdir(), 'saga-launchd-'));
+    const calls: string[][] = [];
+    try {
+      const supervisor = createLaunchdSupervisor({
+        cwd: process.cwd(),
+        home,
+        launchctl: async (args) => {
+          calls.push([...args]);
+        },
+      });
+
+      const report = await supervisor.install();
+
+      expect(report.state).toBe('installed');
+      expect(report.plistPath.startsWith(home)).toBe(true);
+      expect(existsSync(report.plistPath)).toBe(true);
+      expect(readFileSync(report.plistPath, 'utf8')).toContain('com.saga.service');
+      expect(calls.map((args) => args[0])).toStrictEqual(['bootstrap', 'kickstart']);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   it('does not mutate launchd state on non-macOS', async () => {
     if (process.platform === 'darwin') {
       return;

@@ -94,7 +94,9 @@ export async function runServiceCommand(
 }
 
 export async function runService(options: RenderOptions): Promise<string> {
-  const config = await Effect.runPromise(loadRuntimeConfig());
+  const config = await Effect.runPromise(
+    loadRuntimeConfig({ cwd: findProjectRoot(process.cwd()) }),
+  );
   const service = await startSagaService(config);
   const closeAndExit = async (): Promise<void> => {
     await service.close();
@@ -142,7 +144,9 @@ export async function serviceStatus(
 export async function inspectServiceStatus(
   dependencies: ServiceCommandDependencies = {},
 ): Promise<ServiceStatusReport> {
-  const config = await Effect.runPromise(loadRuntimeConfig());
+  const config = await Effect.runPromise(
+    loadRuntimeConfig({ cwd: findProjectRoot(process.cwd()) }),
+  );
   const healthUrl = `http://${config.service.host}:${config.service.port}/health`;
   const health = await (dependencies.healthCheck ?? checkHealth)(healthUrl);
   const supervisor = await (dependencies.supervisor ?? createLaunchdSupervisor()).inspect();
@@ -199,7 +203,9 @@ async function observeLifecycleHealth(
     return report;
   }
 
-  const config = await Effect.runPromise(loadRuntimeConfig());
+  const config = await Effect.runPromise(
+    loadRuntimeConfig({ cwd: findProjectRoot(process.cwd()) }),
+  );
   const healthUrl = `http://${config.service.host}:${config.service.port}/health`;
   const health = await waitForServiceHealth(
     healthUrl,
@@ -217,7 +223,7 @@ async function observeLifecycleHealth(
 
   return {
     ...report,
-    detail: `${report.detail}; health check failed: ${health}`,
+    detail: `${report.detail}; health check failed: ${health}; inspect logs via saga service status`,
     state: 'stopped',
   };
 }
@@ -245,14 +251,22 @@ export function renderServiceLifecycle(
   );
 }
 
-export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSupervisor {
+export type LaunchdSupervisorOptions = {
+  cwd?: string;
+  home?: string;
+  launchctl?: (args: readonly string[]) => Promise<void>;
+};
+
+export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): ServiceSupervisor {
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
-  const paths = launchdPaths();
+  const paths = launchdPaths(input.home);
   const unavailable = (action: ServiceLifecycleReport['action']) =>
     launchdUnavailableReport(paths, action);
-  const launchctl = async (args: readonly string[]) => {
-    await execFileAsync('launchctl', [...args]);
-  };
+  const launchctl =
+    input.launchctl ??
+    (async (args: readonly string[]) => {
+      await execFileAsync('launchctl', [...args]);
+    });
   const inspect = async () => inspectLaunchd(paths);
   return {
     inspect,
@@ -265,9 +279,12 @@ export function createLaunchdSupervisor(input: { cwd?: string } = {}): ServiceSu
         mode: 0o600,
       });
       await launchctl(['bootstrap', `gui/${String(process.getuid?.() ?? '')}`, paths.plistPath]);
+      // RunAtLoad is false, so bootstrap alone loads the agent without launching
+      // the process; kickstart is what actually starts the service.
+      await launchctl(['kickstart', `gui/${String(process.getuid?.() ?? '')}/${LAUNCHD_LABEL}`]);
       return {
         action: 'install',
-        detail: 'installed and bootstrapped launchd agent',
+        detail: 'installed, bootstrapped, and started launchd agent',
         label: LAUNCHD_LABEL,
         plistPath: paths.plistPath,
         state: 'installed',
@@ -383,8 +400,7 @@ function launchdUnavailableReport(
   };
 }
 
-function launchdPaths() {
-  const home = homedir();
+function launchdPaths(home = homedir()) {
   return {
     plistPath: join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
     stderrPath: join(home, 'Library', 'Logs', 'saga', 'service.err.log'),
