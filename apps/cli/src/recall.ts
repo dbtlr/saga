@@ -16,7 +16,12 @@ import type {
   RecallSearchResult,
   RecallSegmentMatch,
 } from '@saga/db';
-import { loadRuntimeConfig, resolveCodexAuth, resolveEmbeddingPolicy } from '@saga/runtime';
+import {
+  composeEmbeddingWorkflow,
+  loadRuntimeConfig,
+  resolveCodexAuth,
+  resolveEmbeddingPolicy,
+} from '@saga/runtime';
 import type { CodexAuthResolutionOptions, EmbeddingPolicyResolutionOptions } from '@saga/runtime';
 import { Effect } from 'effect';
 
@@ -46,14 +51,36 @@ const SEARCH_BOOLEAN_FLAGS = new Set(['no-embeddings']);
 const SHOW_FLAGS_WITH_VALUES = new Set(['after', 'before', 'window', 'workspace', 'workspace-id']);
 const SHOW_BOOLEAN_FLAGS = new Set<string>();
 
+export type RecallSearchMode = 'vector' | 'lexical' | 'degraded';
+
+export type RecallSearchPosture = {
+  mode: RecallSearchMode;
+  // present when mode !== 'vector'
+  reason?: string;
+  detail?: string;
+};
+
+export type ResolvedRecallEmbedding = {
+  posture: RecallSearchPosture;
+  queryEmbedding?: RecallQueryEmbedding | undefined;
+};
+
+// Posture when embedding resolution is skipped because an injected searchRecall seam is in
+// use without an injected resolver (dependency-injection-only path; never a real search).
+export const RECALL_EMBEDDING_NOT_ATTEMPTED: ResolvedRecallEmbedding = Object.freeze({
+  posture: Object.freeze({
+    detail: 'embedding resolution not attempted',
+    mode: 'lexical',
+    reason: 'not-attempted',
+  }),
+});
+
 export type RecallCommandDependencies = {
   cwd?: string | undefined;
   expandContext?:
     | ((input: RecallContextExpansionInput) => Promise<RecallContextExpansion>)
     | undefined;
-  resolveQueryEmbedding?:
-    | ((query: string) => Promise<RecallQueryEmbedding | undefined>)
-    | undefined;
+  resolveQueryEmbedding?: ((query: string) => Promise<ResolvedRecallEmbedding>) | undefined;
   searchRecall?: ((input: RecallSearchInput) => Promise<RecallSearchResult>) | undefined;
 };
 
@@ -111,12 +138,12 @@ async function searchRecallCommand(
     workspaceId,
   };
 
-  const shouldResolveEmbedding =
-    !parsed.booleans.has('no-embeddings') &&
-    (dependencies.resolveQueryEmbedding !== undefined || dependencies.searchRecall === undefined);
-  const queryEmbedding = shouldResolveEmbedding
-    ? await resolveQueryEmbedding(query, dependencies)
-    : undefined;
+  const resolved = await resolveCommandEmbedding(
+    query,
+    parsed.booleans.has('no-embeddings'),
+    dependencies,
+  );
+  const queryEmbedding = resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
   const input: RecallSearchInput =
     queryEmbedding === undefined ? baseInput : { ...baseInput, queryEmbedding };
 
@@ -132,11 +159,28 @@ async function searchRecallCommand(
       id: result.sessions
         .flatMap((group) => group.matches.map((match) => match.segment.id))
         .join('\n'),
-      records: renderRecallSearch(result, options),
-      value: redactAgentFacingSessionValue(result),
+      records: renderRecallSearch(result, resolved.posture, options),
+      value: redactAgentFacingSessionValue({ ...result, search: resolved.posture }),
     },
     options.format,
   );
+}
+
+async function resolveCommandEmbedding(
+  query: string,
+  noEmbeddings: boolean,
+  dependencies: RecallCommandDependencies,
+): Promise<ResolvedRecallEmbedding> {
+  if (noEmbeddings) {
+    return { posture: { mode: 'lexical', reason: 'disabled-by-flag' } };
+  }
+  if (dependencies.resolveQueryEmbedding !== undefined) {
+    return dependencies.resolveQueryEmbedding(query);
+  }
+  if (dependencies.searchRecall !== undefined) {
+    return RECALL_EMBEDDING_NOT_ATTEMPTED;
+  }
+  return resolveRecallSearchEmbedding(query);
 }
 
 async function showRecallCommand(
@@ -216,24 +260,37 @@ export type ResolveQueryEmbeddingOptions = {
   policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
 };
 
-export async function resolveQueryEmbedding(
+export async function resolveRecallSearchEmbedding(
   query: string,
-  dependencies: RecallCommandDependencies,
   options: ResolveQueryEmbeddingOptions = {},
-): Promise<RecallQueryEmbedding | undefined> {
-  if (dependencies.resolveQueryEmbedding !== undefined) {
-    return dependencies.resolveQueryEmbedding(query);
-  }
-
+): Promise<ResolvedRecallEmbedding> {
   // Installation policy gates remote embedding data flow: when remote embeddings are not
   // enabled, the recall query text is never sent to the remote provider (ADR 0032).
-  if (resolveEmbeddingPolicy(options.policyOptions).remoteEmbeddings !== 'enabled') {
-    return undefined;
+  // resolveCodexAuth only reads local credential files; it performs no remote calls.
+  const auth = resolveCodexAuth(options.authOptions);
+  const workflow = composeEmbeddingWorkflow({
+    auth,
+    policy: resolveEmbeddingPolicy(options.policyOptions),
+  });
+
+  if (workflow.mode === 'lexical-only-by-policy') {
+    return {
+      posture: {
+        detail: workflow.availability.detail,
+        mode: 'lexical',
+        reason: 'disabled-by-policy',
+      },
+    };
   }
 
-  const auth = resolveCodexAuth(options.authOptions);
-  if (auth.status !== 'available') {
-    return undefined;
+  if (workflow.mode === 'lexical-fallback' || auth.status !== 'available') {
+    return {
+      posture: {
+        detail: workflow.availability.detail,
+        mode: 'degraded',
+        reason: workflow.availability.reason,
+      },
+    };
   }
 
   const generator = createOpenAiSessionEmbeddingGenerator({
@@ -249,25 +306,49 @@ export async function resolveQueryEmbedding(
       },
     ]);
     if (output === undefined) {
-      return undefined;
+      return {
+        posture: {
+          detail: 'embedding provider returned no query embedding',
+          mode: 'degraded',
+          reason: 'embedding-error',
+        },
+      };
     }
     return {
-      dimensions: generator.provider.dimensions,
-      model: generator.provider.model,
-      provider: generator.provider.id,
-      vector: output.embedding,
+      posture: { mode: 'vector' },
+      queryEmbedding: {
+        dimensions: generator.provider.dimensions,
+        model: generator.provider.model,
+        provider: generator.provider.id,
+        vector: output.embedding,
+      },
     };
-  } catch {
-    return undefined;
+  } catch (error) {
+    return {
+      posture: {
+        detail: truncate(error instanceof Error ? error.message : String(error), 200),
+        mode: 'degraded',
+        reason: 'embedding-error',
+      },
+    };
   }
 }
 
-function renderRecallSearch(result: RecallSearchResult, options: RenderOptions): string {
+export function formatRecallSearchPosture(posture: RecallSearchPosture): string {
+  return posture.reason === undefined ? posture.mode : `${posture.mode} (${posture.reason})`;
+}
+
+function renderRecallSearch(
+  result: RecallSearchResult,
+  posture: RecallSearchPosture,
+  options: RenderOptions,
+): string {
   const blocks = [
     recordBlock(
       'Recall Search',
       [
         { label: 'query', value: result.query },
+        { label: 'mode', value: formatRecallSearchPosture(posture) },
         { label: 'workspace', value: result.workspaceId },
         { label: 'matches', value: String(result.matchCount) },
         { label: 'searched', value: result.searchedAt },
