@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -108,5 +108,50 @@ describePostgres('initProject postgres integration', () => {
     } finally {
       await sql.end({ timeout: 5 });
     }
+  });
+
+  test('binds via the installation config when the env provides no DATABASE_URL', async () => {
+    if (testDatabaseUrl === undefined) {
+      throw new Error('test database URL was not initialized');
+    }
+    const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'saga-init-install-')));
+    execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
+    const homeDir = mkdtempSync(join(tmpdir(), 'saga-init-home-'));
+    mkdirSync(join(homeDir, '.saga'), { recursive: true });
+    writeFileSync(
+      join(homeDir, '.saga', 'config.json'),
+      JSON.stringify({ database: { url: testDatabaseUrl } }),
+    );
+
+    const result = await initProject({
+      cwd: projectRoot,
+      handle: 'Init Install Config',
+      runtimeConfig: { env: {}, homeDir },
+    });
+
+    expect(result.projectRoot).toBe(projectRoot);
+    expect(result.registration.workspace.handle).toBe('init-install-config');
+
+    const sql = postgres(testDatabaseUrl, { max: 1 });
+    try {
+      const rows = await sql`
+        select handle from workspaces where id = ${result.registration.workspace.id}
+      `;
+      expect(rows[0]?.handle).toBe('init-install-config');
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  test('fails with three-source guidance when no database source is configured', async () => {
+    const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'saga-init-unconfigured-')));
+    execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
+    const homeDir = mkdtempSync(join(tmpdir(), 'saga-init-home-'));
+
+    await expect(
+      initProject({ cwd: projectRoot, runtimeConfig: { env: {}, homeDir } }),
+    ).rejects.toThrow(
+      `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ~/.saga/config.json`,
+    );
   });
 });

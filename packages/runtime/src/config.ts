@@ -4,12 +4,22 @@ import { resolve } from 'node:path';
 import { parse as parseDotenv } from 'dotenv';
 import { Context, Data, Effect, Layer } from 'effect';
 
+import { installationConfigLocation } from './embedding-policy.js';
+
 export type SagaEnvironment = 'development' | 'test' | 'production';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
+export type DatabaseUrlSource =
+  | 'environment'
+  | 'project-env-file'
+  | 'installation-config'
+  | 'missing';
+
 export type RuntimeConfig = {
   databaseUrl: string | undefined;
+  databaseUrlSource: DatabaseUrlSource;
   environment: SagaEnvironment;
+  installationConfigIssue?: string;
   logLevel: LogLevel;
   service: {
     host: string;
@@ -22,7 +32,9 @@ export type RuntimeConfig = {
 
 export type RedactedRuntimeConfig = {
   databaseUrl: string | undefined;
+  databaseUrlSource: DatabaseUrlSource;
   environment: SagaEnvironment;
+  installationConfigIssue?: string;
   logLevel: LogLevel;
   service: {
     host: string;
@@ -46,6 +58,9 @@ export type LoadRuntimeConfigOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   envFiles?: readonly string[];
+  homeDir?: string;
+  installationConfig?: false;
+  readInstallationFile?: (path: string) => string;
 };
 
 export const RuntimeConfigTag = Context.GenericTag<RuntimeConfig>('@saga/runtime/RuntimeConfig');
@@ -84,8 +99,19 @@ export function loadRuntimeConfig(
   options: LoadRuntimeConfigOptions = {},
 ): Effect.Effect<RuntimeConfig, ConfigError> {
   return Effect.sync(() => {
-    const env = mergeEnv(loadLocalEnv(options.cwd, options.envFiles), options.env ?? process.env);
-    return parseRuntimeConfig(env);
+    const explicitEnv = options.env ?? process.env;
+    const env = mergeEnv(loadLocalEnv(options.cwd, options.envFiles), explicitEnv);
+    // The database URL resolves per-layer below, so the merged env must not
+    // contribute a cross-layer database value or duplicate secret-file issues.
+    const {
+      DATABASE_URL: _databaseUrl,
+      DATABASE_URL_FILE: _databaseUrlFile,
+      ...envWithoutDatabase
+    } = env;
+    const result = parseRuntimeConfig(envWithoutDatabase);
+    const issues = [...result.issues];
+    const config = resolveDatabaseConfig(result.config, explicitEnv, issues, options);
+    return { config, issues };
   }).pipe(
     Effect.flatMap((result) =>
       result.issues.length === 0
@@ -115,8 +141,10 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
     issues,
   );
 
+  const databaseUrl = readSecretValue(env, 'DATABASE_URL', issues);
   const config: RuntimeConfig = {
-    databaseUrl: readSecretValue(env, 'DATABASE_URL', issues),
+    databaseUrl,
+    databaseUrlSource: databaseUrl === undefined ? 'missing' : 'environment',
     environment,
     logLevel,
     service: {
@@ -134,7 +162,11 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
 export function redactRuntimeConfig(config: RuntimeConfig): RedactedRuntimeConfig {
   return {
     databaseUrl: redactSecret(config.databaseUrl),
+    databaseUrlSource: config.databaseUrlSource,
     environment: config.environment,
+    ...(config.installationConfigIssue === undefined
+      ? {}
+      : { installationConfigIssue: config.installationConfigIssue }),
     logLevel: config.logLevel,
     service: config.service,
     secrets: {
@@ -148,6 +180,149 @@ function mergeEnv(
   processEnv: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   return { ...localEnv, ...processEnv };
+}
+
+// Database resolution is layered, highest precedence first: explicit env, then each
+// project env file (.env.local before .env), then installation config. The first
+// layer that names DATABASE_URL or DATABASE_URL_FILE wins outright — a named but
+// broken value fails loudly rather than silently falling through to another
+// database. Empty-string values count as unset. Installation config is the lowest
+// layer so project env can pin a dev database; this inverts for the saga repo
+// itself once a production build exists (dev override becomes test-only) — see
+// ADR 0038.
+function resolveDatabaseConfig(
+  config: RuntimeConfig,
+  explicitEnv: NodeJS.ProcessEnv,
+  issues: ConfigIssue[],
+  options: LoadRuntimeConfigOptions,
+): RuntimeConfig {
+  const layers: readonly { env: NodeJS.ProcessEnv; source: 'environment' | 'project-env-file' }[] =
+    [
+      { env: explicitEnv, source: 'environment' },
+      ...loadLocalEnvLayers(options.cwd, options.envFiles).map((env) => ({
+        env,
+        source: 'project-env-file' as const,
+      })),
+    ];
+
+  const installation =
+    options.installationConfig === false
+      ? { issue: undefined, url: undefined }
+      : readInstallationDatabaseUrl(explicitEnv, options);
+  const withIssue: RuntimeConfig =
+    installation.issue === undefined
+      ? config
+      : { ...config, installationConfigIssue: installation.issue };
+
+  for (const layer of layers) {
+    if (
+      optionalString(layer.env.DATABASE_URL) === undefined &&
+      optionalString(layer.env.DATABASE_URL_FILE) === undefined
+    ) {
+      continue;
+    }
+    const url = readSecretValue(layer.env, 'DATABASE_URL', issues);
+    return {
+      ...withIssue,
+      databaseUrl: url,
+      databaseUrlSource: url === undefined ? 'missing' : layer.source,
+    };
+  }
+
+  if (installation.url !== undefined) {
+    return {
+      ...withIssue,
+      databaseUrl: installation.url,
+      databaseUrlSource: 'installation-config',
+    };
+  }
+  return { ...withIssue, databaseUrl: undefined, databaseUrlSource: 'missing' };
+}
+
+// Per-file env layers in precedence order (last file in envFiles wins, matching
+// loadLocalEnv's merge order, so the returned list is reversed).
+function loadLocalEnvLayers(
+  cwd = process.cwd(),
+  envFiles: readonly string[] = DEFAULT_ENV_FILES,
+): Record<string, string>[] {
+  const layers: Record<string, string>[] = [];
+  for (const envFile of envFiles) {
+    const path = resolve(cwd, envFile);
+    if (!existsSync(path)) {
+      continue;
+    }
+    layers.unshift(parseDotenv(readFileSync(path)));
+  }
+  return layers;
+}
+
+function readInstallationDatabaseUrl(
+  env: NodeJS.ProcessEnv,
+  options: LoadRuntimeConfigOptions,
+): { issue: string | undefined; url: string | undefined } {
+  const readFile = options.readInstallationFile ?? ((path: string) => readFileSync(path, 'utf8'));
+  const location = installationConfigLocation({
+    env,
+    ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+  });
+
+  let rawConfig: string;
+  try {
+    rawConfig = readFile(location.path);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return { issue: undefined, url: undefined };
+    }
+    return {
+      issue: `could not read ${location.displayPath}: ${errorMessage(error)}`,
+      url: undefined,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawConfig) as unknown;
+  } catch {
+    return { issue: `could not parse ${location.displayPath}`, url: undefined };
+  }
+
+  if (!isRecord(parsed)) {
+    return { issue: `${location.displayPath} does not contain a JSON object`, url: undefined };
+  }
+  const database = parsed.database;
+  if (database === undefined) {
+    return { issue: undefined, url: undefined };
+  }
+  if (!isRecord(database)) {
+    return { issue: `database in ${location.displayPath} must be an object`, url: undefined };
+  }
+  const url = database.url;
+  if (url === undefined) {
+    return { issue: undefined, url: undefined };
+  }
+  if (typeof url !== 'string' || url.trim() === '') {
+    return {
+      issue: `database.url in ${location.displayPath} must be a non-empty string`,
+      url: undefined,
+    };
+  }
+  return { issue: undefined, url: url.trim() };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return isNodeError(error) && error.code === 'ENOENT';
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function optionalString(value: string | undefined): string | undefined {

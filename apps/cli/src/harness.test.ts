@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   classifyClaudeActivationEvidence,
@@ -25,6 +25,22 @@ import {
 } from './harness.js';
 import type { HarnessActivationStatus } from './harness.js';
 import { readBindingFile, writeBindingFile } from './init.js';
+
+// Pin the installation config to an empty temp home so harness activation checks
+// never read the developer's real ~/.saga/config.json.
+let previousSagaHome: string | undefined;
+beforeAll(() => {
+  previousSagaHome = process.env.SAGA_HOME;
+  process.env.SAGA_HOME = mkdtempSync(join(tmpdir(), 'saga-harness-saga-home-'));
+});
+
+afterAll(() => {
+  if (previousSagaHome === undefined) {
+    delete process.env.SAGA_HOME;
+  } else {
+    process.env.SAGA_HOME = previousSagaHome;
+  }
+});
 
 function boundProject(): string {
   const projectRoot = mkdtempSync(join(tmpdir(), 'saga-harness-'));

@@ -248,6 +248,7 @@ describeBench('pgvector recall bench (SGA-162)', () => {
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
+          databaseUrlSource: 'environment',
           environment: 'test',
           logLevel: 'info',
           secrets: { openaiApiKey: undefined },

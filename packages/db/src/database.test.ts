@@ -52,6 +52,7 @@ describe('makeDatabase', () => {
     const result = await Effect.runPromiseExit(
       makeDatabase({
         databaseUrl: undefined,
+        databaseUrlSource: 'missing',
         environment: 'test',
         logLevel: 'info',
         service: {

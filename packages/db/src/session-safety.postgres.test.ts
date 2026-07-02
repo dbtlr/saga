@@ -36,6 +36,7 @@ describePostgres('session safety', () => {
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
+          databaseUrlSource: 'environment',
           environment: 'test',
           logLevel: 'info',
           service: {

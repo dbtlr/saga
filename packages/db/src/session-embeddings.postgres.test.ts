@@ -39,6 +39,7 @@ describePostgres('session segment embeddings', () => {
       makeDatabase(
         {
           databaseUrl: testDatabaseUrl.toString(),
+          databaseUrlSource: 'environment',
           environment: 'test',
           logLevel: 'info',
           service: {
