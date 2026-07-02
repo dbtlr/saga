@@ -1,14 +1,29 @@
-.atlas.toml
-.saga.local.json
-.codex/
+# Build Artifacts
+.turbo/
+.vite/
+dist/
+build/
+coverage/
+backups/
+
+# Environment
 .env
 .env.*
 !.env.example
+
+# Node
 node_modules/
-.turbo/
-dist/
-coverage/
-backups/
-.claude/settings.local.json
-.claude/saga-claude-hook.sh
+npm-debug.log*
+pnpm-debug.log*
+
+# Worktrees
+.claude/worktrees/
+.worktrees/
+
+# Agent Settings
 .mcp.json
+.codex/
+.claude/settings.local.json
+
+# Agent Artifacts
+docs/superpowers
