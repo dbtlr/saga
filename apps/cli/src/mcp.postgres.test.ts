@@ -3,14 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { insertRawEvent, makeDatabase } from '@saga/db';
-import { loadRuntimeConfig } from '@saga/runtime';
+import type { SessionEmbeddingGenerator } from '@saga/db';
+import { DEFAULT_OPENAI_EMBEDDING_PROVIDER, loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+import { runIndexCommand } from './index-command.js';
 import { ingestClaims, inspectRecentRawEvents } from './ingest.js';
 import { initProject } from './init.js';
 import { createProjectMcpServer } from './mcp.js';
+import type { ResolvedRecallEmbedding } from './recall.js';
 import { runSessionsCommand } from './sessions.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL;
@@ -25,6 +28,36 @@ const jsonRenderOptions = {
   ...renderOptions,
   format: 'json',
 } as const;
+
+const { dimensions, id: providerId, model } = DEFAULT_OPENAI_EMBEDDING_PROVIDER;
+
+// One-hot vectors of the production dimension: `alpha` text -> axis 0, `beta` -> axis 1,
+// anything else -> axis 2. Cosine distance is 0 between identical axes and 1 otherwise, so a
+// query embedding on axis 0 matches only the `alpha` segment via the vector path.
+function oneHotVector(axis: number): number[] {
+  return Array.from({ length: dimensions }, (_value, index) => (index === axis ? 1 : 0));
+}
+
+function axisForText(text: string): number {
+  if (text.includes('alpha')) {
+    return 0;
+  }
+  if (text.includes('beta')) {
+    return 1;
+  }
+  return 2;
+}
+
+function fakeGenerator(): SessionEmbeddingGenerator {
+  return {
+    embedSegments: async (inputs) =>
+      inputs.map((input) => ({
+        embedding: oneHotVector(axisForText(input.text)),
+        segmentId: input.segmentId,
+      })),
+    provider: DEFAULT_OPENAI_EMBEDDING_PROVIDER,
+  };
+}
 
 describePostgres('MCP session recall postgres integration', () => {
   const databaseName = `saga_mcp_recall_${Date.now().toString(36)}`;
@@ -109,7 +142,18 @@ describePostgres('MCP session recall postgres integration', () => {
       { cwd: projectRoot },
     );
 
-    const server = createProjectMcpServer({ cwd: projectRoot });
+    // Inject a policy-disabled resolution so the test never reads host policy/auth state;
+    // the lexical search path itself runs for real against Postgres.
+    const server = createProjectMcpServer({
+      cwd: projectRoot,
+      resolveRecallEmbedding: async (): Promise<ResolvedRecallEmbedding> => ({
+        posture: {
+          detail: 'remote embeddings disabled by installation standard',
+          mode: 'lexical',
+          reason: 'disabled-by-policy',
+        },
+      }),
+    });
     const recent = await server.handle({
       id: 'recent',
       jsonrpc: '2.0',
@@ -149,8 +193,14 @@ describePostgres('MCP session recall postgres integration', () => {
     });
     const searchResult = search?.result as ToolResult | undefined;
     expect(searchResult?.content[0]?.text).toContain('Saga Session Search');
-    expect(searchResult?.content[0]?.text).toContain('Mode: lexical-only');
+    expect(searchResult?.content[0]?.text).toContain('Mode: lexical (disabled-by-policy)');
     expect(searchResult?.content[0]?.text).toContain('imported path evidence');
+    expect(searchResult?.structuredContent).toMatchObject({
+      search: {
+        mode: 'lexical',
+        reason: 'disabled-by-policy',
+      },
+    });
     expect(searchResult?.content[0]?.text).toContain('[local-path-redacted]');
     expect(searchResult?.content[0]?.text).toContain('Retrieved Content');
     expect(searchResult?.content[0]?.text).not.toContain(inputPath);
@@ -195,6 +245,67 @@ describePostgres('MCP session recall postgres integration', () => {
       extraPaths: linuxUnsafePaths,
       inputPath,
       projectRoot,
+    });
+  });
+
+  test('searches indexed session segments through MCP vector recall end-to-end', async () => {
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
+    const inputPath = join(projectRoot, 'mcp-vector-session.jsonl');
+    writeFileSync(
+      inputPath,
+      [
+        JSON.stringify({ text: 'alpha distinctive marker content', type: 'user' }),
+        JSON.stringify({ text: 'beta distinctive marker content', type: 'assistant' }),
+        '',
+      ].join('\n'),
+    );
+    await runSessionsCommand(
+      ['import', inputPath, '--harness', 'codex', '--harness-session-id', 'mcp-vector-session'],
+      renderOptions,
+      { cwd: projectRoot },
+    );
+    await runIndexCommand([], renderOptions, {
+      cwd: projectRoot,
+      embeddingGenerator: fakeGenerator(),
+    });
+
+    const server = createProjectMcpServer({
+      cwd: projectRoot,
+      resolveRecallEmbedding: async (): Promise<ResolvedRecallEmbedding> => ({
+        posture: { mode: 'vector' },
+        queryEmbedding: {
+          dimensions,
+          model,
+          provider: providerId,
+          vector: oneHotVector(0),
+        },
+      }),
+    });
+    // The query matches no lexical or trigram token, so a hit can only come from the vector
+    // path; the alpha segment ranks first with a perfect (1) vector score.
+    const search = await server.handle({
+      id: 'vector-search',
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        arguments: {
+          query: 'qzxvnomatchtoken',
+        },
+        name: 'search_sessions',
+      },
+    });
+    const searchResult = search?.result as ToolResult | undefined;
+    const text = searchResult?.content[0]?.text ?? '';
+    expect(text).toContain('Saga Session Search');
+    expect(text).toContain('Mode: vector');
+    expect(text).toContain('Match 1');
+    expect(text).toContain('alpha distinctive marker');
+    expect(text).toContain('vector 1');
+    expect(text).toContain('lexical 0');
+    expect(searchResult?.structuredContent).toMatchObject({
+      search: { mode: 'vector' },
     });
   });
 

@@ -11,7 +11,7 @@ import type {
 import { describe, expect, it } from 'vitest';
 
 import { BINDING_FILE_NAME, writeBindingFile } from './init.js';
-import { resolveQueryEmbedding, runRecallCommand } from './recall.js';
+import { resolveRecallSearchEmbedding, runRecallCommand } from './recall.js';
 
 const renderOptions = {
   ascii: true,
@@ -68,6 +68,7 @@ describe('runRecallCommand', () => {
     });
     expect(capturedInput?.queryEmbedding).toBeUndefined();
     expect(records).toContain('Recall Search');
+    expect(records).toContain('lexical (disabled-by-flag)');
     expect(records).toContain('Session');
     expect(records).toContain('Activity Interval 0');
     expect(records).toContain('Match 1');
@@ -98,19 +99,22 @@ describe('runRecallCommand', () => {
     expect(ids).toBe('segment-id');
   });
 
-  it('passes an available query embedding to recall search', async () => {
+  it('passes an available query embedding to recall search and reports vector mode', async () => {
     const projectRoot = boundProject();
     let capturedInput: RecallSearchInput | undefined;
 
-    await runRecallCommand(['search', 'semantic', 'needle'], renderOptions, {
+    const output = await runRecallCommand(['search', 'semantic', 'needle'], renderOptions, {
       cwd: projectRoot,
       resolveQueryEmbedding: async (query) => {
         expect(query).toBe('semantic needle');
         return {
-          dimensions: 3,
-          model: 'test-embedding',
-          provider: 'openai',
-          vector: [1, 0, 0],
+          posture: { mode: 'vector' },
+          queryEmbedding: {
+            dimensions: 3,
+            model: 'test-embedding',
+            provider: 'openai',
+            vector: [1, 0, 0],
+          },
         };
       },
       searchRecall: async (input) => {
@@ -131,6 +135,72 @@ describe('runRecallCommand', () => {
       model: 'test-embedding',
       provider: 'openai',
       vector: [1, 0, 0],
+    });
+    expect(JSON.parse(output)).toMatchObject({
+      search: { mode: 'vector' },
+    });
+  });
+
+  it('does not pass a query embedding when the resolved posture is degraded', async () => {
+    const projectRoot = boundProject();
+    let capturedInput: RecallSearchInput | undefined;
+
+    const output = await runRecallCommand(
+      ['search', 'semantic', 'needle'],
+      { ...renderOptions, format: 'records' },
+      {
+        cwd: projectRoot,
+        resolveQueryEmbedding: async () => ({
+          posture: {
+            detail: 'OpenAI embeddings request failed with status 500',
+            mode: 'degraded',
+            reason: 'embedding-error',
+          },
+        }),
+        searchRecall: async (input) => {
+          capturedInput = input;
+          return recallSearchResult();
+        },
+      },
+    );
+
+    expect(capturedInput?.queryEmbedding).toBeUndefined();
+    expect(output).toContain('degraded (embedding-error)');
+  });
+
+  it('reports a not-attempted lexical posture when only searchRecall is injected', async () => {
+    const projectRoot = boundProject();
+
+    const output = await runRecallCommand(['search', 'lexical'], renderOptions, {
+      cwd: projectRoot,
+      searchRecall: async (input) => {
+        expect(input.queryEmbedding).toBeUndefined();
+        return recallSearchResult();
+      },
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      search: {
+        detail: 'embedding resolution not attempted',
+        mode: 'lexical',
+        reason: 'not-attempted',
+      },
+    });
+  });
+
+  it('carries the search posture in structured output for --no-embeddings', async () => {
+    const projectRoot = boundProject();
+
+    const output = await runRecallCommand(['search', 'lexical', '--no-embeddings'], renderOptions, {
+      cwd: projectRoot,
+      searchRecall: async () => recallSearchResult(),
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      search: {
+        mode: 'lexical',
+        reason: 'disabled-by-flag',
+      },
     });
   });
 
@@ -341,7 +411,7 @@ function recordingFetch(): { calls: number; impl: typeof fetch } {
   };
 }
 
-describe('resolveQueryEmbedding', () => {
+describe('resolveRecallSearchEmbedding', () => {
   const availableAuthOptions = {
     env: {},
     homeDir: '/tmp/saga-recall-available-codex',
@@ -361,62 +431,78 @@ describe('resolveQueryEmbedding', () => {
   it('never calls the remote provider when remote embeddings are disabled by policy', async () => {
     const fetchSpy = recordingFetch();
 
-    const embedding = await resolveQueryEmbedding(
-      'lexical recall',
-      {},
-      {
-        // Valid credentials are present; only policy should keep the query text local.
-        authOptions: availableAuthOptions,
-        fetchImpl: fetchSpy.impl,
-        policyOptions: disabledPolicyOptions,
-      },
-    );
+    const resolved = await resolveRecallSearchEmbedding('lexical recall', {
+      // Valid credentials are present; only policy should keep the query text local.
+      authOptions: availableAuthOptions,
+      fetchImpl: fetchSpy.impl,
+      policyOptions: disabledPolicyOptions,
+    });
 
-    expect(embedding).toBeUndefined();
+    expect(resolved.queryEmbedding).toBeUndefined();
+    expect(resolved.posture).toMatchObject({
+      mode: 'lexical',
+      reason: 'disabled-by-policy',
+    });
+    expect(resolved.posture.detail).toContain('disabled by installation standard');
     expect(fetchSpy.calls).toBe(0);
   });
 
-  it('never calls the remote provider when credentials are unavailable', async () => {
+  it('degrades without a remote call when credentials are unavailable', async () => {
     const fetchSpy = recordingFetch();
 
-    const embedding = await resolveQueryEmbedding(
-      'lexical recall',
-      {},
-      {
-        authOptions: {
-          env: {},
-          homeDir: '/tmp/saga-recall-missing-codex',
-          readFile: () => {
-            throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-          },
+    const resolved = await resolveRecallSearchEmbedding('lexical recall', {
+      authOptions: {
+        env: {},
+        homeDir: '/tmp/saga-recall-missing-codex',
+        readFile: () => {
+          throw Object.assign(new Error('missing'), { code: 'ENOENT' });
         },
-        fetchImpl: fetchSpy.impl,
-        policyOptions: enabledPolicyOptions,
       },
-    );
+      fetchImpl: fetchSpy.impl,
+      policyOptions: enabledPolicyOptions,
+    });
 
-    expect(embedding).toBeUndefined();
+    expect(resolved.queryEmbedding).toBeUndefined();
+    expect(resolved.posture).toMatchObject({
+      mode: 'degraded',
+      reason: 'missing-auth-file',
+    });
     expect(fetchSpy.calls).toBe(0);
   });
 
   it('embeds the query against the remote provider when policy enabled and credentials available', async () => {
     const fetchSpy = recordingFetch();
 
-    const embedding = await resolveQueryEmbedding(
-      'lexical recall',
-      {},
-      {
-        authOptions: availableAuthOptions,
-        fetchImpl: fetchSpy.impl,
-        policyOptions: enabledPolicyOptions,
-      },
-    );
+    const resolved = await resolveRecallSearchEmbedding('lexical recall', {
+      authOptions: availableAuthOptions,
+      fetchImpl: fetchSpy.impl,
+      policyOptions: enabledPolicyOptions,
+    });
 
     expect(fetchSpy.calls).toBe(1);
-    expect(embedding).toMatchObject({
+    expect(resolved.posture).toStrictEqual({ mode: 'vector' });
+    expect(resolved.queryEmbedding).toMatchObject({
       provider: 'openai',
       vector: [0.1, 0.2, 0.3],
     });
+  });
+
+  it('degrades with embedding-error when the embedding request fails', async () => {
+    const failingFetch = (async () =>
+      Response.json({ error: 'boom' }, { status: 500 })) as unknown as typeof fetch;
+
+    const resolved = await resolveRecallSearchEmbedding('lexical recall', {
+      authOptions: availableAuthOptions,
+      fetchImpl: failingFetch,
+      policyOptions: enabledPolicyOptions,
+    });
+
+    expect(resolved.queryEmbedding).toBeUndefined();
+    expect(resolved.posture).toMatchObject({
+      mode: 'degraded',
+      reason: 'embedding-error',
+    });
+    expect(resolved.posture.detail).not.toContain('sk-recall-secret');
   });
 });
 

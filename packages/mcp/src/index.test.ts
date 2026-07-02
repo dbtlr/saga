@@ -103,6 +103,48 @@ describe('createSagaMcpServer', () => {
     });
   });
 
+  it('declares integer schemas for count and turn-window inputs', async () => {
+    const response = await server.handle({
+      id: 'schemas',
+      jsonrpc: '2.0',
+      method: 'tools/list',
+    });
+
+    expect(response?.result).toMatchObject({
+      tools: [
+        { name: 'get_active_context' },
+        {
+          inputSchema: { properties: { limit: { type: 'integer' } } },
+          name: 'search_memory',
+        },
+        { name: 'resolve_saga_link' },
+        {
+          inputSchema: { properties: { limit: { type: 'integer' } } },
+          name: 'list_recent_sessions',
+        },
+        {
+          inputSchema: {
+            properties: {
+              limit: { type: 'integer' },
+              minTrigramScore: { type: 'number' },
+            },
+          },
+          name: 'search_sessions',
+        },
+        {
+          inputSchema: {
+            properties: {
+              afterTurns: { type: 'integer' },
+              beforeTurns: { type: 'integer' },
+              windowTurns: { type: 'integer' },
+            },
+          },
+          name: 'get_session_context',
+        },
+      ],
+    });
+  });
+
   it('calls get_active_context', async () => {
     const response = await server.handle({
       id: 'context',

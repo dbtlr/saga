@@ -132,10 +132,13 @@ describePostgres('index CLI postgres integration', () => {
     const recallOutput = await runRecallCommand(['search', 'qzxvnomatchtoken'], renderOptions, {
       cwd: projectRoot,
       resolveQueryEmbedding: async () => ({
-        dimensions,
-        model,
-        provider: providerId,
-        vector: oneHotVector(0),
+        posture: { mode: 'vector' as const },
+        queryEmbedding: {
+          dimensions,
+          model,
+          provider: providerId,
+          vector: oneHotVector(0),
+        },
       }),
     });
     // The query matches no lexical or trigram token, so a hit can only come from the vector

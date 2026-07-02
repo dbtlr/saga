@@ -20,6 +20,7 @@ import {
 import type {
   DatabaseService,
   RecallContextExpansion,
+  RecallSearchInput,
   RecallSearchResult,
   RecallSegmentMatch,
   RecentSessionRecord,
@@ -37,6 +38,12 @@ import { Effect } from 'effect';
 
 import { compileActiveContextFromDatabase, compileProjectActiveContext } from './context.js';
 import { findProjectRoot, readBindingFile } from './init.js';
+import {
+  RECALL_EMBEDDING_NOT_ATTEMPTED,
+  formatRecallSearchPosture,
+  resolveRecallSearchEmbedding,
+} from './recall.js';
+import type { RecallSearchPosture, ResolvedRecallEmbedding } from './recall.js';
 import type { RenderOptions } from './render.js';
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
@@ -84,7 +91,13 @@ export async function runMcpCommand(
   return undefined;
 }
 
-export function createProjectMcpServer(options: { cwd?: string } = {}) {
+export type ProjectSessionSearchDependencies = {
+  cwd?: string | undefined;
+  resolveRecallEmbedding?: ((query: string) => Promise<ResolvedRecallEmbedding>) | undefined;
+  searchRecall?: ((input: RecallSearchInput) => Promise<RecallSearchResult>) | undefined;
+};
+
+export function createProjectMcpServer(options: ProjectSessionSearchDependencies = {}) {
   const cwd = options.cwd;
   return createSagaMcpServer({
     getActiveContext: async () => {
@@ -98,7 +111,7 @@ export function createProjectMcpServer(options: { cwd?: string } = {}) {
     listRecentSessions: (input) =>
       listProjectRecentSessions(input, cwd === undefined ? {} : { cwd }),
     searchMemory: (search) => searchProjectMemory(search, cwd === undefined ? {} : { cwd }),
-    searchSessions: (input) => searchProjectSessions(input, cwd === undefined ? {} : { cwd }),
+    searchSessions: (input) => searchProjectSessions(input, options),
     resolveSagaLink: (link) => resolveProjectSagaLink(link, cwd === undefined ? {} : { cwd }),
   });
 }
@@ -329,25 +342,50 @@ export async function listProjectRecentSessions(
 
 export async function searchProjectSessions(
   input: SearchSessionsInput,
-  options: { cwd?: string } = {},
+  options: ProjectSessionSearchDependencies = {},
 ) {
-  return withProjectDatabase(options, async (service, workspaceId) => {
-    const recall = await Effect.runPromise(
-      searchSessionRecall(service, {
-        activityIntervalId: input.activityIntervalId,
-        limit: input.limit,
-        minTrigramScore: input.minTrigramScore,
-        query: input.query,
-        rawSessionRecordId: input.rawSessionRecordId,
-        sessionId: input.sessionId,
-        workspaceId,
-      }),
-    );
-    return {
-      markdown: renderSessionSearchMarkdown(recall),
-      recall: redactMcpStructuredOutput(recall),
-    };
-  });
+  // Validate the workspace binding before any embedding resolution so a request that is
+  // going to fail cannot cause query egress, matching the CLI ordering.
+  const { workspaceId } = loadProjectWorkspace(options);
+  // Query embedding resolution shares the CLI gate (resolveRecallSearchEmbedding): the query
+  // text never reaches a remote provider unless installation policy enables remote embeddings
+  // (ADR 0032). Never pass RecallSearchInput.embeddingProvider here — it is an ungated egress
+  // seam.
+  const resolved = await resolveMcpSearchEmbedding(input.query, options);
+  const queryEmbedding = resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
+  const searchInput: RecallSearchInput = {
+    activityIntervalId: input.activityIntervalId,
+    limit: input.limit,
+    minTrigramScore: input.minTrigramScore,
+    query: input.query,
+    queryEmbedding,
+    rawSessionRecordId: input.rawSessionRecordId,
+    sessionId: input.sessionId,
+    workspaceId,
+  };
+  const recall =
+    options.searchRecall === undefined
+      ? await withProjectDatabase(options, async (service) =>
+          Effect.runPromise(searchSessionRecall(service, searchInput)),
+        )
+      : await options.searchRecall(searchInput);
+  return {
+    markdown: renderSessionSearchMarkdown(recall, resolved.posture),
+    recall: redactMcpStructuredOutput({ ...recall, search: resolved.posture }),
+  };
+}
+
+async function resolveMcpSearchEmbedding(
+  query: string,
+  options: ProjectSessionSearchDependencies,
+): Promise<ResolvedRecallEmbedding> {
+  if (options.resolveRecallEmbedding !== undefined) {
+    return options.resolveRecallEmbedding(query);
+  }
+  if (options.searchRecall !== undefined) {
+    return RECALL_EMBEDDING_NOT_ATTEMPTED;
+  }
+  return resolveRecallSearchEmbedding(query);
 }
 
 export async function getProjectSessionContext(
@@ -371,20 +409,27 @@ export async function getProjectSessionContext(
   });
 }
 
-async function withProjectDatabase<T>(
-  options: { cwd?: string },
-  runWithService: (service: DatabaseService, workspaceId: string) => Promise<T>,
-): Promise<T> {
+function loadProjectWorkspace(options: { cwd?: string | undefined }): {
+  projectRoot: string;
+  workspaceId: string;
+} {
   const projectRoot = findProjectRoot(options.cwd ?? process.cwd());
   const binding = readBindingFile(projectRoot);
   if (binding === undefined) {
     throw new Error('workspace binding is missing; run saga init');
   }
+  return { projectRoot, workspaceId: binding.workspace.id };
+}
 
+async function withProjectDatabase<T>(
+  options: { cwd?: string | undefined },
+  runWithService: (service: DatabaseService, workspaceId: string) => Promise<T>,
+): Promise<T> {
+  const { projectRoot, workspaceId } = loadProjectWorkspace(options);
   const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
   const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
   try {
-    return await runWithService(service, binding.workspace.id);
+    return await runWithService(service, workspaceId);
   } finally {
     await Effect.runPromise(service.close());
   }
@@ -712,13 +757,16 @@ function renderRecentSessionsMarkdown(sessions: readonly RecentSessionRecord[]):
   ].join('\n');
 }
 
-function renderSessionSearchMarkdown(result: RecallSearchResult): string {
+function renderSessionSearchMarkdown(
+  result: RecallSearchResult,
+  posture: RecallSearchPosture,
+): string {
   const lines = [
     '# Saga Session Search',
     '',
     `- Query: ${result.query}`,
     `- Workspace: ${result.workspaceId}`,
-    `- Mode: lexical-only`,
+    `- Mode: ${formatRecallSearchPosture(posture)}`,
     `- Matches: ${String(result.matchCount)}`,
     `- Searched: ${result.searchedAt}`,
   ];

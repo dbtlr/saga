@@ -1,5 +1,11 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import type { RecallSearchInput, RecallSearchResult } from '@saga/db';
 import { describe, expect, it } from 'vitest';
 
+import { writeBindingFile } from './init.js';
 import {
   redactMcpStructuredOutput,
   redactResolvedSagaLink,
@@ -7,6 +13,7 @@ import {
   rewriteResolvedSagaLinkReferences,
   runMcpCommand,
   searchMemoryEntries,
+  searchProjectSessions,
 } from './mcp.js';
 import type { MemorySearchEntry } from './mcp.js';
 
@@ -95,7 +102,212 @@ describe('runMcpCommand', () => {
       jsonrpc: '2.0',
     });
   });
+
+  it('rejects non-integer limit and window tool arguments', async () => {
+    const cases = [
+      {
+        arguments: { limit: 1.5, query: 'recall' },
+        message: 'search_sessions limit must be a positive integer',
+        name: 'search_sessions',
+      },
+      {
+        arguments: { segmentId: 'segment-id', windowTurns: 1.5 },
+        message: 'get_session_context windowTurns must be a non-negative integer',
+        name: 'get_session_context',
+      },
+      {
+        arguments: { afterTurns: 2.5, segmentId: 'segment-id' },
+        message: 'get_session_context afterTurns must be a non-negative integer',
+        name: 'get_session_context',
+      },
+      {
+        arguments: { beforeTurns: 0.5, segmentId: 'segment-id' },
+        message: 'get_session_context beforeTurns must be a non-negative integer',
+        name: 'get_session_context',
+      },
+      {
+        arguments: { limit: 2.5 },
+        message: 'list_recent_sessions limit must be a positive integer',
+        name: 'list_recent_sessions',
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const output: string[] = [];
+      await runMcpCommand(
+        [],
+        { ascii: true, color: 'never', format: 'records', isTty: false },
+        (text) => output.push(text),
+        chunks(
+          `${JSON.stringify({
+            id: 1,
+            jsonrpc: '2.0',
+            method: 'tools/call',
+            params: { arguments: entry.arguments, name: entry.name },
+          })}\n`,
+        ),
+      );
+      expect(JSON.parse(output[0] ?? '{}')).toMatchObject({
+        error: {
+          message: entry.message,
+        },
+      });
+    }
+  });
 });
+
+describe('searchProjectSessions', () => {
+  it('passes the resolved query embedding and reports vector mode', async () => {
+    const projectRoot = boundMcpProject();
+    let capturedInput: RecallSearchInput | undefined;
+
+    const result = await searchProjectSessions(
+      { query: 'semantic needle' },
+      {
+        cwd: projectRoot,
+        resolveRecallEmbedding: async (query) => {
+          expect(query).toBe('semantic needle');
+          return {
+            posture: { mode: 'vector' },
+            queryEmbedding: {
+              dimensions: 3,
+              model: 'test-embedding',
+              provider: 'openai',
+              vector: [1, 0, 0],
+            },
+          };
+        },
+        searchRecall: async (input) => {
+          capturedInput = input;
+          return emptyRecallResult('semantic needle');
+        },
+      },
+    );
+
+    expect(capturedInput?.queryEmbedding).toMatchObject({
+      dimensions: 3,
+      model: 'test-embedding',
+      provider: 'openai',
+      vector: [1, 0, 0],
+    });
+    expect(capturedInput?.workspaceId).toBe('workspace-id');
+    expect(result.markdown).toContain('- Mode: vector');
+    expect(result.recall).toMatchObject({
+      search: { mode: 'vector' },
+    });
+  });
+
+  it('withholds the query embedding and reports a degraded posture', async () => {
+    const projectRoot = boundMcpProject();
+    let capturedInput: RecallSearchInput | undefined;
+
+    const result = await searchProjectSessions(
+      { query: 'semantic needle' },
+      {
+        cwd: projectRoot,
+        resolveRecallEmbedding: async () => ({
+          posture: {
+            detail: 'OpenAI embeddings request failed with status 500',
+            mode: 'degraded',
+            reason: 'embedding-error',
+          },
+        }),
+        searchRecall: async (input) => {
+          capturedInput = input;
+          return emptyRecallResult('semantic needle');
+        },
+      },
+    );
+
+    expect(capturedInput?.queryEmbedding).toBeUndefined();
+    expect(result.markdown).toContain('- Mode: degraded (embedding-error)');
+    expect(result.recall).toMatchObject({
+      search: {
+        detail: 'OpenAI embeddings request failed with status 500',
+        mode: 'degraded',
+        reason: 'embedding-error',
+      },
+    });
+  });
+
+  it('reports a lexical posture when a policy-disabled resolver is injected', async () => {
+    const projectRoot = boundMcpProject();
+
+    const result = await searchProjectSessions(
+      { query: 'lexical recall' },
+      {
+        cwd: projectRoot,
+        resolveRecallEmbedding: async () => ({
+          posture: { mode: 'lexical', reason: 'disabled-by-policy' },
+        }),
+        searchRecall: async () => emptyRecallResult('lexical recall'),
+      },
+    );
+
+    expect(result.markdown).toContain('- Mode: lexical (disabled-by-policy)');
+    expect(result.recall).toMatchObject({
+      search: { mode: 'lexical', reason: 'disabled-by-policy' },
+    });
+  });
+
+  it('does not attempt embedding resolution when only searchRecall is injected', async () => {
+    const projectRoot = boundMcpProject();
+
+    const result = await searchProjectSessions(
+      { query: 'lexical recall' },
+      {
+        cwd: projectRoot,
+        searchRecall: async (input) => {
+          expect(input.queryEmbedding).toBeUndefined();
+          return emptyRecallResult('lexical recall');
+        },
+      },
+    );
+
+    expect(result.markdown).toContain('- Mode: lexical (not-attempted)');
+    expect(result.recall).toMatchObject({
+      search: { mode: 'lexical', reason: 'not-attempted' },
+    });
+  });
+});
+
+function boundMcpProject(): string {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-search-'));
+  writeBindingFile(projectRoot, {
+    host: {
+      generatedAt: '2026-06-22T00:00:00.000Z',
+      id: 'host-id',
+      label: 'test-host',
+    },
+    project: {
+      gitRemote: undefined,
+      root: projectRoot,
+    },
+    schemaVersion: 1,
+    service: {
+      databaseUrl: 'env:DATABASE_URL',
+    },
+    sourceBinding: {
+      id: 'source-id',
+    },
+    workspace: {
+      handle: 'saga',
+      id: 'workspace-id',
+    },
+  });
+  return projectRoot;
+}
+
+function emptyRecallResult(query: string): RecallSearchResult {
+  return {
+    intervals: [],
+    matchCount: 0,
+    query,
+    searchedAt: '2026-06-22T10:00:00.000Z',
+    sessions: [],
+    workspaceId: 'workspace-id',
+  };
+}
 
 describe('rewriteResolvedSagaLinkReferences', () => {
   it('rewrites resolved connector references through workspace Context Index entries', async () => {

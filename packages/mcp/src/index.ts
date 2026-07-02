@@ -114,7 +114,7 @@ export const SAGA_MCP_TOOLS = [
       properties: {
         limit: {
           minimum: 1,
-          type: 'number',
+          type: 'integer',
         },
         query: {
           type: 'string',
@@ -153,7 +153,7 @@ export const SAGA_MCP_TOOLS = [
         },
         limit: {
           minimum: 1,
-          type: 'number',
+          type: 'integer',
         },
       },
       type: 'object',
@@ -162,7 +162,7 @@ export const SAGA_MCP_TOOLS = [
   },
   {
     description:
-      'Search captured Saga session segments for the current workspace using lexical recall and return snippets, scores, pointers, and provenance.',
+      'Search captured Saga session segments for the current workspace using vector recall when embeddings are enabled (lexical otherwise) and return snippets, scores, pointers, provenance, and the effective search mode.',
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -171,7 +171,7 @@ export const SAGA_MCP_TOOLS = [
         },
         limit: {
           minimum: 1,
-          type: 'number',
+          type: 'integer',
         },
         minTrigramScore: {
           maximum: 1,
@@ -202,12 +202,12 @@ export const SAGA_MCP_TOOLS = [
         afterTurns: {
           description: 'Turns after the anchor; overrides windowTurns on the after side.',
           minimum: 0,
-          type: 'number',
+          type: 'integer',
         },
         beforeTurns: {
           description: 'Turns before the anchor; overrides windowTurns on the before side.',
           minimum: 0,
-          type: 'number',
+          type: 'integer',
         },
         segmentId: {
           type: 'string',
@@ -216,7 +216,7 @@ export const SAGA_MCP_TOOLS = [
           description:
             'Base number of Turns to expand before and after the anchor (default 2, max 20).',
           minimum: 0,
-          type: 'number',
+          type: 'integer',
         },
       },
       required: ['segmentId'],
