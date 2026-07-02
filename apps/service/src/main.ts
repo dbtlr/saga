@@ -1,9 +1,9 @@
-import { loadRuntimeConfig } from '@saga/runtime';
+import { findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { startSagaService } from './server.js';
 
-const config = await Effect.runPromise(loadRuntimeConfig());
+const config = await Effect.runPromise(loadRuntimeConfig({ cwd: findProjectRoot(process.cwd()) }));
 const service = await startSagaService(config);
 
 process.stdout.write(`Saga service listening on ${service.url}\n`);
