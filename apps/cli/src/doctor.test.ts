@@ -622,6 +622,45 @@ describe('doctorProject', () => {
     );
   });
 
+  it('warns when the installed Claude harness has no MCP registration', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+    const checks = await doctorProject({
+      cwd: installedClaudeHarnessProject(cwd),
+      verifyHarnessActivation: async () => noEvidenceActivation(),
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail: 'missing; Saga MCP server is not registered; run saga harness install claude',
+        label: 'harness:claude:mcp',
+        status: 'warn',
+      }),
+    );
+  });
+
+  it('adds no MCP check when the Claude MCP registration is installed', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+    installedClaudeHarnessProject(cwd);
+    writeFileSync(
+      join(cwd, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          saga: {
+            args: ['mcp'],
+            command: fileURLToPath(new URL('../bin/saga.js', import.meta.url)),
+          },
+        },
+      }),
+    );
+
+    const checks = await doctorProject({
+      cwd,
+      verifyHarnessActivation: async () => noEvidenceActivation(),
+    });
+
+    expect(checks).not.toContainEqual(expect.objectContaining({ label: 'harness:claude:mcp' }));
+  });
+
   it('reports invalid binding files as binding failures', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     writeFileSync(join(cwd, '.saga.local.json'), 'not json');
@@ -681,6 +720,58 @@ describe('serviceDoctorStatus', () => {
     ).toBe('ok');
   });
 });
+
+function installedClaudeHarnessProject(cwd: string): string {
+  const hostId = 'host-id';
+  const shimPath = join(cwd, '.claude', 'saga-claude-hook.sh');
+  const hooksPath = join(cwd, '.claude', 'settings.local.json');
+  mkdirSync(join(cwd, '.claude'));
+  writeFileSync(
+    join(cwd, '.saga.local.json'),
+    JSON.stringify({
+      harnesses: {
+        claude: {
+          hookCommand: `'${shimPath}'`,
+          hookTrust: 'requires-review',
+          hooksPath,
+          installedAt: new Date().toISOString(),
+          sourceBindingId: 'claude-source-id',
+          sourceUri: `claude://host/${hostId}`,
+          target: 'claude',
+        },
+      },
+      host: {
+        id: hostId,
+        label: 'test-host',
+      },
+      project: {
+        root: cwd,
+      },
+      schemaVersion: 1,
+      service: {
+        databaseUrl: 'env:DATABASE_URL',
+      },
+      sourceBinding: {
+        id: 'source-id',
+      },
+      workspace: {
+        handle: 'saga',
+        id: 'workspace-id',
+      },
+    }),
+  );
+  writeFileSync(
+    hooksPath,
+    JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ command: shimPath, type: 'command' }] }],
+        Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
+        UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
+      },
+    }),
+  );
+  return cwd;
+}
 
 function activeActivation(): HarnessActivationStatus {
   return {
