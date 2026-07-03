@@ -16,6 +16,9 @@ node_modules/
 npm-debug.log*
 pnpm-debug.log*
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Worktrees
 .claude/worktrees/
 .worktrees/

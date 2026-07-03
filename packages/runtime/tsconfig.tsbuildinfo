@@ -1,1 +1,0 @@
-{"root":["./src/codex-auth.test.ts","./src/codex-auth.ts","./src/config.test.ts","./src/config.ts","./src/embedding-credential.test.ts","./src/embedding-credential.ts","./src/embedding-policy.test.ts","./src/embedding-policy.ts","./src/embeddings.test.ts","./src/embeddings.ts","./src/index.ts","./src/project-root.test.ts","./src/project-root.ts"],"version":"6.0.3"}
