@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
@@ -240,6 +240,52 @@ describePostgres('session safety', () => {
       .where(eq(rawEvents.id, turnLinkedRawEvent.id));
     expect(JSON.stringify(redactedTurnLinkedRawEvent)).not.toContain('super-secret-token');
     expect(JSON.stringify(redactedTurnLinkedRawEvent?.payload)).toContain('[REDACTED]');
+  });
+
+  test('hard redaction scrubs every inactive snapshot body, not just the just-superseded one', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createWorkspace(service, 'session-safety-multi-snapshot');
+    const harnessSessionId = 'safety-multi-snapshot';
+    // Two content updates before redaction → snapshotOrdinal 0 (inactive) and 1 (active), both
+    // holding the secret; redaction supersedes only the active one, so ordinal 0 must also be scrubbed.
+    const first = await seedRawSession(service, {
+      harnessSessionId,
+      rawContent: '{"type":"user","text":"early super-secret-token"}\n',
+      workspaceId,
+    });
+    const second = await seedRawSession(service, {
+      harnessSessionId,
+      rawContent:
+        '{"type":"user","text":"early super-secret-token"}\n{"type":"assistant","text":"later super-secret-token"}\n',
+      workspaceId,
+    });
+    expect(second.session.id).toBe(first.session.id);
+
+    await Effect.runPromise(
+      redactSessionSafety(service, {
+        id: first.session.id,
+        patterns: [{ kind: 'literal', pattern: 'super-secret-token' }],
+        workspaceId,
+      }),
+    );
+
+    const inactiveRecords = await service.db
+      .select()
+      .from(rawSessionRecords)
+      .where(
+        and(
+          eq(rawSessionRecords.sessionId, first.session.id),
+          eq(rawSessionRecords.isActive, false),
+        ),
+      );
+    expect(inactiveRecords.length).toBeGreaterThanOrEqual(2);
+    for (const record of inactiveRecords) {
+      expect(record.bodyText).toBeNull();
+      expect(record.bodyJson).toBeNull();
+    }
+    expect(JSON.stringify(inactiveRecords)).not.toContain('super-secret-token');
   });
 
   test('redaction leaves no secret-bearing segment embeddings (ADR-0039)', async () => {
