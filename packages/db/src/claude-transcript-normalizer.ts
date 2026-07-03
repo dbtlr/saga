@@ -700,21 +700,19 @@ function deriveContinuationParentHarnessSessionId(
   const anchors = new Set<string>();
   for (const record of records) {
     const anchor = readString(record.value.session_id);
-    if (anchor !== undefined) {
+    // Self-referential anchors (a boundary/summary record naming the current
+    // session) carry no continuation evidence; exclude them so they neither
+    // suppress a real prior anchor nor stand in as one.
+    if (anchor !== undefined && anchor !== currentHarnessSessionId) {
       anchors.add(anchor);
     }
   }
-  // Require a single unambiguous anchor that differs from the current session.
-  // Absent, inconsistent, or self-referential anchors carry no continuation
-  // evidence; leave the session unlinked.
+  // Require a single unambiguous prior anchor. Absent or inconsistent anchors
+  // are not explicit evidence; leave the session unlinked.
   if (anchors.size !== 1) {
     return undefined;
   }
-  const [anchor] = [...anchors];
-  if (anchor === undefined || anchor === currentHarnessSessionId) {
-    return undefined;
-  }
-  return anchor;
+  return [...anchors][0];
 }
 
 function deriveSourceHarnessSessionId(
