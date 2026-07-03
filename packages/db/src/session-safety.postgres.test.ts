@@ -10,6 +10,7 @@ import { importRawSessionRecord } from './raw-session-import.js';
 import {
   rawEvents,
   rawSessionRecords,
+  sessionSegmentEmbeddings,
   sessionSegments,
   sessionTurns,
   sessions,
@@ -154,6 +155,12 @@ describePostgres('session safety', () => {
     });
     expect(rawRecords[1]?.bodyText).toContain('[REDACTED]');
     expect(rawRecords[1]?.bodyText).not.toContain('super-secret-token');
+    // ADR-0034: the superseded (inactive) snapshot must not retain the sensitive bytes in its body
+    // columns — hard redaction scrubs body_text/body_json, keeping only non-sensitive tombstone
+    // metadata. A direct read of the inactive row must not recover the secret.
+    expect(rawRecords[0]?.bodyText).toBeNull();
+    expect(rawRecords[0]?.bodyJson).toBeNull();
+    expect(JSON.stringify(rawRecords[0])).not.toContain('super-secret-token');
     const auditPayload = JSON.stringify(
       rawRecords.map((record) => ({
         metadata: record.metadata,
@@ -233,6 +240,67 @@ describePostgres('session safety', () => {
       .where(eq(rawEvents.id, turnLinkedRawEvent.id));
     expect(JSON.stringify(redactedTurnLinkedRawEvent)).not.toContain('super-secret-token');
     expect(JSON.stringify(redactedTurnLinkedRawEvent?.payload)).toContain('[REDACTED]');
+  });
+
+  test('redaction leaves no secret-bearing segment embeddings (ADR-0039)', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createWorkspace(service, 'session-safety-embedding-wipe');
+    const imported = await seedRawSession(service, {
+      harnessSessionId: 'safety-embedding-wipe',
+      rawContent:
+        '{"type":"user","text":"Store API_KEY=super-secret-token in the notes"}\n{"type":"assistant","text":"I recorded super-secret-token for follow-up"}\n',
+      workspaceId,
+    });
+
+    // Simulate the indexer having embedded the pre-redaction (secret-bearing) segments: seed a vector
+    // for each. ADR-0039 requires redaction to leave no vector that encodes the scrubbed text.
+    const preSegments = await service.db
+      .select()
+      .from(sessionSegments)
+      .where(eq(sessionSegments.sessionId, imported.session.id));
+    expect(preSegments.length).toBeGreaterThan(0);
+    expect(preSegments.some((segment) => segment.searchText.includes('super-secret-token'))).toBe(
+      true,
+    );
+    for (const segment of preSegments) {
+      await service.db.insert(sessionSegmentEmbeddings).values({
+        dimensions: 3,
+        embedding: [0.1, 0.2, 0.3],
+        inputHash: `sha256:${segment.id}`,
+        model: 'text-embedding-3-small',
+        provider: 'openai',
+        rawSessionRecordId: imported.rawSessionRecord.id,
+        segmentId: segment.id,
+        workspaceId,
+      });
+    }
+
+    await Effect.runPromise(
+      redactSessionSafety(service, {
+        id: imported.session.id,
+        patterns: [{ kind: 'literal', pattern: 'super-secret-token' }],
+        workspaceId,
+      }),
+    );
+
+    // The pre-redaction segments and their (secret-bearing) embeddings are wiped by the regenerate
+    // path; the surviving segments were rebuilt from redacted content.
+    const embeddings = await service.db
+      .select({ segmentId: sessionSegmentEmbeddings.segmentId })
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.workspaceId, workspaceId));
+    expect(embeddings).toHaveLength(0);
+
+    const postSegments = await service.db
+      .select({ searchText: sessionSegments.searchText })
+      .from(sessionSegments)
+      .where(eq(sessionSegments.sessionId, imported.session.id));
+    expect(postSegments.length).toBeGreaterThan(0);
+    expect(postSegments.some((segment) => segment.searchText.includes('super-secret-token'))).toBe(
+      false,
+    );
   });
 
   test('rejects invalid regex patterns without echoing sensitive pattern text', async () => {

@@ -220,6 +220,12 @@ export function deleteSessionSafety(
   });
 }
 
+// Hard redaction (ADR-0034): writes a new redacted snapshot and scrubs the superseded snapshot's
+// body_text/body_json so the matched sensitive bytes are not recoverable from Saga's primary database
+// via recall, raw-body debug access, or direct reads of the inactive row — only non-sensitive
+// tombstone metadata is retained. Backups and external database snapshots are a separate operational
+// retention concern: the primary database does not intentionally preserve the sensitive bytes, but
+// scrubbing them from backups is out of scope here.
 export function redactSessionSafety(
   service: DatabaseService,
   input: RedactSessionSafetyInput,
@@ -317,6 +323,9 @@ export function redactSessionSafety(
                   redactedAt: redactedAt.toISOString(),
                   redactedBy: 'saga session safety',
                 },
+                // ADR-0034: scrub the superseded body so the secret is not recoverable from the
+                // inactive row via direct DB read or raw-body debug access.
+                scrubBody: true,
                 status: 'redacted',
               },
               expectedActiveRawSessionRecordId: activeRecord.raw_record_id,
