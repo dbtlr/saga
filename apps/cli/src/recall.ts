@@ -19,10 +19,13 @@ import type {
 import {
   composeEmbeddingWorkflow,
   loadRuntimeConfig,
-  resolveCodexAuth,
+  resolveEmbeddingCredential,
   resolveEmbeddingPolicy,
 } from '@saga/runtime';
-import type { CodexAuthResolutionOptions, EmbeddingPolicyResolutionOptions } from '@saga/runtime';
+import type {
+  EmbeddingCredentialResolutionOptions,
+  EmbeddingPolicyResolutionOptions,
+} from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { findProjectRoot, readBindingFile } from './init.js';
@@ -255,7 +258,7 @@ async function openDatabase(projectRoot: string) {
 }
 
 export type ResolveQueryEmbeddingOptions = {
-  authOptions?: CodexAuthResolutionOptions | undefined;
+  authOptions?: EmbeddingCredentialResolutionOptions | undefined;
   fetchImpl?: typeof fetch | undefined;
   policyOptions?: EmbeddingPolicyResolutionOptions | undefined;
 };
@@ -266,10 +269,11 @@ export async function resolveRecallSearchEmbedding(
 ): Promise<ResolvedRecallEmbedding> {
   // Installation policy gates remote embedding data flow: when remote embeddings are not
   // enabled, the recall query text is never sent to the remote provider (ADR 0032).
-  // resolveCodexAuth only reads local credential files; it performs no remote calls.
-  const auth = resolveCodexAuth(options.authOptions);
+  // resolveEmbeddingCredential only reads local env/config/credential files; it performs
+  // no remote calls.
+  const credential = resolveEmbeddingCredential(options.authOptions);
   const workflow = composeEmbeddingWorkflow({
-    auth,
+    credential,
     policy: resolveEmbeddingPolicy(options.policyOptions),
   });
 
@@ -283,7 +287,7 @@ export async function resolveRecallSearchEmbedding(
     };
   }
 
-  if (workflow.mode === 'lexical-fallback' || auth.status !== 'available') {
+  if (workflow.mode === 'lexical-fallback' || credential.status !== 'available') {
     return {
       posture: {
         detail: workflow.availability.detail,
@@ -294,7 +298,7 @@ export async function resolveRecallSearchEmbedding(
   }
 
   const generator = createOpenAiSessionEmbeddingGenerator({
-    apiKey: auth.openaiApiKey,
+    apiKey: credential.apiKey,
     fetch: options.fetchImpl,
   });
   try {

@@ -3,10 +3,10 @@ import { createHash } from 'node:crypto';
 import {
   DEFAULT_OPENAI_EMBEDDING_PROVIDER,
   inspectEmbeddingWorkflow,
-  resolveCodexAuth,
+  resolveEmbeddingCredential,
 } from '@saga/runtime';
 import type {
-  CodexAuthResolutionOptions,
+  EmbeddingCredentialResolutionOptions,
   EmbeddingPolicyResolutionOptions,
   EmbeddingProviderBoundary,
 } from '@saga/runtime';
@@ -54,7 +54,7 @@ export type OpenAiSessionEmbeddingGeneratorOptions = {
 
 export type IndexSessionSegmentEmbeddingsInput = {
   activityIntervalId?: string | undefined;
-  authOptions?: CodexAuthResolutionOptions | undefined;
+  authOptions?: EmbeddingCredentialResolutionOptions | undefined;
   generator?: SessionEmbeddingGenerator | undefined;
   limit?: number | undefined;
   now?: Date | undefined;
@@ -398,8 +398,8 @@ function resolveEmbeddingGenerator(
     };
   }
 
-  const auth = resolveCodexAuth(input.authOptions);
-  if (auth.status !== 'available') {
+  const credential = resolveEmbeddingCredential(input.authOptions);
+  if (credential.status !== 'available') {
     return {
       lexicalFallback: {
         detail: 'Lexical recall remains available while embedding generation is skipped.',
@@ -407,16 +407,16 @@ function resolveEmbeddingGenerator(
       },
       provider: workflow.provider,
       skipped: {
-        detail: auth.detail,
-        guidance: auth.guidance,
-        reason: auth.reason,
+        detail: credential.detail,
+        guidance: credential.guidance,
+        reason: credential.reason,
       },
     };
   }
 
   return {
     generator: createOpenAiSessionEmbeddingGenerator({
-      apiKey: auth.openaiApiKey,
+      apiKey: credential.apiKey,
       provider: workflow.provider,
     }),
     lexicalFallback: workflow.lexicalFallback,

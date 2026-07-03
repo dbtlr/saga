@@ -1,5 +1,10 @@
-import { resolveCodexAuth } from './codex-auth.js';
-import type { CodexAuthResolutionOptions, CodexAuthStatus } from './codex-auth.js';
+import type { CodexAuthMode } from './codex-auth.js';
+import { resolveEmbeddingCredential } from './embedding-credential.js';
+import type {
+  EmbeddingCredential,
+  EmbeddingCredentialResolutionOptions,
+  EmbeddingCredentialSource,
+} from './embedding-credential.js';
 import { resolveEmbeddingPolicy } from './embedding-policy.js';
 import type { EmbeddingPolicy, EmbeddingPolicyResolutionOptions } from './embedding-policy.js';
 
@@ -18,9 +23,9 @@ export type EmbeddingProviderBoundary = {
 };
 
 export type EmbeddingCredentialStatus = {
-  authMode: CodexAuthStatus['mode'];
+  authMode: CodexAuthMode;
   detail: string;
-  source: 'codex-auth';
+  source: EmbeddingCredentialSource;
 };
 
 export type EmbeddingWorkflowAvailability = {
@@ -49,21 +54,21 @@ export const DEFAULT_OPENAI_EMBEDDING_PROVIDER: EmbeddingProviderBoundary = {
 };
 
 export function inspectEmbeddingWorkflow(
-  authOptions: CodexAuthResolutionOptions = {},
+  authOptions: EmbeddingCredentialResolutionOptions = {},
   policyOptions: EmbeddingPolicyResolutionOptions = {},
 ): EmbeddingWorkflowBoundary {
   return composeEmbeddingWorkflow({
-    auth: resolveCodexAuth(authOptions),
+    credential: resolveEmbeddingCredential(authOptions),
     policy: resolveEmbeddingPolicy(policyOptions),
   });
 }
 
 export function composeEmbeddingWorkflow(input: {
-  auth: CodexAuthStatus;
+  credential: EmbeddingCredential;
   policy: EmbeddingPolicy;
 }): EmbeddingWorkflowBoundary {
-  const { auth, policy } = input;
-  const credential = credentialStatus(auth);
+  const { credential: resolved, policy } = input;
+  const credential = credentialStatus(resolved);
 
   if (policy.remoteEmbeddings === 'disabled') {
     return {
@@ -85,13 +90,12 @@ export function composeEmbeddingWorkflow(input: {
     };
   }
 
-  if (auth.status === 'available') {
+  if (resolved.status === 'available') {
     return {
       availability: {
         credential,
-        detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} available via ${auth.displayPath}`,
-        guidance:
-          'Saga will use the read-only cached Codex OPENAI_API_KEY for embedding workflows and will not refresh or rewrite Codex credentials.',
+        detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} available via ${resolved.displayPath}`,
+        guidance: resolved.guidance,
         reason: 'openai-api-key-available',
         state: 'available',
       },
@@ -109,9 +113,9 @@ export function composeEmbeddingWorkflow(input: {
   return {
     availability: {
       credential,
-      detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} skipped: ${auth.detail}`,
-      guidance: auth.guidance,
-      reason: auth.reason,
+      detail: `${providerLabel(DEFAULT_OPENAI_EMBEDDING_PROVIDER)} skipped: ${resolved.detail}`,
+      guidance: resolved.guidance,
+      reason: resolved.reason,
       state: 'skipped',
     },
     lexicalFallback: {
@@ -124,14 +128,13 @@ export function composeEmbeddingWorkflow(input: {
   };
 }
 
-function credentialStatus(auth: CodexAuthStatus): EmbeddingCredentialStatus {
+function credentialStatus(credential: EmbeddingCredential): EmbeddingCredentialStatus {
   return {
-    authMode: auth.mode,
-    detail:
-      auth.status === 'available'
-        ? `cached OPENAI_API_KEY present in ${auth.displayPath}`
-        : auth.detail,
-    source: 'codex-auth',
+    authMode: credential.mode,
+    detail: credential.detail,
+    // An unavailable credential only arises after the env and installation tiers miss and
+    // the Codex tier fails, so its source is always the Codex auth surface.
+    source: credential.status === 'available' ? credential.source : 'codex-auth',
   };
 }
 

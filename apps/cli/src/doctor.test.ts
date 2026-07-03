@@ -153,6 +153,64 @@ describe('doctorProject', () => {
     expect(JSON.stringify(checks)).not.toContain('sk-do-not-print');
   });
 
+  it('reports the environment as the credential source when OPENAI_API_KEY is set', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: { OPENAI_API_KEY: 'sk-env-do-not-print' },
+        homeDir,
+      },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
+        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
+      },
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          'openai/text-embedding-3-small (1536 dimensions) vector-aware; OPENAI_API_KEY present in the environment; lexical fallback: standby',
+        label: 'embeddings',
+        status: 'ok',
+      }),
+    );
+    expect(JSON.stringify(checks)).not.toContain('sk-env-do-not-print');
+  });
+
+  it('reports installation config as the credential source when it carries an OpenAI key', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
+    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
+
+    const checks = await doctorProject({
+      cwd,
+      embeddingAuth: {
+        env: {},
+        homeDir,
+        readFile: () =>
+          JSON.stringify({ embeddings: { openaiApiKey: 'sk-installed-do-not-print' } }),
+      },
+      embeddingPolicy: {
+        env: {},
+        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
+        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
+      },
+    });
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        detail:
+          'openai/text-embedding-3-small (1536 dimensions) vector-aware; openaiApiKey configured in ~/.saga/config.json; lexical fallback: standby',
+        label: 'embeddings',
+        status: 'ok',
+      }),
+    );
+    expect(JSON.stringify(checks)).not.toContain('sk-installed-do-not-print');
+  });
+
   it('warns when embeddings are skipped and lexical recall remains available', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
     const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));

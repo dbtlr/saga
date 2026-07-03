@@ -97,3 +97,21 @@ Example:
 DATABASE_URL_FILE=/run/secrets/saga_database_url
 OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
 ```
+
+## Embedding Credentials
+
+Remote embeddings (`saga index`, vector recall) need an OpenAI API key. Credential sourcing is
+resolved independently of the ADR-0032 policy gate — the gate decides _whether_ remote embeddings
+are allowed, this decides _which_ key is used — with the following precedence, highest first:
+
+1. **Environment** — `OPENAI_API_KEY` (or `OPENAI_API_KEY_FILE`). Best for interactive shells and
+   container secret injection.
+2. **Installation config** — `embeddings.openaiApiKey` in `~/.saga/config.json` (or
+   `SAGA_HOME/config.json`). Durable and independent of a login shell, so the launchd/systemd
+   service and the MCP adapter can use it. It sits alongside `database.url`, which likewise carries
+   a secret; treat the file as protected (`chmod 600`).
+3. **Codex cached key** — a cached `OPENAI_API_KEY` in `~/.codex/auth.json`. ChatGPT-mode Codex
+   logins carry no cached key, so they fall through to the tiers above.
+
+`saga doctor` reports the active credential source on the `embeddings` line. A present-but-broken
+tier (empty key file, blank installation key) is skipped so a lower tier can still supply a key.
