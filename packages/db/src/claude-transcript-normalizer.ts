@@ -105,6 +105,13 @@ export function normalizeClaudeTranscript(input: {
   const isSubagentTranscript =
     harnessSessionId !== undefined && harnessSessionId !== sourceHarnessSessionId;
   state.sessionId = harnessSessionId ?? sourceHarnessSessionId;
+  // A continuation (resume/compaction fork) is a NEW harness session id whose
+  // records carry a constant snake_case `session_id` naming the prior session,
+  // distinct from the current camelCase `sessionId`. Subagent lineage is
+  // handled separately by `parentHarnessSessionId`.
+  const continuationParentHarnessSessionId = isSubagentTranscript
+    ? undefined
+    : deriveContinuationParentHarnessSessionId(records, sourceHarnessSessionId);
 
   const turns: NormalizedTranscriptTurn[] = [];
   for (const record of records) {
@@ -136,6 +143,7 @@ export function normalizeClaudeTranscript(input: {
       startedAt,
     },
     metadata: compactRecord({
+      continuationParentHarnessSessionId,
       cwd: state.cwd,
       detectedHarnessSessionId: state.sessionId,
       lifecycleEvents: state.lifecycleEvents,
@@ -150,6 +158,7 @@ export function normalizeClaudeTranscript(input: {
     session: {
       lastActivityAt,
       metadata: compactRecord({
+        continuationParentHarnessSessionId,
         cwd: state.cwd,
         detectedHarnessSessionId: state.sessionId,
         normalizer: 'claude-transcript-v1',
@@ -682,6 +691,30 @@ function firstString(records: readonly ParsedJsonRecord[], field: string): strin
     }
   }
   return undefined;
+}
+
+function deriveContinuationParentHarnessSessionId(
+  records: readonly ParsedJsonRecord[],
+  currentHarnessSessionId: string | undefined,
+): string | undefined {
+  const anchors = new Set<string>();
+  for (const record of records) {
+    const anchor = readString(record.value.session_id);
+    if (anchor !== undefined) {
+      anchors.add(anchor);
+    }
+  }
+  // Require a single unambiguous anchor that differs from the current session.
+  // Absent, inconsistent, or self-referential anchors carry no continuation
+  // evidence; leave the session unlinked.
+  if (anchors.size !== 1) {
+    return undefined;
+  }
+  const [anchor] = [...anchors];
+  if (anchor === undefined || anchor === currentHarnessSessionId) {
+    return undefined;
+  }
+  return anchor;
 }
 
 function deriveSourceHarnessSessionId(

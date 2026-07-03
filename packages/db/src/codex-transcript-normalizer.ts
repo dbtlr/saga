@@ -147,6 +147,10 @@ export function normalizeCodexTranscript(input: {
   const lastActivityAt = latest(timestamps);
   const sessionId = readString(state.sessionMeta?.id) ?? input.fallbackHarnessSessionId;
   const subagentEvidence = collectSubagentEvidence(records);
+  const continuationParentHarnessSessionId = deriveCodexContinuationParent(
+    state.sessionMeta,
+    sessionId,
+  );
 
   return {
     activityInterval: {
@@ -160,6 +164,7 @@ export function normalizeCodexTranscript(input: {
       startedAt,
     },
     metadata: compactRecord({
+      continuationParentHarnessSessionId,
       cwd: state.cwd,
       detectedHarnessSessionId: sessionId,
       lifecycleEvents: state.lifecycleEvents,
@@ -173,6 +178,7 @@ export function normalizeCodexTranscript(input: {
       lastActivityAt,
       metadata: compactRecord({
         cliVersion: readString(state.sessionMeta?.cli_version),
+        continuationParentHarnessSessionId,
         cwd: state.cwd,
         detectedHarnessSessionId: sessionId,
         git: state.sessionMeta?.git,
@@ -187,6 +193,25 @@ export function normalizeCodexTranscript(input: {
     },
     turns: sortedTurns,
   };
+}
+
+function deriveCodexContinuationParent(
+  sessionMeta: Record<string, unknown> | undefined,
+  currentHarnessSessionId: string | undefined,
+): string | undefined {
+  if (sessionMeta === undefined) {
+    return undefined;
+  }
+  // A subagent fork is child lineage, not a continuation (ADR 0035). Only a
+  // user/primary thread that was forked from a prior thread continues it.
+  if (readString(sessionMeta.thread_source) === 'subagent') {
+    return undefined;
+  }
+  const forkedFrom = readString(sessionMeta.forked_from_id);
+  if (forkedFrom === undefined || forkedFrom === '' || forkedFrom === currentHarnessSessionId) {
+    return undefined;
+  }
+  return forkedFrom;
 }
 
 function handleEventMessage(

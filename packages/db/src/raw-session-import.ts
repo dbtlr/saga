@@ -760,6 +760,10 @@ async function deriveSessionRelationships(
     childSession: input.session,
     input: input.input,
   });
+  await deriveContinuationRelationshipsForSession(tx, {
+    continuingSession: input.session,
+    input: input.input,
+  });
 
   if (input.session.harnessSessionId === null) {
     return input.session;
@@ -779,28 +783,176 @@ async function deriveSessionRelationships(
     if (peerSession.id === input.session.id) {
       continue;
     }
+    // This session may be the parent of an already-imported child peer.
     const parentCandidates = relationshipParentCandidates(peerSession);
     if (
-      !parentCandidates.some(
+      parentCandidates.some(
         (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
       )
     ) {
-      continue;
-    }
-    await insertOrRefreshChildRelationship(tx, {
-      childSession: peerSession,
-      input: input.input,
-      parentSession: input.session,
-      relationshipEvidence: relationshipEvidenceForCandidate(
-        parentCandidates.find(
-          (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
+      await insertOrRefreshChildRelationship(tx, {
+        childSession: peerSession,
+        input: input.input,
+        parentSession: input.session,
+        relationshipEvidence: relationshipEvidenceForCandidate(
+          parentCandidates.find(
+            (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
+          ),
+          peerSession,
         ),
-        peerSession,
-      ),
-    });
+      });
+    }
+    // This session may be the prior of an already-imported continuing peer.
+    if (
+      relationshipContinuationParentHarnessSessionId(peerSession) === input.session.harnessSessionId
+    ) {
+      await insertOrRefreshContinuationRelationship(tx, {
+        continuingSession: peerSession,
+        input: input.input,
+        priorSession: input.session,
+      });
+    }
   }
 
   return input.session;
+}
+
+async function deriveContinuationRelationshipsForSession(
+  tx: DatabaseService['db'],
+  input: {
+    continuingSession: Session;
+    input: NormalizedRawSessionImportInput;
+  },
+): Promise<void> {
+  const priorHarnessSessionId = relationshipContinuationParentHarnessSessionId(
+    input.continuingSession,
+  );
+  const desiredPriorSessionIds: string[] = [];
+  if (priorHarnessSessionId !== undefined) {
+    const priorSession = await findParentSessionForRelationship(tx, {
+      childSession: input.continuingSession,
+      input: input.input,
+      parentHarnessSessionId: priorHarnessSessionId,
+    });
+    if (priorSession !== undefined) {
+      await insertOrRefreshContinuationRelationship(tx, {
+        continuingSession: input.continuingSession,
+        input: input.input,
+        priorSession,
+      });
+      desiredPriorSessionIds.push(priorSession.id);
+    }
+  }
+
+  await deleteStaleContinuationRelationships(tx, {
+    continuingSession: input.continuingSession,
+    desiredPriorSessionIds,
+    input: input.input,
+  });
+}
+
+async function insertOrRefreshContinuationRelationship(
+  tx: DatabaseService['db'],
+  input: {
+    continuingSession: Session;
+    input: NormalizedRawSessionImportInput;
+    priorSession: Session;
+  },
+): Promise<void> {
+  const evidence = continuationRelationshipEvidence(input.priorSession, input.continuingSession);
+  const [existingRelationship] = await tx
+    .select()
+    .from(sessionRelationships)
+    .where(
+      and(
+        eq(sessionRelationships.workspaceId, input.input.workspaceId),
+        eq(sessionRelationships.sourceSessionId, input.priorSession.id),
+        eq(sessionRelationships.targetSessionId, input.continuingSession.id),
+        eq(sessionRelationships.relationshipType, 'continuation'),
+      ),
+    )
+    .limit(1);
+
+  if (existingRelationship === undefined) {
+    await tx
+      .insert(sessionRelationships)
+      .values({
+        confidence: 'explicit',
+        evidence,
+        relationshipType: 'continuation',
+        sourceSessionId: input.priorSession.id,
+        sourceTurnId: null,
+        targetSessionId: input.continuingSession.id,
+        workspaceId: input.input.workspaceId,
+      })
+      .onConflictDoNothing({
+        target: [
+          sessionRelationships.workspaceId,
+          sessionRelationships.sourceSessionId,
+          sessionRelationships.targetSessionId,
+          sessionRelationships.relationshipType,
+        ],
+      });
+    return;
+  }
+
+  if (
+    !isImportedRelationshipEvidence(existingRelationship.evidence) ||
+    jsonEqual(existingRelationship.evidence, evidence)
+  ) {
+    return;
+  }
+
+  await tx
+    .update(sessionRelationships)
+    .set({
+      evidence,
+      updatedAt: new Date(),
+    })
+    .where(eq(sessionRelationships.id, existingRelationship.id));
+}
+
+async function deleteStaleContinuationRelationships(
+  tx: DatabaseService['db'],
+  input: {
+    continuingSession: Session;
+    desiredPriorSessionIds: string[];
+    input: NormalizedRawSessionImportInput;
+  },
+): Promise<void> {
+  const baseConditions = [
+    eq(sessionRelationships.workspaceId, input.input.workspaceId),
+    eq(sessionRelationships.targetSessionId, input.continuingSession.id),
+    eq(sessionRelationships.relationshipType, 'continuation'),
+    sql`${sessionRelationships.evidence}->>'derivation' = ${SESSION_RELATIONSHIP_IMPORT_DERIVATION}`,
+  ];
+
+  await tx
+    .delete(sessionRelationships)
+    .where(
+      and(
+        ...baseConditions,
+        ...(input.desiredPriorSessionIds.length === 0
+          ? []
+          : [notInArray(sessionRelationships.sourceSessionId, input.desiredPriorSessionIds)]),
+      ),
+    );
+}
+
+function relationshipContinuationParentHarnessSessionId(session: Session): string | undefined {
+  const metadata = asRecord(session.metadata);
+  return cleanOptional(readString(metadata.continuationParentHarnessSessionId));
+}
+
+function continuationRelationshipEvidence(
+  priorSession: Session,
+  continuingSession: Session,
+): Record<string, unknown> {
+  return compactRecord({
+    continuationParentHarnessSessionId: priorSession.harnessSessionId ?? undefined,
+    continuingHarnessSessionId: continuingSession.harnessSessionId ?? undefined,
+    derivation: SESSION_RELATIONSHIP_IMPORT_DERIVATION,
+  });
 }
 
 async function deriveChildRelationshipsForSession(
@@ -925,7 +1077,7 @@ async function insertOrRefreshChildRelationship(
     return;
   }
 
-  if (!isImportedChildRelationshipEvidence(existingRelationship.evidence)) {
+  if (!isImportedRelationshipEvidence(existingRelationship.evidence)) {
     return;
   }
 
@@ -1081,7 +1233,7 @@ function relationshipEvidenceForCandidate(
   });
 }
 
-function isImportedChildRelationshipEvidence(evidence: unknown): boolean {
+function isImportedRelationshipEvidence(evidence: unknown): boolean {
   return asRecord(evidence).derivation === SESSION_RELATIONSHIP_IMPORT_DERIVATION;
 }
 
