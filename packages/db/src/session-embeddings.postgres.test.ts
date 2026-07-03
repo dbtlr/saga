@@ -68,7 +68,7 @@ describePostgres('session segment embeddings', () => {
     await adminSql.end({ timeout: 5 });
   });
 
-  test('indexes eligible active segments idempotently and refreshes stale embeddings', async () => {
+  test('fills absent embeddings idempotently and re-embeds only after write-time invalidation', async () => {
     if (service === undefined) {
       throw new Error('database service was not initialized');
     }
@@ -104,6 +104,9 @@ describePostgres('session segment embeddings', () => {
       workspaceId: fixture.workspaceId,
     });
 
+    // ADR-0039: the indexer fills absence, so a re-run finds nothing eligible and
+    // advances rather than re-selecting the already-embedded Segments. Idempotent —
+    // the row count is unchanged.
     const second = await Effect.runPromise(
       indexSessionSegmentEmbeddings(service, {
         generator,
@@ -112,8 +115,8 @@ describePostgres('session segment embeddings', () => {
       }),
     );
     expect(second).toMatchObject({
-      eligibleCount: 2,
-      existingCount: 2,
+      eligibleCount: 0,
+      existingCount: 0,
       indexedCount: 0,
       staleCount: 0,
     });
@@ -123,6 +126,9 @@ describePostgres('session segment embeddings', () => {
       workspaceId: fixture.workspaceId,
     });
 
+    // Editing a Segment's search text in place does NOT make the indexer re-embed it:
+    // in-place staleness is not the indexer's job (ADR-0039). The existing embedding row
+    // is left untouched, still reflecting the pre-edit text.
     await service.db
       .update(sessionSegments)
       .set({ searchText: 'Alpha vector recall target after edit' })
@@ -136,10 +142,34 @@ describePostgres('session segment embeddings', () => {
       }),
     );
     expect(third).toMatchObject({
-      eligibleCount: 2,
-      existingCount: 1,
+      eligibleCount: 0,
+      indexedCount: 0,
+      staleCount: 0,
+    });
+    const [beforeInvalidation] = await service.db
+      .select()
+      .from(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.segmentId, fixture.segmentIds.alpha));
+    expect(beforeInvalidation?.inputHash).toBe(
+      sessionSegmentEmbeddingInputHash('Alpha vector recall target', generator.provider),
+    );
+
+    // Write-time invalidation — what SGA-156/157 perform on content change / redaction —
+    // deletes the embedding, turning the Segment back into absence so the indexer re-fills it.
+    await service.db
+      .delete(sessionSegmentEmbeddings)
+      .where(eq(sessionSegmentEmbeddings.segmentId, fixture.segmentIds.alpha));
+
+    const fourth = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        generator,
+        now: new Date('2026-06-22T12:15:00.000Z'),
+        workspaceId: fixture.workspaceId,
+      }),
+    );
+    expect(fourth).toMatchObject({
+      eligibleCount: 1,
       indexedCount: 1,
-      staleCount: 1,
     });
     await expectEmbeddingRows(service, {
       count: 2,
@@ -147,15 +177,15 @@ describePostgres('session segment embeddings', () => {
       workspaceId: fixture.workspaceId,
     });
 
-    const [updated] = await service.db
+    const [refilled] = await service.db
       .select()
       .from(sessionSegmentEmbeddings)
       .where(eq(sessionSegmentEmbeddings.segmentId, fixture.segmentIds.alpha));
-    expect(updated?.inputHash).toBe(
+    expect(refilled?.inputHash).toBe(
       sessionSegmentEmbeddingInputHash('Alpha vector recall target after edit', generator.provider),
     );
-    expect(updated?.metadata).toMatchObject({
-      indexedAt: '2026-06-22T12:10:00.000Z',
+    expect(refilled?.metadata).toMatchObject({
+      indexedAt: '2026-06-22T12:15:00.000Z',
       inputHashVersion: 1,
       provider: {
         dimensions: 3,
@@ -164,6 +194,53 @@ describePostgres('session segment embeddings', () => {
       },
       status: 'indexed',
     });
+  });
+
+  test('advances coverage across runs when the limit is smaller than the eligible set', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const fixture = await seedEmbeddingFixture(service, 'coverage');
+    const generator = fakeGenerator([]);
+
+    // Two eligible Segments, limit 1. Before ADR-0039 the query returned the first
+    // Segment in fixed order on every run, so a second run re-selected the same one and
+    // coverage never advanced past the limit. Now each run fills the next absent Segment.
+    const first = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        generator,
+        limit: 1,
+        now: new Date('2026-06-22T12:00:00.000Z'),
+        workspaceId: fixture.workspaceId,
+      }),
+    );
+    expect(first).toMatchObject({ eligibleCount: 1, indexedCount: 1 });
+
+    const second = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        generator,
+        limit: 1,
+        now: new Date('2026-06-22T12:01:00.000Z'),
+        workspaceId: fixture.workspaceId,
+      }),
+    );
+    expect(second).toMatchObject({ eligibleCount: 1, indexedCount: 1 });
+
+    // Full coverage reached even though the limit was smaller than the eligible set.
+    await expectEmbeddingRows(service, {
+      count: 2,
+      provider: generator.provider.id,
+      workspaceId: fixture.workspaceId,
+    });
+    const third = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        generator,
+        limit: 1,
+        now: new Date('2026-06-22T12:02:00.000Z'),
+        workspaceId: fixture.workspaceId,
+      }),
+    );
+    expect(third).toMatchObject({ eligibleCount: 0, indexedCount: 0 });
   });
 
   test('skips pending embeddings when default OpenAI credentials are unavailable', async () => {

@@ -113,7 +113,8 @@ describePostgres('index CLI postgres integration', () => {
     expect(first.indexedCount).toBeGreaterThanOrEqual(2);
     expect(first.existingCount).toBe(0);
 
-    // Re-running is idempotent: nothing re-embedded, prior rows counted as existing.
+    // ADR-0039: re-running is idempotent by finding nothing eligible — the indexer fills
+    // absence, so already-embedded segments are excluded rather than re-selected.
     const secondOutput = await runIndexCommand(
       [],
       { ...renderOptions, format: 'json' },
@@ -124,8 +125,8 @@ describePostgres('index CLI postgres integration', () => {
     );
     const second = JSON.parse(secondOutput) as SessionEmbeddingIndexResult;
     expect(second.status).toBe('completed');
+    expect(second.eligibleCount).toBe(0);
     expect(second.indexedCount).toBe(0);
-    expect(second.existingCount).toBe(first.eligibleCount);
 
     // Vector recall end-to-end: a query that matches no lexical/trigram token but whose
     // embedding is on the `alpha` axis returns the alpha segment via the vector path.
