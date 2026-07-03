@@ -146,6 +146,82 @@ describe('createOpenAiSessionEmbeddingGenerator', () => {
     });
   });
 
+  it('splits a large batch into bounded sub-requests and preserves order', async () => {
+    const requests: RequestInit[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      requests.push(init ?? {});
+      const parsed = JSON.parse(requestBodyText(init)) as { input: string[] };
+      return jsonResponse({
+        data: parsed.input.map((_text, index) => ({
+          embedding: [index, 0, 0],
+          index,
+          object: 'embedding',
+        })),
+        object: 'list',
+      });
+    };
+    const generator = createOpenAiSessionEmbeddingGenerator({
+      apiKey: 'sk-test',
+      fetch: fetchImpl,
+      provider: testProvider,
+    });
+
+    // 300 inputs exceeds the 256-input per-request cap, so the batch splits into 256 + 44.
+    const inputs = Array.from({ length: 300 }, (_value, index) => ({
+      inputHash: `hash-${String(index)}`,
+      segmentId: `segment-${String(index)}`,
+      text: `segment text ${String(index)}`,
+    }));
+
+    const outputs = await generator.embedSegments(inputs);
+
+    expect(requests).toHaveLength(2);
+    expect((JSON.parse(requestBodyText(requests[0])) as { input: string[] }).input).toHaveLength(
+      256,
+    );
+    expect((JSON.parse(requestBodyText(requests[1])) as { input: string[] }).input).toHaveLength(
+      44,
+    );
+    // Every input is covered, in the original order, across the sub-requests.
+    expect(outputs.map((output) => output.segmentId)).toStrictEqual(
+      inputs.map((input) => input.segmentId),
+    );
+  });
+
+  it('splits by total characters when inputs are large', async () => {
+    const requests: RequestInit[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      requests.push(init ?? {});
+      const parsed = JSON.parse(requestBodyText(init)) as { input: string[] };
+      return jsonResponse({
+        data: parsed.input.map((_text, index) => ({
+          embedding: [index, 0, 0],
+          index,
+          object: 'embedding',
+        })),
+        object: 'list',
+      });
+    };
+    const generator = createOpenAiSessionEmbeddingGenerator({
+      apiKey: 'sk-test',
+      fetch: fetchImpl,
+      provider: testProvider,
+    });
+
+    // Three 250k-char inputs: the 400k-char per-request cap forces 1 + 1 + 1 (each pair exceeds it).
+    const big = 'x'.repeat(250_000);
+    const inputs = Array.from({ length: 3 }, (_value, index) => ({
+      inputHash: `hash-${String(index)}`,
+      segmentId: `segment-${String(index)}`,
+      text: big,
+    }));
+
+    const outputs = await generator.embedSegments(inputs);
+
+    expect(requests).toHaveLength(3);
+    expect(outputs).toHaveLength(3);
+  });
+
   it.each(openAiHttpFailureCases)(
     'rejects OpenAI HTTP/API failures without leaking provider detail: $name',
     async ({ body, expectedMessage, leakedDetails, status }) => {

@@ -1,8 +1,9 @@
-import { indexSessionSegmentEmbeddings, makeDatabase } from '@saga/db';
+import { indexSessionSegmentEmbeddings, listWorkspaces, makeDatabase } from '@saga/db';
 import type {
   IndexSessionSegmentEmbeddingsInput,
   SessionEmbeddingGenerator,
   SessionEmbeddingIndexResult,
+  WorkspaceSummary,
 } from '@saga/db';
 import { loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
@@ -27,7 +28,13 @@ const INDEX_FLAGS_WITH_VALUES = new Set([
   'workspace',
   'workspace-id',
 ]);
-const INDEX_BOOLEAN_FLAGS = new Set<string>();
+const INDEX_BOOLEAN_FLAGS = new Set<string>(['all']);
+
+// Fixed batch size for the fill-to-completion loop used by --all. Each batch selects only
+// Segments lacking a current embedding (ADR-0039), so successive batches advance until a
+// Workspace is fully covered. Not operator-tunable: --all is a completion job, not a
+// bounded single run.
+const INDEX_ALL_BATCH_SIZE = 1_000;
 
 export type IndexCommandDependencies = {
   cwd?: string | undefined;
@@ -51,6 +58,10 @@ export async function runIndexCommand(
   });
   if (parsed.positionals.length > 0) {
     throw new Error(`index received unexpected argument: ${parsed.positionals[0]}`);
+  }
+
+  if (parsed.booleans.has('all')) {
+    return runIndexAll(parsed.flags, options, dependencies);
   }
 
   const project = loadBoundProject(dependencies.cwd);
@@ -87,6 +98,139 @@ export async function runIndexCommand(
     { records: renderIndexResult(result, options), value: result },
     options.format,
   );
+}
+
+type WorkspaceFillSummary = {
+  batches: number;
+  handle: string;
+  indexedCount: number;
+  provider?: SessionEmbeddingIndexResult['provider'] | undefined;
+  skipped?: SessionEmbeddingIndexResult['skipped'] | undefined;
+  status: SessionEmbeddingIndexResult['status'];
+  workspaceId: string;
+};
+
+type IndexAllResult = {
+  totalIndexed: number;
+  workspaceCount: number;
+  workspaces: WorkspaceFillSummary[];
+};
+
+// `saga index --all`: enumerate every Workspace the service knows (from the DB, not a cwd
+// binding — a cron has no bound project) and fill each to completion. Idempotent and safe to
+// overlap by ADR-0039 (each batch embeds only absent Segments); ADR-0032 policy gating still
+// applies per Workspace, surfaced as a skipped status rather than a failure.
+async function runIndexAll(
+  flags: Record<string, string>,
+  options: RenderOptions,
+  dependencies: IndexCommandDependencies,
+): Promise<string> {
+  rejectScopedFlagsForAll(flags);
+
+  const summaries = await withDatabase(dependencies.cwd ?? process.cwd(), async (service) => {
+    const workspaces = await Effect.runPromise(listWorkspaces(service));
+    const results: WorkspaceFillSummary[] = [];
+    for (const workspace of workspaces) {
+      // Sequential on purpose: one shared connection, and bounded, predictable load for a
+      // background job rather than a burst across every Workspace at once.
+      results.push(
+        await fillWorkspaceEmbeddings(service, workspace, dependencies.embeddingGenerator),
+      );
+    }
+    return results;
+  });
+
+  const result: IndexAllResult = {
+    totalIndexed: summaries.reduce((sum, summary) => sum + summary.indexedCount, 0),
+    workspaceCount: summaries.length,
+    workspaces: summaries,
+  };
+  return formatCommandOutput(
+    { records: renderIndexAll(result, options), value: result },
+    options.format,
+  );
+}
+
+function rejectScopedFlagsForAll(flags: Record<string, string>): void {
+  const scoped = Object.keys(flags).filter((name) => INDEX_FLAGS_WITH_VALUES.has(name));
+  if (scoped.length > 0) {
+    throw new Error(
+      `--${scoped[0]} cannot be combined with --all; --all indexes every workspace to completion`,
+    );
+  }
+}
+
+async function fillWorkspaceEmbeddings(
+  service: Awaited<ReturnType<typeof openDatabase>>,
+  workspace: WorkspaceSummary,
+  generator: SessionEmbeddingGenerator | undefined,
+): Promise<WorkspaceFillSummary> {
+  let indexedCount = 0;
+  let batches = 0;
+  let provider: SessionEmbeddingIndexResult['provider'] | undefined;
+  let status: SessionEmbeddingIndexResult['status'] = 'completed';
+  let skipped: SessionEmbeddingIndexResult['skipped'] | undefined;
+
+  for (;;) {
+    const batch = await Effect.runPromise(
+      indexSessionSegmentEmbeddings(service, {
+        generator,
+        limit: INDEX_ALL_BATCH_SIZE,
+        workspaceId: workspace.id,
+      }),
+    );
+    batches += 1;
+    indexedCount += batch.indexedCount;
+    provider = batch.provider;
+
+    if (batch.status === 'skipped') {
+      status = 'skipped';
+      skipped = batch.skipped;
+      break;
+    }
+    // A short batch means the absent set is exhausted; a batch that made no progress
+    // (defensive) also stops the loop so it can never spin.
+    if (batch.eligibleCount < INDEX_ALL_BATCH_SIZE || batch.indexedCount === 0) {
+      break;
+    }
+  }
+
+  return {
+    batches,
+    handle: workspace.handle,
+    indexedCount,
+    ...(provider === undefined ? {} : { provider }),
+    ...(skipped === undefined ? {} : { skipped }),
+    status,
+    workspaceId: workspace.id,
+  };
+}
+
+function renderIndexAll(result: IndexAllResult, options: RenderOptions): string {
+  const header = recordBlock(
+    'Embedding Index — all workspaces',
+    [
+      { label: 'workspaces', value: String(result.workspaceCount) },
+      { label: 'indexed', value: String(result.totalIndexed) },
+    ],
+    options,
+  );
+  const blocks = result.workspaces.map((summary) =>
+    recordBlock(
+      `workspace ${summary.handle}`,
+      [
+        { label: 'workspace id', value: summary.workspaceId },
+        { label: 'status', value: summary.status },
+        { label: 'indexed', value: String(summary.indexedCount) },
+        { label: 'batches', value: String(summary.batches) },
+        ...(summary.status === 'skipped'
+          ? [{ label: 'skip reason', value: summary.skipped?.reason ?? 'unknown' }]
+          : []),
+      ],
+      options,
+    ),
+  );
+  return [header, ...blocks].join('\n');
 }
 
 function renderIndexResult(result: SessionEmbeddingIndexResult, options: RenderOptions): string {

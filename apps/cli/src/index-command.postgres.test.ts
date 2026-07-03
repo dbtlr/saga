@@ -150,6 +150,59 @@ describePostgres('index CLI postgres integration', () => {
     expect(recallOutput).toContain('lexical 0');
   });
 
+  test('--all fills every workspace to completion from the DB without a cwd binding', async () => {
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
+    // A second, independently-bound workspace with its own segment, so --all must cover more
+    // than the workspace bound to any single cwd.
+    const secondRoot = mkdtempSync(join(tmpdir(), 'saga-index-cli-2-'));
+    await initProject({ cwd: secondRoot, handle: 'Index CLI Two' });
+    const secondInput = join(secondRoot, 'index-session.jsonl');
+    writeFileSync(
+      secondInput,
+      [JSON.stringify({ text: 'gamma distinctive marker content', type: 'user' }), ''].join('\n'),
+    );
+    await runSessionsCommand(
+      ['import', secondInput, '--harness', 'codex', '--harness-session-id', 'index-cli-session-2'],
+      renderOptions,
+      { cwd: secondRoot },
+    );
+
+    // Run --all from a cwd with no binding, proving enumeration is DB-driven, not cwd-bound.
+    const noBindingCwd = mkdtempSync(join(tmpdir(), 'saga-index-cli-nobinding-'));
+    const output = await runIndexCommand(
+      ['--all'],
+      { ...renderOptions, format: 'json' },
+      {
+        cwd: noBindingCwd,
+        embeddingGenerator: fakeGenerator(),
+      },
+    );
+    const result = JSON.parse(output) as {
+      totalIndexed: number;
+      workspaceCount: number;
+      workspaces: { handle: string; indexedCount: number; status: string }[];
+    };
+
+    // Every workspace enumerated and completed; the brand-new second workspace was filled.
+    expect(result.workspaceCount).toBeGreaterThanOrEqual(2);
+    expect(result.workspaces.every((workspace) => workspace.status === 'completed')).toBe(true);
+    expect(result.totalIndexed).toBeGreaterThanOrEqual(1);
+
+    // Fill-to-completion across every workspace: an immediate second --all indexes nothing.
+    const secondOutput = await runIndexCommand(
+      ['--all'],
+      { ...renderOptions, format: 'json' },
+      {
+        cwd: noBindingCwd,
+        embeddingGenerator: fakeGenerator(),
+      },
+    );
+    const secondResult = JSON.parse(secondOutput) as { totalIndexed: number };
+    expect(secondResult.totalIndexed).toBe(0);
+  });
+
   test('renders a skipped result with reason and guidance', async () => {
     if (projectRoot === undefined) {
       throw new Error('project root was not initialized');
