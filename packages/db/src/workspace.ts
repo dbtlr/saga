@@ -1,8 +1,14 @@
 import { Data, Effect } from 'effect';
 
-import type { DatabaseError, DatabaseService } from './database.js';
+import { DatabaseError } from './database.js';
+import type { DatabaseService } from './database.js';
 import { sourceBindings, workspaceProfiles, workspaces } from './schema.js';
 import type { SourceBinding, Workspace } from './schema.js';
+
+export type WorkspaceSummary = {
+  handle: string;
+  id: string;
+};
 
 export type RegisterWorkspaceInput = {
   displayName: string | undefined;
@@ -137,6 +143,25 @@ export function registerSourceBinding(
       cause instanceof WorkspaceRegistrationError
         ? cause
         : new WorkspaceRegistrationError({ message: errorMessage(cause) }),
+  });
+}
+
+// Every Workspace known to this Saga service, ordered by handle. This is the enumeration
+// source for `saga index --all` — a central/cron indexer has no bound cwd, so it fills
+// every Workspace the service knows rather than one resolved from a project binding.
+export function listWorkspaces(
+  service: DatabaseService,
+): Effect.Effect<readonly WorkspaceSummary[], DatabaseError> {
+  return Effect.tryPromise({
+    try: async () =>
+      service.db
+        .select({ handle: workspaces.handle, id: workspaces.id })
+        .from(workspaces)
+        .orderBy(workspaces.handle),
+    catch: (cause) =>
+      cause instanceof DatabaseError
+        ? cause
+        : new DatabaseError({ message: errorMessage(cause), cause }),
   });
 }
 

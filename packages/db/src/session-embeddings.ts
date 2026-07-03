@@ -239,59 +239,100 @@ export function indexSessionSegmentEmbeddings(
   });
 }
 
+// OpenAI's /v1/embeddings accepts an array of inputs, but a single request is bounded (array
+// length and total tokens). Sending a whole index batch as one request stalls or fails on large
+// batches — the reason a naive fill-to-completion over big Workspaces hangs. Split each batch into
+// sub-requests bounded by input count and total characters (a cheap token proxy) so any batch
+// size is safe; the caps sit comfortably inside a request size that indexes reliably in practice.
+const MAX_EMBEDDING_REQUEST_INPUTS = 256;
+const MAX_EMBEDDING_REQUEST_CHARS = 400_000;
+
+function chunkEmbeddingInputs<T extends { text: string }>(inputs: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  let current: T[] = [];
+  let chars = 0;
+  for (const input of inputs) {
+    if (
+      current.length > 0 &&
+      (current.length >= MAX_EMBEDDING_REQUEST_INPUTS ||
+        chars + input.text.length > MAX_EMBEDDING_REQUEST_CHARS)
+    ) {
+      chunks.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(input);
+    chars += input.text.length;
+  }
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
 export function createOpenAiSessionEmbeddingGenerator(
   options: OpenAiSessionEmbeddingGeneratorOptions,
 ): SessionEmbeddingGenerator {
   const provider = options.provider ?? DEFAULT_OPENAI_EMBEDDING_PROVIDER;
   const fetchImpl = options.fetch ?? fetch;
+
+  async function embedChunk(
+    chunk: readonly { segmentId: string; text: string }[],
+  ): Promise<{ embedding: readonly number[]; segmentId: string }[]> {
+    const response = await fetchImpl(OPENAI_EMBEDDINGS_URL, {
+      body: JSON.stringify({
+        dimensions: provider.dimensions,
+        input: chunk.map((input) => input.text),
+        model: provider.model,
+      }),
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new SessionEmbeddingIndexError({
+        message: openAiHttpFailureMessage(response.status),
+      });
+    }
+    const body = await readOpenAiEmbeddingResponseBody(response);
+    const entries = parseOpenAiEmbeddingResponse(body);
+    if (entries.length !== chunk.length) {
+      throw new SessionEmbeddingIndexError({
+        message: `OpenAI returned ${String(entries.length)} embeddings for ${String(chunk.length)} inputs`,
+      });
+    }
+    const embeddingsByInputIndex = new Map<number, number[]>();
+    for (const entry of entries) {
+      if (entry.index >= chunk.length) {
+        throw new SessionEmbeddingIndexError({
+          message: `OpenAI returned embedding for out-of-range input index ${String(entry.index)}`,
+        });
+      }
+      if (embeddingsByInputIndex.has(entry.index)) {
+        throw new SessionEmbeddingIndexError({
+          message: `OpenAI returned duplicate embedding for input index ${String(entry.index)}`,
+        });
+      }
+      embeddingsByInputIndex.set(entry.index, entry.embedding);
+    }
+    return chunk.map((input, index) => ({
+      embedding: requiredEmbeddingForInputIndex(embeddingsByInputIndex, index),
+      segmentId: input.segmentId,
+    }));
+  }
+
   return {
     provider,
     embedSegments: async (inputs) => {
-      if (inputs.length === 0) {
-        return [];
+      const outputs: { embedding: readonly number[]; segmentId: string }[] = [];
+      for (const chunk of chunkEmbeddingInputs(inputs)) {
+        // Sequential: bounded, predictable load for a background job, and no partial-batch
+        // interleaving to reason about.
+        outputs.push(...(await embedChunk(chunk)));
       }
-      const response = await fetchImpl(OPENAI_EMBEDDINGS_URL, {
-        body: JSON.stringify({
-          dimensions: provider.dimensions,
-          input: inputs.map((input) => input.text),
-          model: provider.model,
-        }),
-        headers: {
-          authorization: `Bearer ${options.apiKey}`,
-          'content-type': 'application/json',
-        },
-        method: 'POST',
-      });
-      if (!response.ok) {
-        throw new SessionEmbeddingIndexError({
-          message: openAiHttpFailureMessage(response.status),
-        });
-      }
-      const body = await readOpenAiEmbeddingResponseBody(response);
-      const entries = parseOpenAiEmbeddingResponse(body);
-      if (entries.length !== inputs.length) {
-        throw new SessionEmbeddingIndexError({
-          message: `OpenAI returned ${String(entries.length)} embeddings for ${String(inputs.length)} inputs`,
-        });
-      }
-      const embeddingsByInputIndex = new Map<number, number[]>();
-      for (const entry of entries) {
-        if (entry.index >= inputs.length) {
-          throw new SessionEmbeddingIndexError({
-            message: `OpenAI returned embedding for out-of-range input index ${String(entry.index)}`,
-          });
-        }
-        if (embeddingsByInputIndex.has(entry.index)) {
-          throw new SessionEmbeddingIndexError({
-            message: `OpenAI returned duplicate embedding for input index ${String(entry.index)}`,
-          });
-        }
-        embeddingsByInputIndex.set(entry.index, entry.embedding);
-      }
-      return inputs.map((input, index) => ({
-        embedding: requiredEmbeddingForInputIndex(embeddingsByInputIndex, index),
-        segmentId: input.segmentId,
-      }));
+      return outputs;
     },
   };
 }
