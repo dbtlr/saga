@@ -115,3 +115,20 @@ are allowed, this decides _which_ key is used — with the following precedence,
 
 `saga doctor` reports the active credential source on the `embeddings` line. A present-but-broken
 tier (empty key file, blank installation key) is skipped so a lower tier can still supply a key.
+
+## Background Indexing
+
+`saga index` embeds session Segments so recall can use the vector path. Indexing is absence-based
+(ADR-0039): each run embeds only Segments that lack a current embedding, so repeated runs advance
+to full coverage rather than redoing work, and cost scales with new activity, not corpus size.
+
+For a central/scheduled job, `saga index --all` enumerates every Workspace from the database (no
+cwd binding required) and fills each to completion:
+
+```sh
+saga index --all
+```
+
+It is idempotent and safe to overlap, and per-Workspace remote embedding stays governed by the
+ADR-0032 installation policy (a disabled Workspace is reported as skipped, not failed). Run it on a
+timer (cron, launchd, systemd) to keep recall current as capture accumulates.
