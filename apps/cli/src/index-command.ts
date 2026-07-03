@@ -100,17 +100,21 @@ export async function runIndexCommand(
   );
 }
 
+type WorkspaceFillStatus = SessionEmbeddingIndexResult['status'] | 'failed';
+
 type WorkspaceFillSummary = {
   batches: number;
+  error?: string | undefined;
   handle: string;
   indexedCount: number;
   provider?: SessionEmbeddingIndexResult['provider'] | undefined;
   skipped?: SessionEmbeddingIndexResult['skipped'] | undefined;
-  status: SessionEmbeddingIndexResult['status'];
+  status: WorkspaceFillStatus;
   workspaceId: string;
 };
 
 type IndexAllResult = {
+  failedCount: number;
   totalIndexed: number;
   workspaceCount: number;
   workspaces: WorkspaceFillSummary[];
@@ -119,7 +123,9 @@ type IndexAllResult = {
 // `saga index --all`: enumerate every Workspace the service knows (from the DB, not a cwd
 // binding — a cron has no bound project) and fill each to completion. Idempotent and safe to
 // overlap by ADR-0039 (each batch embeds only absent Segments); ADR-0032 policy gating still
-// applies per Workspace, surfaced as a skipped status rather than a failure.
+// applies per Workspace, surfaced as a skipped status. Each Workspace is isolated: a failure
+// (e.g. a transient OpenAI 429 or a DB error) is recorded on that Workspace and the run
+// continues to the rest, so one bad Workspace can't starve the others — a cron re-run retries it.
 async function runIndexAll(
   flags: Record<string, string>,
   options: RenderOptions,
@@ -133,14 +139,26 @@ async function runIndexAll(
     for (const workspace of workspaces) {
       // Sequential on purpose: one shared connection, and bounded, predictable load for a
       // background job rather than a burst across every Workspace at once.
-      results.push(
-        await fillWorkspaceEmbeddings(service, workspace, dependencies.embeddingGenerator),
-      );
+      try {
+        results.push(
+          await fillWorkspaceEmbeddings(service, workspace, dependencies.embeddingGenerator),
+        );
+      } catch (error) {
+        results.push({
+          batches: 0,
+          error: error instanceof Error ? error.message : String(error),
+          handle: workspace.handle,
+          indexedCount: 0,
+          status: 'failed',
+          workspaceId: workspace.id,
+        });
+      }
     }
     return results;
   });
 
   const result: IndexAllResult = {
+    failedCount: summaries.filter((summary) => summary.status === 'failed').length,
     totalIndexed: summaries.reduce((sum, summary) => sum + summary.indexedCount, 0),
     workspaceCount: summaries.length,
     workspaces: summaries,
@@ -188,9 +206,11 @@ async function fillWorkspaceEmbeddings(
       skipped = batch.skipped;
       break;
     }
-    // A short batch means the absent set is exhausted; a batch that made no progress
-    // (defensive) also stops the loop so it can never spin.
-    if (batch.eligibleCount < INDEX_ALL_BATCH_SIZE || batch.indexedCount === 0) {
+    // Stop when a completed batch embedded nothing — the absent set is exhausted. Keyed on
+    // indexedCount (not eligibleCount vs the batch size) so it stays correct no matter how
+    // the batch size relates to the indexer's own MAX_LIMIT clamp: a completed batch embeds
+    // every eligible row (anti-join → all pending), so indexedCount 0 ⇔ nothing left.
+    if (batch.indexedCount === 0) {
       break;
     }
   }
@@ -212,6 +232,7 @@ function renderIndexAll(result: IndexAllResult, options: RenderOptions): string 
     [
       { label: 'workspaces', value: String(result.workspaceCount) },
       { label: 'indexed', value: String(result.totalIndexed) },
+      { label: 'failed', value: String(result.failedCount) },
     ],
     options,
   );
@@ -225,6 +246,9 @@ function renderIndexAll(result: IndexAllResult, options: RenderOptions): string 
         { label: 'batches', value: String(summary.batches) },
         ...(summary.status === 'skipped'
           ? [{ label: 'skip reason', value: summary.skipped?.reason ?? 'unknown' }]
+          : []),
+        ...(summary.status === 'failed'
+          ? [{ label: 'error', value: summary.error ?? 'unknown' }]
           : []),
       ],
       options,

@@ -203,6 +203,71 @@ describePostgres('index CLI postgres integration', () => {
     expect(secondResult.totalIndexed).toBe(0);
   });
 
+  test('--all isolates a failing workspace and still completes the others', async () => {
+    if (projectRoot === undefined) {
+      throw new Error('project root was not initialized');
+    }
+    // One workspace whose segment triggers a generator failure (a transient OpenAI error), and
+    // one healthy workspace. --all must record the failure and still process the rest.
+    const failRoot = mkdtempSync(join(tmpdir(), 'saga-index-cli-fail-'));
+    await initProject({ cwd: failRoot, handle: 'Index CLI Fail' });
+    const failInput = join(failRoot, 'index-session.jsonl');
+    writeFileSync(
+      failInput,
+      [JSON.stringify({ text: 'POISON segment content', type: 'user' }), ''].join('\n'),
+    );
+    await runSessionsCommand(
+      ['import', failInput, '--harness', 'codex', '--harness-session-id', 'index-cli-fail'],
+      renderOptions,
+      { cwd: failRoot },
+    );
+    const okRoot = mkdtempSync(join(tmpdir(), 'saga-index-cli-ok-'));
+    await initProject({ cwd: okRoot, handle: 'Index CLI Ok' });
+    const okInput = join(okRoot, 'index-session.jsonl');
+    writeFileSync(
+      okInput,
+      [JSON.stringify({ text: 'healthy segment content', type: 'user' }), ''].join('\n'),
+    );
+    await runSessionsCommand(
+      ['import', okInput, '--harness', 'codex', '--harness-session-id', 'index-cli-ok'],
+      renderOptions,
+      { cwd: okRoot },
+    );
+
+    const throwingGenerator: SessionEmbeddingGenerator = {
+      embedSegments: async (inputs) => {
+        if (inputs.some((input) => input.text.includes('POISON'))) {
+          throw new Error('simulated OpenAI 429');
+        }
+        return inputs.map((input) => ({
+          embedding: oneHotVector(axisForText(input.text)),
+          segmentId: input.segmentId,
+        }));
+      },
+      provider: DEFAULT_OPENAI_EMBEDDING_PROVIDER,
+    };
+
+    const output = await runIndexCommand(
+      ['--all'],
+      { ...renderOptions, format: 'json' },
+      {
+        cwd: mkdtempSync(join(tmpdir(), 'saga-index-cli-iso-')),
+        embeddingGenerator: throwingGenerator,
+      },
+    );
+    const result = JSON.parse(output) as {
+      failedCount: number;
+      workspaces: { error?: string; handle: string; indexedCount: number; status: string }[];
+    };
+
+    // The failing workspace is recorded, not thrown — and the run still reached the others.
+    expect(result.failedCount).toBe(1);
+    const failed = result.workspaces.find((workspace) => workspace.status === 'failed');
+    expect(failed?.error).toContain('simulated OpenAI 429');
+    // Other workspaces still completed in the same run (isolation did not abort it).
+    expect(result.workspaces.some((workspace) => workspace.status === 'completed')).toBe(true);
+  });
+
   test('renders a skipped result with reason and guidance', async () => {
     if (projectRoot === undefined) {
       throw new Error('project root was not initialized');
