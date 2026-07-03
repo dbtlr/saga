@@ -5243,6 +5243,475 @@ describePostgres('raw session import', () => {
     ]);
   });
 
+  test('derives a Claude continuation relationship from an explicit prior-session anchor', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation');
+    const priorRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'prior-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'General discussion and planning.' },
+        uuid: 'prior-user',
+        timestamp: '2026-07-02T17:45:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-prior-session',
+      },
+      {
+        parentUuid: 'prior-user',
+        isSidechain: false,
+        message: {
+          model: 'claude-sonnet-4-5',
+          id: 'prior-msg',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Shaped the plan.' }],
+        },
+        type: 'assistant',
+        uuid: 'prior-assistant',
+        timestamp: '2026-07-02T17:45:01.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-prior-session',
+      },
+    ]);
+    // The continuing session carries the current camelCase `sessionId` plus a
+    // constant snake_case `session_id` anchor naming the prior session.
+    const continuingRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Install new skills and hooks.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-session',
+        session_id: 'claude-prior-session',
+      },
+      {
+        parentUuid: 'cont-user',
+        isSidechain: false,
+        message: {
+          model: 'claude-sonnet-4-5',
+          id: 'cont-msg',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Installed the skills.' }],
+        },
+        type: 'assistant',
+        uuid: 'cont-assistant',
+        timestamp: '2026-07-03T03:49:01.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-session',
+        session_id: 'claude-prior-session',
+      },
+    ]);
+
+    const prior = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T17:45:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-prior-session',
+        host: { id: 'host-claude-continuation' },
+        locator: '/tmp/claude-prior-session.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-session',
+        host: { id: 'host-claude-continuation' },
+        locator: '/tmp/claude-continuing-session.jsonl',
+        rawContent: continuingRawContent,
+        workspaceId,
+      }),
+    );
+
+    expect(prior.session.id).not.toBe(continuing.session.id);
+    expect(continuing.session.metadata).toMatchObject({
+      continuationParentHarnessSessionId: 'claude-prior-session',
+    });
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: 'explicit',
+      relationshipType: 'continuation',
+      sourceSessionId: prior.session.id,
+      targetSessionId: continuing.session.id,
+    });
+    expect(relationships[0]?.evidence).toMatchObject({
+      continuationParentHarnessSessionId: 'claude-prior-session',
+      continuingHarnessSessionId: 'claude-continuing-session',
+      derivation: 'session-relationship-import-v1',
+    });
+
+    // Reimport is idempotent: no duplicate/stale rows.
+    const repeated = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:03.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-session',
+        host: { id: 'host-claude-continuation' },
+        locator: '/tmp/claude-continuing-session.jsonl',
+        rawContent: continuingRawContent,
+        workspaceId,
+      }),
+    );
+    expect(repeated.operation).toBe('unchanged');
+    const repeatedRelationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(repeatedRelationships.map((relationship) => relationship.id)).toStrictEqual([
+      relationships[0]?.id,
+    ]);
+  });
+
+  test('derives a Claude continuation relationship when the continuing session imports first', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation-reverse');
+    const priorRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'prior-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Prior work.' },
+        uuid: 'prior-user',
+        timestamp: '2026-07-02T17:45:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-prior-reverse',
+      },
+    ]);
+    const continuingRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Continuing work.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-reverse',
+        session_id: 'claude-prior-reverse',
+      },
+    ]);
+
+    // Continuing session arrives before its prior is captured.
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-reverse',
+        host: { id: 'host-claude-continuation-reverse' },
+        locator: '/tmp/claude-continuing-reverse.jsonl',
+        rawContent: continuingRawContent,
+        workspaceId,
+      }),
+    );
+    // No prior session captured yet -> leave unlinked.
+    const beforePrior = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(beforePrior).toHaveLength(0);
+
+    const prior = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T17:45:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-prior-reverse',
+        host: { id: 'host-claude-continuation-reverse' },
+        locator: '/tmp/claude-prior-reverse.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      relationshipType: 'continuation',
+      sourceSessionId: prior.session.id,
+      targetSessionId: continuing.session.id,
+    });
+  });
+
+  test('does not derive a Claude continuation from fuzzy adjacency without an anchor', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation-fuzzy');
+    // Two sessions sharing cwd, title-ish content, and close timing, but NO
+    // snake_case session_id anchor: must never be linked.
+    const firstRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'first-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Work on saga.' },
+        uuid: 'first-user',
+        timestamp: '2026-07-03T03:00:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-fuzzy-first',
+      },
+    ]);
+    const secondRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'second-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Work on saga.' },
+        uuid: 'second-user',
+        timestamp: '2026-07-03T03:05:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-fuzzy-second',
+      },
+    ]);
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:00:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-fuzzy-first',
+        host: { id: 'host-claude-fuzzy' },
+        locator: '/tmp/claude-fuzzy-first.jsonl',
+        rawContent: firstRawContent,
+        workspaceId,
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:05:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-fuzzy-second',
+        host: { id: 'host-claude-fuzzy' },
+        locator: '/tmp/claude-fuzzy-second.jsonl',
+        rawContent: secondRawContent,
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(0);
+  });
+
+  test('does not derive a Claude continuation when the prior session is never captured', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation-orphan');
+    const continuingRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Continues an uncaptured session.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-orphan-continuing',
+        session_id: 'claude-uncaptured-prior',
+      },
+    ]);
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-orphan-continuing',
+        host: { id: 'host-claude-orphan' },
+        locator: '/tmp/claude-orphan-continuing.jsonl',
+        rawContent: continuingRawContent,
+        workspaceId,
+      }),
+    );
+    // The anchor is surfaced on metadata, but with no captured prior there is
+    // nothing to link -> leave unlinked and rely on recall.
+    expect(continuing.session.metadata).toMatchObject({
+      continuationParentHarnessSessionId: 'claude-uncaptured-prior',
+    });
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(0);
+  });
+
+  test('derives a Codex continuation from forked_from_id on a non-subagent thread', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('codex-continuation');
+    const priorRawContent = codexTranscript([
+      {
+        timestamp: '2026-07-02T18:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: 'codex-prior-thread', thread_source: 'user' },
+      },
+      {
+        timestamp: '2026-07-02T18:00:01.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Prior codex work.' },
+      },
+    ]);
+    const continuingRawContent = codexTranscript([
+      {
+        timestamp: '2026-07-03T18:00:00.000Z',
+        type: 'session_meta',
+        payload: {
+          id: 'codex-continuing-thread',
+          thread_source: 'user',
+          forked_from_id: 'codex-prior-thread',
+        },
+      },
+      {
+        timestamp: '2026-07-03T18:00:01.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Continuing codex work.' },
+      },
+    ]);
+
+    const prior = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T18:00:02.000Z',
+        contentType: 'jsonl',
+        harness: 'codex',
+        harnessSessionId: 'codex-prior-thread',
+        host: { id: 'host-codex-continuation' },
+        locator: '/tmp/rollout-codex-prior.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T18:00:02.000Z',
+        contentType: 'jsonl',
+        harness: 'codex',
+        harnessSessionId: 'codex-continuing-thread',
+        host: { id: 'host-codex-continuation' },
+        locator: '/tmp/rollout-codex-continuing.jsonl',
+        rawContent: continuingRawContent,
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      confidence: 'explicit',
+      relationshipType: 'continuation',
+      sourceSessionId: prior.session.id,
+      targetSessionId: continuing.session.id,
+    });
+  });
+
+  test('does not treat a Codex subagent fork as a continuation', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('codex-fork-subagent');
+    const priorRawContent = codexTranscript([
+      {
+        timestamp: '2026-07-02T18:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: 'codex-parent-thread', thread_source: 'user' },
+      },
+    ]);
+    const subagentRawContent = codexTranscript([
+      {
+        timestamp: '2026-07-03T18:00:00.000Z',
+        type: 'session_meta',
+        payload: {
+          id: 'codex-subagent-thread',
+          thread_source: 'subagent',
+          forked_from_id: 'codex-parent-thread',
+          parent_thread_id: 'codex-parent-thread',
+        },
+      },
+    ]);
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T18:00:02.000Z',
+        contentType: 'jsonl',
+        harness: 'codex',
+        harnessSessionId: 'codex-parent-thread',
+        host: { id: 'host-codex-fork' },
+        locator: '/tmp/rollout-codex-parent.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T18:00:02.000Z',
+        contentType: 'jsonl',
+        harness: 'codex',
+        harnessSessionId: 'codex-subagent-thread',
+        host: { id: 'host-codex-fork' },
+        locator: '/tmp/rollout-codex-subagent.jsonl',
+        rawContent: subagentRawContent,
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    // A subagent fork is child lineage, never a continuation.
+    expect(
+      relationships.filter((relationship) => relationship.relationshipType === 'continuation'),
+    ).toHaveLength(0);
+  });
+
   test('does not derive subagent relationships across workspaces', async () => {
     if (service === undefined) {
       throw new Error('database service was not initialized');
