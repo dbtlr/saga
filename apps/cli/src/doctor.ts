@@ -10,7 +10,7 @@ import {
   loadRuntimeConfig,
 } from '@saga/runtime';
 import type {
-  CodexAuthResolutionOptions,
+  EmbeddingCredentialResolutionOptions,
   EmbeddingPolicyResolutionOptions,
   EmbeddingWorkflowBoundary,
   LoadRuntimeConfigOptions,
@@ -53,7 +53,7 @@ export async function runDoctor(_args: readonly string[], options: RenderOptions
 export async function doctorProject(
   input: {
     cwd?: string;
-    embeddingAuth?: CodexAuthResolutionOptions;
+    embeddingAuth?: EmbeddingCredentialResolutionOptions;
     embeddingPolicy?: EmbeddingPolicyResolutionOptions;
     runtimeConfig?: Omit<LoadRuntimeConfigOptions, 'cwd'>;
     verifyHarnessActivation?: HarnessActivationVerifier;
@@ -384,7 +384,7 @@ async function inspectService(): Promise<{
 }
 
 function checkEmbeddings(
-  authOptions?: CodexAuthResolutionOptions,
+  authOptions?: EmbeddingCredentialResolutionOptions,
   policyOptions?: EmbeddingPolicyResolutionOptions,
 ): DoctorCheck {
   const workflow = inspectEmbeddingWorkflow(authOptions, policyOptions);

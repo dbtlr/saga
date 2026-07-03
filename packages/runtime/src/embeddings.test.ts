@@ -4,24 +4,31 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { CodexAuthStatus } from './codex-auth.js';
+import type { EmbeddingCredential } from './embedding-credential.js';
 import type { EmbeddingPolicy } from './embedding-policy.js';
 import { composeEmbeddingWorkflow, inspectEmbeddingWorkflow } from './embeddings.js';
 
-const availableAuth: CodexAuthStatus = {
-  authFile: '/tmp/auth.json',
-  checkedFiles: [],
-  detail: 'cached OPENAI_API_KEY found in CODEX_HOME/auth.json',
+const availableCredential: EmbeddingCredential = {
+  apiKey: 'sk-secret',
+  detail: 'cached OPENAI_API_KEY present in CODEX_HOME/auth.json',
   displayPath: 'CODEX_HOME/auth.json',
   guidance: 'available',
   mode: 'api-key',
-  openaiApiKey: 'sk-secret',
-  source: 'codex-home',
+  source: 'codex-auth',
   status: 'available',
 };
 
-const missingAuth: CodexAuthStatus = {
-  checkedFiles: [],
+const environmentCredential: EmbeddingCredential = {
+  apiKey: 'sk-env-secret',
+  detail: 'OPENAI_API_KEY present in the environment',
+  displayPath: 'OPENAI_API_KEY',
+  guidance: 'OpenAI embeddings use the OPENAI_API_KEY configured in the environment.',
+  mode: 'api-key',
+  source: 'environment',
+  status: 'available',
+};
+
+const missingCredential: EmbeddingCredential = {
   detail: 'no Codex auth file found',
   guidance: 'Embedding generation is skipped. Lexical recall remains available.',
   mode: 'missing',
@@ -43,20 +50,39 @@ const disabledPolicy: EmbeddingPolicy = {
 
 describe('composeEmbeddingWorkflow', () => {
   it('policy enabled with available credentials is vector-aware', () => {
-    const workflow = composeEmbeddingWorkflow({ auth: availableAuth, policy: enabledPolicy });
+    const workflow = composeEmbeddingWorkflow({
+      credential: availableCredential,
+      policy: enabledPolicy,
+    });
 
     expect(workflow.mode).toBe('vector-aware');
     expect(workflow.availability).toMatchObject({
       reason: 'openai-api-key-available',
       state: 'available',
     });
+    expect(workflow.availability.credential.source).toBe('codex-auth');
     expect(workflow.lexicalFallback.state).toBe('standby');
     expect(workflow.policy.remoteEmbeddings).toBe('enabled');
     expect(JSON.stringify(workflow)).not.toContain('sk-secret');
   });
 
+  it('reports the credential source for a non-Codex key', () => {
+    const workflow = composeEmbeddingWorkflow({
+      credential: environmentCredential,
+      policy: enabledPolicy,
+    });
+
+    expect(workflow.mode).toBe('vector-aware');
+    expect(workflow.availability.credential.source).toBe('environment');
+    expect(workflow.availability.detail).toContain('OPENAI_API_KEY');
+    expect(JSON.stringify(workflow)).not.toContain('sk-env-secret');
+  });
+
   it('policy enabled with missing credentials degrades to lexical fallback', () => {
-    const workflow = composeEmbeddingWorkflow({ auth: missingAuth, policy: enabledPolicy });
+    const workflow = composeEmbeddingWorkflow({
+      credential: missingCredential,
+      policy: enabledPolicy,
+    });
 
     expect(workflow.mode).toBe('lexical-fallback');
     expect(workflow.availability).toMatchObject({
@@ -67,7 +93,10 @@ describe('composeEmbeddingWorkflow', () => {
   });
 
   it('policy disabled is lexical-only by policy even when credentials are available', () => {
-    const workflow = composeEmbeddingWorkflow({ auth: availableAuth, policy: disabledPolicy });
+    const workflow = composeEmbeddingWorkflow({
+      credential: availableCredential,
+      policy: disabledPolicy,
+    });
 
     expect(workflow.mode).toBe('lexical-only-by-policy');
     expect(workflow.availability).toMatchObject({
@@ -80,7 +109,10 @@ describe('composeEmbeddingWorkflow', () => {
   });
 
   it('policy disabled takes precedence over missing credentials', () => {
-    const workflow = composeEmbeddingWorkflow({ auth: missingAuth, policy: disabledPolicy });
+    const workflow = composeEmbeddingWorkflow({
+      credential: missingCredential,
+      policy: disabledPolicy,
+    });
 
     expect(workflow.mode).toBe('lexical-only-by-policy');
     expect(workflow.availability.reason).toBe('disabled-by-policy');
