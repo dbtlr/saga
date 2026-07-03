@@ -351,6 +351,13 @@ async function selectEligibleSegments(
       and (${input.activityIntervalId ?? null}::uuid is null or ss.activity_interval_id = ${input.activityIntervalId ?? null}::uuid)
       and (${input.rawSessionRecordId ?? null}::uuid is null or ss.raw_session_record_id = ${input.rawSessionRecordId ?? null}::uuid)
       and btrim(ss.search_text) <> ''
+      -- ADR-0039: the indexer fills absence. Return only Segments with no current
+      -- embedding for the active provider (anti-join on the segment+provider unique
+      -- index), so repeated runs advance instead of re-selecting the first N, and a
+      -- provider change surfaces every Segment as absent. In-place staleness is not
+      -- re-embedded here; content mutation/redaction invalidates the row at write time
+      -- (SGA-156/157), which turns it back into absence for the next pass.
+      and e.id is null
     order by
       s.id asc,
       ss.activity_interval_id asc,
