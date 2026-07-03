@@ -784,22 +784,15 @@ async function deriveSessionRelationships(
       continue;
     }
     // This session may be the parent of an already-imported child peer.
-    const parentCandidates = relationshipParentCandidates(peerSession);
-    if (
-      parentCandidates.some(
-        (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
-      )
-    ) {
+    const parentCandidate = relationshipParentCandidates(peerSession).find(
+      (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
+    );
+    if (parentCandidate !== undefined) {
       await insertOrRefreshChildRelationship(tx, {
         childSession: peerSession,
         input: input.input,
         parentSession: input.session,
-        relationshipEvidence: relationshipEvidenceForCandidate(
-          parentCandidates.find(
-            (candidate) => candidate.parentHarnessSessionId === input.session.harnessSessionId,
-          ),
-          peerSession,
-        ),
+        relationshipEvidence: relationshipEvidenceForCandidate(parentCandidate, peerSession),
       });
     }
     // This session may be the prior of an already-imported continuing peer.
@@ -827,26 +820,30 @@ async function deriveContinuationRelationshipsForSession(
   const priorHarnessSessionId = relationshipContinuationParentHarnessSessionId(
     input.continuingSession,
   );
-  const desiredPriorSessionIds: string[] = [];
-  if (priorHarnessSessionId !== undefined) {
-    const priorSession = await findParentSessionForRelationship(tx, {
-      childSession: input.continuingSession,
-      input: input.input,
-      parentHarnessSessionId: priorHarnessSessionId,
-    });
-    if (priorSession !== undefined) {
-      await insertOrRefreshContinuationRelationship(tx, {
-        continuingSession: input.continuingSession,
-        input: input.input,
-        priorSession,
-      });
-      desiredPriorSessionIds.push(priorSession.id);
-    }
+  if (priorHarnessSessionId === undefined) {
+    // Continuation evidence is explicit and append-only durable. A snapshot
+    // that no longer carries the anchor is not evidence the prior link was
+    // withdrawn, so never prune on absence — only a fresh anchor reconciles.
+    return;
   }
-
+  const priorSession = await findParentSessionForRelationship(tx, {
+    childSession: input.continuingSession,
+    input: input.input,
+    parentHarnessSessionId: priorHarnessSessionId,
+  });
+  if (priorSession === undefined) {
+    return;
+  }
+  await insertOrRefreshContinuationRelationship(tx, {
+    continuingSession: input.continuingSession,
+    input: input.input,
+    priorSession,
+  });
+  // Reconcile: a new explicit anchor supersedes any prior continuation edge
+  // for this continuing session.
   await deleteStaleContinuationRelationships(tx, {
     continuingSession: input.continuingSession,
-    desiredPriorSessionIds,
+    desiredPriorSessionIds: [priorSession.id],
     input: input.input,
   });
 }
@@ -859,16 +856,56 @@ async function insertOrRefreshContinuationRelationship(
     priorSession: Session;
   },
 ): Promise<void> {
-  const evidence = continuationRelationshipEvidence(input.priorSession, input.continuingSession);
+  await insertOrRefreshDerivedRelationship(tx, {
+    evidence: continuationRelationshipEvidence(input.priorSession, input.continuingSession),
+    input: input.input,
+    relationshipType: 'continuation',
+    sourceSession: input.priorSession,
+    sourceTurnId: null,
+    targetSession: input.continuingSession,
+  });
+}
+
+async function deleteStaleContinuationRelationships(
+  tx: DatabaseService['db'],
+  input: {
+    continuingSession: Session;
+    desiredPriorSessionIds: string[];
+    input: NormalizedRawSessionImportInput;
+  },
+): Promise<void> {
+  await deleteStaleDerivedRelationships(tx, {
+    desiredSourceSessionIds: input.desiredPriorSessionIds,
+    input: input.input,
+    relationshipType: 'continuation',
+    targetSessionId: input.continuingSession.id,
+  });
+}
+
+// Shared upsert for import-derived relationship rows. `child` rows carry a
+// resolved sourceTurnId; `continuation` rows do not (sourceTurnId null). Only
+// import-derived rows are refreshed — a manually-authored row of the same key
+// is never overwritten.
+async function insertOrRefreshDerivedRelationship(
+  tx: DatabaseService['db'],
+  input: {
+    evidence: Record<string, unknown>;
+    input: NormalizedRawSessionImportInput;
+    relationshipType: 'child' | 'continuation';
+    sourceSession: Session;
+    sourceTurnId: string | null;
+    targetSession: Session;
+  },
+): Promise<void> {
   const [existingRelationship] = await tx
     .select()
     .from(sessionRelationships)
     .where(
       and(
         eq(sessionRelationships.workspaceId, input.input.workspaceId),
-        eq(sessionRelationships.sourceSessionId, input.priorSession.id),
-        eq(sessionRelationships.targetSessionId, input.continuingSession.id),
-        eq(sessionRelationships.relationshipType, 'continuation'),
+        eq(sessionRelationships.sourceSessionId, input.sourceSession.id),
+        eq(sessionRelationships.targetSessionId, input.targetSession.id),
+        eq(sessionRelationships.relationshipType, input.relationshipType),
       ),
     )
     .limit(1);
@@ -878,11 +915,11 @@ async function insertOrRefreshContinuationRelationship(
       .insert(sessionRelationships)
       .values({
         confidence: 'explicit',
-        evidence,
-        relationshipType: 'continuation',
-        sourceSessionId: input.priorSession.id,
-        sourceTurnId: null,
-        targetSessionId: input.continuingSession.id,
+        evidence: input.evidence,
+        relationshipType: input.relationshipType,
+        sourceSessionId: input.sourceSession.id,
+        sourceTurnId: input.sourceTurnId,
+        targetSessionId: input.targetSession.id,
         workspaceId: input.input.workspaceId,
       })
       .onConflictDoNothing({
@@ -896,9 +933,13 @@ async function insertOrRefreshContinuationRelationship(
     return;
   }
 
+  if (!isImportedRelationshipEvidence(existingRelationship.evidence)) {
+    return;
+  }
+
   if (
-    !isImportedRelationshipEvidence(existingRelationship.evidence) ||
-    jsonEqual(existingRelationship.evidence, evidence)
+    existingRelationship.sourceTurnId === input.sourceTurnId &&
+    jsonEqual(existingRelationship.evidence, input.evidence)
   ) {
     return;
   }
@@ -906,24 +947,26 @@ async function insertOrRefreshContinuationRelationship(
   await tx
     .update(sessionRelationships)
     .set({
-      evidence,
+      evidence: input.evidence,
+      sourceTurnId: input.sourceTurnId,
       updatedAt: new Date(),
     })
     .where(eq(sessionRelationships.id, existingRelationship.id));
 }
 
-async function deleteStaleContinuationRelationships(
+async function deleteStaleDerivedRelationships(
   tx: DatabaseService['db'],
   input: {
-    continuingSession: Session;
-    desiredPriorSessionIds: string[];
+    desiredSourceSessionIds: string[];
     input: NormalizedRawSessionImportInput;
+    relationshipType: 'child' | 'continuation';
+    targetSessionId: string;
   },
 ): Promise<void> {
   const baseConditions = [
     eq(sessionRelationships.workspaceId, input.input.workspaceId),
-    eq(sessionRelationships.targetSessionId, input.continuingSession.id),
-    eq(sessionRelationships.relationshipType, 'continuation'),
+    eq(sessionRelationships.targetSessionId, input.targetSessionId),
+    eq(sessionRelationships.relationshipType, input.relationshipType),
     sql`${sessionRelationships.evidence}->>'derivation' = ${SESSION_RELATIONSHIP_IMPORT_DERIVATION}`,
   ];
 
@@ -932,9 +975,9 @@ async function deleteStaleContinuationRelationships(
     .where(
       and(
         ...baseConditions,
-        ...(input.desiredPriorSessionIds.length === 0
+        ...(input.desiredSourceSessionIds.length === 0
           ? []
-          : [notInArray(sessionRelationships.sourceSessionId, input.desiredPriorSessionIds)]),
+          : [notInArray(sessionRelationships.sourceSessionId, input.desiredSourceSessionIds)]),
       ),
     );
 }
@@ -1041,61 +1084,14 @@ async function insertOrRefreshChildRelationship(
       parentSession: input.parentSession,
       relationshipEvidence: input.relationshipEvidence,
     })) ?? null;
-  const [existingRelationship] = await tx
-    .select()
-    .from(sessionRelationships)
-    .where(
-      and(
-        eq(sessionRelationships.workspaceId, input.input.workspaceId),
-        eq(sessionRelationships.sourceSessionId, input.parentSession.id),
-        eq(sessionRelationships.targetSessionId, input.childSession.id),
-        eq(sessionRelationships.relationshipType, 'child'),
-      ),
-    )
-    .limit(1);
-
-  if (existingRelationship === undefined) {
-    await tx
-      .insert(sessionRelationships)
-      .values({
-        confidence: 'explicit',
-        evidence: input.relationshipEvidence,
-        relationshipType: 'child',
-        sourceSessionId: input.parentSession.id,
-        sourceTurnId,
-        targetSessionId: input.childSession.id,
-        workspaceId: input.input.workspaceId,
-      })
-      .onConflictDoNothing({
-        target: [
-          sessionRelationships.workspaceId,
-          sessionRelationships.sourceSessionId,
-          sessionRelationships.targetSessionId,
-          sessionRelationships.relationshipType,
-        ],
-      });
-    return;
-  }
-
-  if (!isImportedRelationshipEvidence(existingRelationship.evidence)) {
-    return;
-  }
-
-  if (
-    existingRelationship.sourceTurnId === sourceTurnId &&
-    jsonEqual(existingRelationship.evidence, input.relationshipEvidence)
-  ) {
-    return;
-  }
-
-  await tx
-    .update(sessionRelationships)
-    .set({
-      evidence: input.relationshipEvidence,
-      sourceTurnId,
-      updatedAt: new Date(),
-    })
-    .where(eq(sessionRelationships.id, existingRelationship.id));
+  await insertOrRefreshDerivedRelationship(tx, {
+    evidence: input.relationshipEvidence,
+    input: input.input,
+    relationshipType: 'child',
+    sourceSession: input.parentSession,
+    sourceTurnId,
+    targetSession: input.childSession,
+  });
 }
 
 async function deleteStaleChildRelationships(
@@ -1106,23 +1102,12 @@ async function deleteStaleChildRelationships(
     input: NormalizedRawSessionImportInput;
   },
 ): Promise<void> {
-  const baseConditions = [
-    eq(sessionRelationships.workspaceId, input.input.workspaceId),
-    eq(sessionRelationships.targetSessionId, input.childSession.id),
-    eq(sessionRelationships.relationshipType, 'child'),
-    sql`${sessionRelationships.evidence}->>'derivation' = ${SESSION_RELATIONSHIP_IMPORT_DERIVATION}`,
-  ];
-
-  await tx
-    .delete(sessionRelationships)
-    .where(
-      and(
-        ...baseConditions,
-        ...(input.desiredParentSessionIds.length === 0
-          ? []
-          : [notInArray(sessionRelationships.sourceSessionId, input.desiredParentSessionIds)]),
-      ),
-    );
+  await deleteStaleDerivedRelationships(tx, {
+    desiredSourceSessionIds: input.desiredParentSessionIds,
+    input: input.input,
+    relationshipType: 'child',
+    targetSessionId: input.childSession.id,
+  });
 }
 
 async function findRelationshipSourceTurnId(

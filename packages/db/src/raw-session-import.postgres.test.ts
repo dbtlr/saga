@@ -5384,6 +5384,130 @@ describePostgres('raw session import', () => {
     ]);
   });
 
+  test('keeps an explicit continuation edge when the continuing session re-imports without the anchor', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation-sticky');
+    const priorRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'prior-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Prior work.' },
+        uuid: 'prior-user',
+        timestamp: '2026-07-02T17:45:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-prior-sticky',
+      },
+    ]);
+    const anchoredRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Continuing work.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-sticky',
+        session_id: 'claude-prior-sticky',
+      },
+    ]);
+    // A later snapshot of the same session that no longer carries the anchor
+    // (e.g. a lifecycle boundary or partial capture). The explicit continuation
+    // evidence was already observed and must not be torn down.
+    const anchorlessRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Continuing work.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-sticky',
+      },
+      {
+        parentUuid: 'cont-user',
+        isSidechain: false,
+        message: {
+          model: 'claude-sonnet-4-5',
+          id: 'cont-msg',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'More work, no anchor field.' }],
+        },
+        type: 'assistant',
+        uuid: 'cont-assistant',
+        timestamp: '2026-07-03T03:50:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-sticky',
+      },
+    ]);
+
+    const prior = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T17:45:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-prior-sticky',
+        host: { id: 'host-claude-sticky' },
+        locator: '/tmp/claude-prior-sticky.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-sticky',
+        host: { id: 'host-claude-sticky' },
+        locator: '/tmp/claude-continuing-sticky.jsonl',
+        rawContent: anchoredRawContent,
+        workspaceId,
+      }),
+    );
+
+    const initial = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(initial).toHaveLength(1);
+
+    await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:50:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-sticky',
+        host: { id: 'host-claude-sticky' },
+        locator: '/tmp/claude-continuing-sticky.jsonl',
+        rawContent: anchorlessRawContent,
+        workspaceId,
+      }),
+    );
+
+    const afterReimport = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(afterReimport).toHaveLength(1);
+    expect(afterReimport[0]).toMatchObject({
+      relationshipType: 'continuation',
+      sourceSessionId: prior.session.id,
+      targetSessionId: continuing.session.id,
+    });
+  });
+
   test('derives a Claude continuation relationship when the continuing session imports first', async () => {
     if (service === undefined) {
       throw new Error('database service was not initialized');
@@ -5448,6 +5572,92 @@ describePostgres('raw session import', () => {
         host: { id: 'host-claude-continuation-reverse' },
         locator: '/tmp/claude-prior-reverse.jsonl',
         rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+
+    const relationships = await service.db
+      .select()
+      .from(sessionRelationships)
+      .where(eq(sessionRelationships.workspaceId, workspaceId));
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]).toMatchObject({
+      relationshipType: 'continuation',
+      sourceSessionId: prior.session.id,
+      targetSessionId: continuing.session.id,
+    });
+  });
+
+  test('derives a Claude continuation despite a self-referential anchor record', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createBoundWorkspace('claude-continuation-selfref');
+    const priorRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'prior-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Prior work.' },
+        uuid: 'prior-user',
+        timestamp: '2026-07-02T17:45:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-prior-selfref',
+      },
+    ]);
+    // The continuing session names its prior on most records, but a boundary
+    // record names the current session itself. The self-reference must not
+    // suppress the real prior anchor.
+    const continuingRawContent = claudeTranscript([
+      {
+        parentUuid: null,
+        isSidechain: false,
+        promptId: 'cont-prompt',
+        type: 'user',
+        message: { role: 'user', content: 'Continuing work.' },
+        uuid: 'cont-user',
+        timestamp: '2026-07-03T03:49:00.000Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-selfref',
+        session_id: 'claude-prior-selfref',
+      },
+      {
+        parentUuid: 'cont-user',
+        isSidechain: false,
+        type: 'system',
+        content: 'boundary',
+        uuid: 'cont-boundary',
+        timestamp: '2026-07-03T03:49:00.500Z',
+        cwd: '/work/saga',
+        sessionId: 'claude-continuing-selfref',
+        session_id: 'claude-continuing-selfref',
+      },
+    ]);
+
+    const prior = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-02T17:45:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-prior-selfref',
+        host: { id: 'host-claude-selfref' },
+        locator: '/tmp/claude-prior-selfref.jsonl',
+        rawContent: priorRawContent,
+        workspaceId,
+      }),
+    );
+    const continuing = await Effect.runPromise(
+      importRawSessionRecord(service, {
+        author: { handle: 'drew' },
+        capturedAt: '2026-07-03T03:49:02.000Z',
+        contentType: 'jsonl',
+        harness: 'claude',
+        harnessSessionId: 'claude-continuing-selfref',
+        host: { id: 'host-claude-selfref' },
+        locator: '/tmp/claude-continuing-selfref.jsonl',
+        rawContent: continuingRawContent,
         workspaceId,
       }),
     );
