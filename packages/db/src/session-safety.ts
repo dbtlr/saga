@@ -323,9 +323,6 @@ export function redactSessionSafety(
                   redactedAt: redactedAt.toISOString(),
                   redactedBy: 'saga session safety',
                 },
-                // ADR-0034: scrub the superseded body so the secret is not recoverable from the
-                // inactive row via direct DB read or raw-body debug access.
-                scrubBody: true,
                 status: 'redacted',
               },
               expectedActiveRawSessionRecordId: activeRecord.raw_record_id,
@@ -337,6 +334,20 @@ export function redactSessionSafety(
             workspaceId,
           }),
         );
+
+        // ADR-0034: scrub the body of every inactive snapshot of this session — not just the record
+        // the import just superseded. A session updated before redaction accrues several inactive
+        // snapshots (snapshotOrdinal 0,1,...), each holding the sensitive bytes; the new active
+        // redacted snapshot keeps its (redacted) body, all superseded rows retain only their tombstone
+        // metadata. Runs after the import so the just-superseded record is already is_active = false.
+        await (tx as DatabaseService['db']).execute(drizzleSql`
+          update raw_session_records
+          set body_text = null, body_json = null
+          where workspace_id = ${workspaceId}
+            and session_id = ${activeRecord.session_id}
+            and is_active = false
+        `);
+
         const redactedRawEvents = await redactAssociatedRawEventsDb(tx as DatabaseService['db'], {
           auditMetadata,
           patterns,

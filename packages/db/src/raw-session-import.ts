@@ -68,10 +68,6 @@ export type RawSessionImportInput = {
           | {
               metadata?: Record<string, unknown> | undefined;
               provenance?: Record<string, unknown> | undefined;
-              // ADR-0034: hard redaction scrubs the superseded snapshot's body_text/body_json so the
-              // sensitive bytes are not recoverable from the inactive row; only tombstone metadata is
-              // retained.
-              scrubBody?: boolean | undefined;
               status?: string | undefined;
             }
           | undefined;
@@ -327,9 +323,6 @@ async function importRawSessionRecordInTransactionUnsafe(
       .update(rawSessionRecords)
       .set({
         isActive: false,
-        // ADR-0034: scrub the superseded body so the sensitive bytes are unrecoverable from the
-        // inactive row (the redacted content lives on the new active snapshot).
-        ...(inactivePrevious?.scrubBody === true ? { bodyText: null, bodyJson: null } : {}),
         metadata:
           inactivePrevious?.metadata === undefined
             ? activeRecord.metadata
