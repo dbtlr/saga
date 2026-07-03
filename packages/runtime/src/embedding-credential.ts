@@ -34,20 +34,29 @@ export type EmbeddingCredentialUnavailable = {
 
 export type EmbeddingCredential = EmbeddingCredentialAvailable | EmbeddingCredentialUnavailable;
 
-// Credential sourcing is orthogonal to the ADR-0032 remote-embeddings policy gate: this
-// only decides *which* OpenAI key to use, never *whether* remote embeddings are allowed.
-// Precedence mirrors resolveDatabaseConfig: explicit env wins, then installation config,
-// then the read-only cached Codex key. A tier that is present-but-broken (empty file,
-// blank key) is skipped rather than failing the whole resolution, so a lower tier can
-// still supply a working key.
+// A tier either supplies a key ('found'), is not configured at all ('absent', skipped
+// quietly), or is configured but broken ('issue'). A present-but-broken tier does not fail
+// the whole resolution — a lower tier can still supply a working key — but its issue is
+// carried forward so that if resolution ultimately degrades to lexical, doctor/recall name
+// the operator's actual misconfiguration instead of masking it behind the Codex message.
+type TierResult =
+  | { status: 'found'; apiKey: string; detail: string; displayPath: string }
+  | { status: 'issue'; issue: string }
+  | { status: 'absent' };
+
+// Resolve the OpenAI embedding key by precedence — explicit env, then installation config,
+// then the read-only cached Codex key — mirroring resolveDatabaseConfig's layered walk. This
+// is orthogonal to the ADR-0032 remote-embeddings policy gate: it decides *which* key to use,
+// never *whether* remote embeddings are allowed.
 export function resolveEmbeddingCredential(
   options: EmbeddingCredentialResolutionOptions = {},
 ): EmbeddingCredential {
   const env = options.env ?? process.env;
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
+  const issues: string[] = [];
 
   const fromEnv = readEnvApiKey(env, readFile);
-  if (fromEnv !== undefined) {
+  if (fromEnv.status === 'found') {
     return {
       apiKey: fromEnv.apiKey,
       detail: fromEnv.detail,
@@ -58,9 +67,12 @@ export function resolveEmbeddingCredential(
       status: 'available',
     };
   }
+  if (fromEnv.status === 'issue') {
+    issues.push(fromEnv.issue);
+  }
 
   const fromInstallation = readInstallationApiKey(env, options, readFile);
-  if (fromInstallation !== undefined) {
+  if (fromInstallation.status === 'found') {
     return {
       apiKey: fromInstallation.apiKey,
       detail: fromInstallation.detail,
@@ -71,11 +83,14 @@ export function resolveEmbeddingCredential(
       status: 'available',
     };
   }
+  if (fromInstallation.status === 'issue') {
+    issues.push(fromInstallation.issue);
+  }
 
-  return fromCodexAuth(resolveCodexAuth(options));
+  return fromCodexAuth(resolveCodexAuth(options), issues);
 }
 
-function fromCodexAuth(auth: CodexAuthStatus): EmbeddingCredential {
+function fromCodexAuth(auth: CodexAuthStatus, issues: readonly string[]): EmbeddingCredential {
   if (auth.status === 'available') {
     return {
       apiKey: auth.openaiApiKey,
@@ -87,46 +102,53 @@ function fromCodexAuth(auth: CodexAuthStatus): EmbeddingCredential {
       status: 'available',
     };
   }
+  // No tier produced a key. If a higher tier was configured-but-broken, lead with that so
+  // the operator sees their real problem rather than only the Codex fall-through message.
   return {
-    detail: auth.detail,
-    guidance: auth.guidance,
+    detail: [...issues, auth.detail].join('; '),
+    guidance:
+      issues.length === 0
+        ? auth.guidance
+        : `Fix the configured OpenAI embedding credential above. ${auth.guidance}`,
     mode: auth.mode,
     reason: auth.reason,
     status: 'unavailable',
   };
 }
 
-function readEnvApiKey(
-  env: NodeJS.ProcessEnv,
-  readFile: (path: string) => string,
-): { apiKey: string; detail: string; displayPath: string } | undefined {
+function readEnvApiKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string): TierResult {
   const direct = optionalString(env.OPENAI_API_KEY);
   if (direct !== undefined) {
     return {
       apiKey: direct,
       detail: 'OPENAI_API_KEY present in the environment',
       displayPath: 'OPENAI_API_KEY',
+      status: 'found',
     };
   }
 
   const filePath = optionalString(env.OPENAI_API_KEY_FILE);
   if (filePath === undefined) {
-    return undefined;
+    return { status: 'absent' };
   }
   let contents: string;
   try {
     contents = readFile(filePath);
-  } catch {
-    return undefined;
+  } catch (error) {
+    return {
+      issue: `OPENAI_API_KEY_FILE could not be read: ${errorMessage(error)}`,
+      status: 'issue',
+    };
   }
   const value = optionalString(contents);
   if (value === undefined) {
-    return undefined;
+    return { issue: `OPENAI_API_KEY_FILE points at an empty file (${filePath})`, status: 'issue' };
   }
   return {
     apiKey: value,
     detail: `OPENAI_API_KEY read from ${filePath} (OPENAI_API_KEY_FILE)`,
     displayPath: 'OPENAI_API_KEY_FILE',
+    status: 'found',
   };
 }
 
@@ -134,7 +156,7 @@ function readInstallationApiKey(
   env: NodeJS.ProcessEnv,
   options: EmbeddingCredentialResolutionOptions,
   readFile: (path: string) => string,
-): { apiKey: string; detail: string; displayPath: string } | undefined {
+): TierResult {
   const location = installationConfigLocation({
     env,
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
@@ -143,32 +165,43 @@ function readInstallationApiKey(
   let rawConfig: string;
   try {
     rawConfig = readFile(location.path);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // A missing installation config is a quiet skip; an unreadable one is a real problem.
+    return isMissingFileError(error)
+      ? { status: 'absent' }
+      : {
+          issue: `could not read ${location.displayPath}: ${errorMessage(error)}`,
+          status: 'issue',
+        };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawConfig) as unknown;
   } catch {
-    return undefined;
+    // Never echo raw config text: it may contain the key or other secrets.
+    return { issue: `could not parse ${location.displayPath}`, status: 'issue' };
   }
 
   if (!isRecord(parsed) || !isRecord(parsed.embeddings)) {
-    return undefined;
+    return { status: 'absent' };
   }
   const key = parsed.embeddings.openaiApiKey;
-  if (typeof key !== 'string') {
-    return undefined;
+  if (key === undefined) {
+    return { status: 'absent' };
   }
-  const value = optionalString(key);
+  const value = typeof key === 'string' ? optionalString(key) : undefined;
   if (value === undefined) {
-    return undefined;
+    return {
+      issue: `embeddings.openaiApiKey in ${location.displayPath} must be a non-empty string`,
+      status: 'issue',
+    };
   }
   return {
     apiKey: value,
     detail: `openaiApiKey configured in ${location.displayPath}`,
     displayPath: location.displayPath,
+    status: 'found',
   };
 }
 
@@ -179,4 +212,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function optionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

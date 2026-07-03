@@ -135,4 +135,34 @@ describe('resolveEmbeddingCredential', () => {
     expect(credential.reason).toBe('missing-auth-file');
     expect(credential.detail).toContain('no Codex auth file found');
   });
+
+  it('surfaces a present-but-broken OPENAI_API_KEY_FILE instead of masking it as Codex', () => {
+    const { env, homeDir } = workspace({});
+    const missingKeyFile = join(mkdtempSync(join(tmpdir(), 'saga-credential-missing-')), 'absent');
+
+    const credential = resolveEmbeddingCredential({
+      env: { ...env, OPENAI_API_KEY_FILE: missingKeyFile },
+      homeDir,
+    });
+
+    expect(credential.status).toBe('unavailable');
+    if (credential.status !== 'unavailable') {
+      return;
+    }
+    // The operator's actually-configured (broken) input must be named, not hidden
+    // behind the Codex-tier fall-through message.
+    expect(credential.detail).toContain('OPENAI_API_KEY_FILE');
+  });
+
+  it('surfaces an invalid installation openaiApiKey instead of masking it as Codex', () => {
+    const { env, homeDir } = workspace({ installationKey: '   ' });
+
+    const credential = resolveEmbeddingCredential({ env, homeDir });
+
+    expect(credential.status).toBe('unavailable');
+    if (credential.status !== 'unavailable') {
+      return;
+    }
+    expect(credential.detail).toContain('openaiApiKey');
+  });
 });
