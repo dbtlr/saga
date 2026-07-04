@@ -501,6 +501,12 @@ function expectNoUnsafeMcpStructuredContent(
   }
   expect(serialized).not.toContain('sourceLocator');
   expect(serialized).not.toContain('"config"');
+  // Agent-facing structured output is pointer-shaped: internal bookkeeping blobs
+  // (record/interval/session metadata such as normalization spans and lifecycle
+  // events) never ship — they weighed megabytes per response before SGA-200.
+  expect(serialized).not.toContain('"metadata"');
+  expect(serialized).not.toContain('lifecycleEvents');
+  expect(serialized).not.toContain('normalization');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
