@@ -48,6 +48,90 @@ import type { RenderOptions } from './render.js';
 
 const MCP_RETRIEVAL_MAX_CONTENT_BYTES = 64 * 1024;
 
+// The unbounded internal bookkeeping blobs inside session read-model `metadata`
+// records (SGA-200): lifecycle event ledgers, normalization spans (which embed the
+// harness system prompt), subagent evidence, and per-turn context snapshots weighed
+// megabytes per MCP response. They are pruned at the session projections below —
+// never via the generic key strip — so user-supplied import annotations and
+// transcript-borne content fields keep flowing through structured output.
+const SESSION_BOOKKEEPING_BLOB_KEYS = new Set([
+  'lifecycleEvents',
+  'normalization',
+  'subagentEvidence',
+  'turnContexts',
+]);
+
+function pruneBookkeepingBlobs(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !SESSION_BOOKKEEPING_BLOB_KEYS.has(key)),
+  );
+}
+
+function pruneMetadataBlobs<T extends { metadata: Record<string, unknown> }>(value: T): T {
+  return { ...value, metadata: pruneBookkeepingBlobs(value.metadata) };
+}
+
+function compactRecentSessionRecord(entry: RecentSessionRecord): RecentSessionRecord {
+  return {
+    ...entry,
+    activityInterval:
+      entry.activityInterval === null ? null : pruneMetadataBlobs(entry.activityInterval),
+    authorUser: pruneMetadataBlobs(entry.authorUser),
+    rawSessionRecord: pruneMetadataBlobs(entry.rawSessionRecord),
+    session: pruneMetadataBlobs(entry.session),
+  };
+}
+
+function compactRecallSession(
+  session: RecallSegmentMatch['session'],
+): RecallSegmentMatch['session'] {
+  return { ...pruneMetadataBlobs(session), authorUser: pruneMetadataBlobs(session.authorUser) };
+}
+
+function compactRecallMatch(match: RecallSegmentMatch): RecallSegmentMatch {
+  return {
+    ...match,
+    activityInterval: pruneMetadataBlobs(match.activityInterval),
+    rawSessionRecord: pruneMetadataBlobs(match.rawSessionRecord),
+    session: compactRecallSession(match.session),
+  };
+}
+
+function compactRecallIntervalGroup(
+  group: RecallSearchResult['intervals'][number],
+): RecallSearchResult['intervals'][number] {
+  return {
+    ...group,
+    activityInterval: pruneMetadataBlobs(group.activityInterval),
+    matches: group.matches.map(compactRecallMatch),
+  };
+}
+
+function compactRecallSearchResult(result: RecallSearchResult): RecallSearchResult {
+  return {
+    ...result,
+    intervals: result.intervals.map(compactRecallIntervalGroup),
+    sessions: result.sessions.map((group) => ({
+      activityIntervals: group.activityIntervals.map(compactRecallIntervalGroup),
+      matches: group.matches.map(compactRecallMatch),
+      session: compactRecallSession(group.session),
+    })),
+  };
+}
+
+function compactRecallContextExpansion(context: RecallContextExpansion): RecallContextExpansion {
+  return {
+    ...context,
+    activityInterval: pruneMetadataBlobs(context.activityInterval),
+    rawSessionRecord: pruneMetadataBlobs(context.rawSessionRecord),
+    session: compactRecallSession(context.session),
+    turns: context.turns.map((turn) => ({
+      ...pruneMetadataBlobs(turn),
+      segments: turn.segments.map((segment) => pruneMetadataBlobs(segment)),
+    })),
+  };
+}
+
 export type MemorySearchEntry = {
   confidence: number;
   fields: Record<string, string>;
@@ -335,7 +419,9 @@ export async function listProjectRecentSessions(
     );
     return {
       markdown: renderRecentSessionsMarkdown(sessions),
-      sessions: sessions.map((session) => redactMcpStructuredOutput(session)),
+      sessions: sessions.map((session) =>
+        redactMcpStructuredOutput(compactRecentSessionRecord(session)),
+      ),
     };
   });
 }
@@ -371,7 +457,10 @@ export async function searchProjectSessions(
       : await options.searchRecall(searchInput);
   return {
     markdown: renderSessionSearchMarkdown(recall, resolved.posture),
-    recall: redactMcpStructuredOutput({ ...recall, search: resolved.posture }),
+    recall: redactMcpStructuredOutput({
+      ...compactRecallSearchResult(recall),
+      search: resolved.posture,
+    }),
   };
 }
 
@@ -403,7 +492,7 @@ export async function getProjectSessionContext(
       }),
     );
     return {
-      context: redactMcpStructuredOutput(context),
+      context: redactMcpStructuredOutput(compactRecallContextExpansion(context)),
       markdown: renderSessionContextMarkdown(context),
     };
   });
@@ -918,10 +1007,7 @@ export function redactMcpStructuredOutput(value: unknown): unknown {
 }
 
 function isUnsafeMcpStructuredKey(key: string): boolean {
-  // `metadata` holds internal bookkeeping (normalization spans, lifecycle events,
-  // subagent evidence, embedded harness instructions) that can weigh hundreds of
-  // kilobytes per record; agent-facing structured output ships pointers, not blobs.
-  return key === 'config' || key === 'metadata' || key.toLowerCase().includes('sourcelocator');
+  return key === 'config' || key.toLowerCase().includes('sourcelocator');
 }
 
 function formatSourceBinding(sourceBinding: {
