@@ -179,6 +179,9 @@ describePostgres('MCP session recall postgres integration', () => {
       inputPath,
       projectRoot,
     });
+    // User-supplied import annotations (sessions import --metadata) stay reachable
+    // through structured output — only the internal bookkeeping blobs are pruned.
+    expect(JSON.stringify(recentResult?.structuredContent)).toContain('"note"');
 
     const search = await server.handle({
       id: 'search',
@@ -501,12 +504,40 @@ function expectNoUnsafeMcpStructuredContent(
   }
   expect(serialized).not.toContain('sourceLocator');
   expect(serialized).not.toContain('"config"');
-  // Agent-facing structured output is pointer-shaped: internal bookkeeping blobs
-  // (record/interval/session metadata such as normalization spans and lifecycle
-  // events) never ship — they weighed megabytes per response before SGA-200.
-  expect(serialized).not.toContain('"metadata"');
-  expect(serialized).not.toContain('lifecycleEvents');
-  expect(serialized).not.toContain('normalization');
+  // Agent-facing structured output is pointer-shaped: the unbounded bookkeeping
+  // blobs inside read-model metadata records (normalization spans, lifecycle event
+  // ledgers, subagent evidence, turn context snapshots) never ship — they weighed
+  // megabytes per response before SGA-200. Checked structurally (object keys, not
+  // substrings) so conversation text mentioning these words cannot trip it.
+  expectNoBookkeepingBlobKeys(structuredContent);
+}
+
+const BOOKKEEPING_BLOB_KEYS = [
+  'lifecycleEvents',
+  'normalization',
+  'subagentEvidence',
+  'turnContexts',
+];
+
+function expectNoBookkeepingBlobKeys(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      expectNoBookkeepingBlobKeys(entry);
+    }
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+  const metadata = value.metadata;
+  if (isRecord(metadata)) {
+    for (const blobKey of BOOKKEEPING_BLOB_KEYS) {
+      expect(metadata).not.toHaveProperty(blobKey);
+    }
+  }
+  for (const entry of Object.values(value)) {
+    expectNoBookkeepingBlobKeys(entry);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
