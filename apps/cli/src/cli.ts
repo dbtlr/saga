@@ -1,4 +1,3 @@
-import { runContextCommand } from './context.js';
 import { runDoctor } from './doctor.js';
 import { runHarnessCommand } from './harness.js';
 import { runIndexCommand } from './index-command.js';
@@ -46,10 +45,9 @@ export const COMMANDS = {
     subcommands: ['install', 'uninstall', 'status'],
   },
   mcp: { description: 'launch the stdio MCP adapter' },
-  context: { description: 'preview compiled Active Context' },
   ingest: {
     description: 'manually ingest source data for debugging',
-    subcommands: ['claude-hook', 'codex-hook', 'recent', 'claims'],
+    subcommands: ['claude-hook', 'codex-hook', 'recent'],
   },
   index: { description: 'index active session segments into recall embeddings' },
   recall: {
@@ -94,7 +92,6 @@ export const VERSION = '0.0.0';
 
 export type CommandHandlers = {
   doctor: typeof runDoctor;
-  context: typeof runContextCommand;
   harness: typeof runHarnessCommand;
   index: typeof runIndexCommand;
   ingest: typeof runIngestCommand;
@@ -107,7 +104,6 @@ export type CommandHandlers = {
 };
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
-  context: runContextCommand,
   doctor: runDoctor,
   harness: runHarnessCommand,
   index: runIndexCommand,
@@ -266,10 +262,6 @@ export async function run(
     }
     if (parsed.command === 'doctor') {
       write(await handlers.doctor(parsed.args, renderOptions));
-      return 0;
-    }
-    if (parsed.command === 'context') {
-      write(await handlers.context(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === 'harness') {

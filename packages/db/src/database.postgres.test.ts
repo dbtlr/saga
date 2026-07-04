@@ -11,7 +11,6 @@ import {
   insertClaimMaintenanceEventAndProject,
   insertClaimPromotionEventAndProject,
   insertClaimReviewEventAndProject,
-  insertExtractedCandidateClaim,
   listActiveContextClaims,
   listCurrentClaims,
 } from './claim.js';
@@ -53,6 +52,22 @@ const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 class RollbackMigrationFixtureError extends Error {
   override name = 'RollbackMigrationFixtureError';
+}
+
+// Claim extraction is deferred to Phase 2 consolidation (ADR 0041), so tests
+// seed the retained ledger directly: an 'extracted' event through
+// insertClaimEventAndProject with a deterministic per-candidate claim key.
+type ExtractedClaimSeed = Omit<
+  Parameters<typeof insertClaimEventAndProject>[1],
+  'claimKey' | 'eventType'
+>;
+
+function insertExtractedClaim(db: DatabaseService, candidate: ExtractedClaimSeed) {
+  return insertClaimEventAndProject(db, {
+    ...candidate,
+    claimKey: `claim:${candidate.kind}:${candidate.text}`,
+    eventType: 'extracted',
+  });
 }
 
 describePostgres('postgres integration', () => {
@@ -1273,7 +1288,7 @@ describePostgres('postgres integration', () => {
     await expect(
       Effect.runPromise(
         insertClaimEventAndProject(service, {
-          attributes: { extractor: 'deterministic-v1' },
+          attributes: { extractor: 'test-extractor' },
           claimKey: 'cross-workspace-claim',
           confidence: 0.72,
           evidence: {
@@ -1345,7 +1360,7 @@ describePostgres('postgres integration', () => {
     );
 
     const candidate = {
-      attributes: { extractor: 'deterministic-v1' },
+      attributes: { extractor: 'test-extractor' },
       confidence: 0.72,
       evidence: {
         eventType: rawEvent.eventType,
@@ -1363,12 +1378,8 @@ describePostgres('postgres integration', () => {
       workspaceId: workspace.id,
     };
 
-    const firstProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, candidate),
-    );
-    const duplicateProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, candidate),
-    );
+    const firstProjection = await Effect.runPromise(insertExtractedClaim(service, candidate));
+    const duplicateProjection = await Effect.runPromise(insertExtractedClaim(service, candidate));
     const secondRawEvent = await Effect.runPromise(
       insertRawEvent(service, {
         actorId: 'codex',
@@ -1411,9 +1422,7 @@ describePostgres('postgres integration', () => {
         workspaceId: secondCandidate.workspaceId,
       }),
     );
-    const staleProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, candidate),
-    );
+    const staleProjection = await Effect.runPromise(insertExtractedClaim(service, candidate));
     const current = await Effect.runPromise(
       listCurrentClaims(service, {
         workspaceId: workspace.id,
@@ -1460,8 +1469,8 @@ describePostgres('postgres integration', () => {
       workspaceId: workspace.id,
     });
     const firstProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
+      insertExtractedClaim(service, {
+        attributes: { extractor: 'test-extractor' },
         confidence: 0.72,
         evidence: {
           eventType: firstRawEvent.eventType,
@@ -1498,7 +1507,7 @@ describePostgres('postgres integration', () => {
     });
     const secondProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: 'deterministic-v1' },
+        attributes: { extractor: 'test-extractor' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.72,
         evidence: {
@@ -1544,8 +1553,8 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       });
       return Effect.runPromise(
-        insertExtractedCandidateClaim(service, {
-          attributes: { extractor: 'deterministic-v1' },
+        insertExtractedClaim(service, {
+          attributes: { extractor: 'test-extractor' },
           confidence: 0.72,
           evidence: {
             eventType: rawEvent.eventType,
@@ -1592,132 +1601,6 @@ describePostgres('postgres integration', () => {
     expect(activeClaims[0]?.claimText).toBe(
       'Agreed. Live claim should survive terminal row pressure.',
     );
-  });
-
-  test('detects contradictory candidate evidence and marks existing claims contradicted', async () => {
-    if (service === undefined) {
-      throw new Error('database service was not initialized');
-    }
-
-    const [workspace] = await service.db
-      .insert(workspaces)
-      .values({
-        handle: `contradictions-${Date.now().toString(36)}`,
-      })
-      .returning();
-    if (workspace === undefined) {
-      throw new Error('workspace insert returned no row');
-    }
-
-    const [sourceBinding] = await service.db
-      .insert(sourceBindings)
-      .values({
-        sourceType: 'codex',
-        sourceUri: 'codex://local',
-        workspaceId: workspace.id,
-      })
-      .returning();
-    if (sourceBinding === undefined) {
-      throw new Error('source binding insert returned no row');
-    }
-
-    const firstRawEvent = await Effect.runPromise(
-      insertRawEvent(service, {
-        actorId: 'codex',
-        eventType: 'codex.UserPromptSubmit',
-        externalEventId: `codex:contradiction:${workspace.id}:turn-1`,
-        occurredAt: '2026-06-19T20:00:00.000Z',
-        payload: {
-          hook_event_name: 'UserPromptSubmit',
-          prompt: 'We should use SSR for the control plane.',
-        },
-        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
-        sessionId: 'session',
-        sourceBindingId: sourceBinding.id,
-        sourceId: 'codex:local',
-        sourceType: 'codex',
-        traceId: 'turn-1',
-        trustLevel: 'raw',
-        workspaceId: workspace.id,
-      }),
-    );
-    const firstProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
-        confidence: 0.66,
-        evidence: {
-          eventType: firstRawEvent.eventType,
-          externalEventId: firstRawEvent.externalEventId,
-          occurredAt: firstRawEvent.occurredAt.toISOString(),
-          quote: 'We should use SSR for the control plane.',
-          rawEventId: firstRawEvent.id,
-          sessionId: firstRawEvent.sessionId ?? undefined,
-          sourceId: firstRawEvent.sourceId,
-          sourceType: firstRawEvent.sourceType,
-          traceId: firstRawEvent.traceId ?? undefined,
-        },
-        kind: 'follow_up',
-        text: 'We should use SSR for the control plane.',
-        workspaceId: workspace.id,
-      }),
-    );
-
-    const secondRawEvent = await Effect.runPromise(
-      insertRawEvent(service, {
-        actorId: 'codex',
-        eventType: 'codex.UserPromptSubmit',
-        externalEventId: `codex:contradiction:${workspace.id}:turn-2`,
-        occurredAt: '2026-06-19T20:05:00.000Z',
-        payload: {
-          hook_event_name: 'UserPromptSubmit',
-          prompt: 'We should not use SSR for the control plane.',
-        },
-        provenance: { transcriptPath: '/tmp/transcript.jsonl' },
-        sessionId: 'session',
-        sourceBindingId: sourceBinding.id,
-        sourceId: 'codex:local',
-        sourceType: 'codex',
-        traceId: 'turn-2',
-        trustLevel: 'raw',
-        workspaceId: workspace.id,
-      }),
-    );
-    await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
-        confidence: 0.66,
-        evidence: {
-          eventType: secondRawEvent.eventType,
-          externalEventId: secondRawEvent.externalEventId,
-          occurredAt: secondRawEvent.occurredAt.toISOString(),
-          quote: 'We should not use SSR for the control plane.',
-          rawEventId: secondRawEvent.id,
-          sessionId: secondRawEvent.sessionId ?? undefined,
-          sourceId: secondRawEvent.sourceId,
-          sourceType: secondRawEvent.sourceType,
-          traceId: secondRawEvent.traceId ?? undefined,
-        },
-        kind: 'follow_up',
-        text: 'We should not use SSR for the control plane.',
-        workspaceId: workspace.id,
-      }),
-    );
-
-    const current = await Effect.runPromise(
-      listCurrentClaims(service, {
-        workspaceId: workspace.id,
-      }),
-    );
-    const contradictedClaim = current.find(
-      (claim) => claim.claimKey === firstProjection.currentClaim.claimKey,
-    );
-
-    expect(contradictedClaim?.state).toBe('contradicted');
-    expect(contradictedClaim?.attributes).toMatchObject({
-      contradiction: {
-        detectedByClaimText: 'We should not use SSR for the control plane.',
-      },
-    });
   });
 
   test('projects claim maintenance actions for decay and supersede', async () => {
@@ -1774,8 +1657,8 @@ describePostgres('postgres integration', () => {
         }),
       );
       return Effect.runPromise(
-        insertExtractedCandidateClaim(service, {
-          attributes: { extractor: 'deterministic-v1' },
+        insertExtractedClaim(service, {
+          attributes: { extractor: 'test-extractor' },
           confidence: 0.72,
           evidence: {
             eventType: rawEvent.eventType,
@@ -1879,8 +1762,8 @@ describePostgres('postgres integration', () => {
     );
 
     const firstProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
+      insertExtractedClaim(service, {
+        attributes: { extractor: 'test-extractor' },
         confidence: 0.72,
         evidence: {
           eventType: rawEvent.eventType,
@@ -1945,7 +1828,7 @@ describePostgres('postgres integration', () => {
     );
     const laterSourceProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: 'deterministic-v2' },
+        attributes: { extractor: 'test-extractor-v2' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.91,
         evidence: {
@@ -2011,7 +1894,7 @@ describePostgres('postgres integration', () => {
     );
     const contradictedProjection = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: 'deterministic-v2' },
+        attributes: { extractor: 'test-extractor-v2' },
         claimKey: firstProjection.currentClaim.claimKey,
         confidence: 0.87,
         evidence: {
@@ -2040,8 +1923,8 @@ describePostgres('postgres integration', () => {
       }),
     );
     const staleProjection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
+      insertExtractedClaim(service, {
+        attributes: { extractor: 'test-extractor' },
         confidence: 0.72,
         evidence: {
           eventType: rawEvent.eventType,
@@ -2080,7 +1963,7 @@ describePostgres('postgres integration', () => {
       reviewWatched: true,
     });
     expect(laterSourceProjection.currentClaim.attributes).toMatchObject({
-      extractor: 'deterministic-v2',
+      extractor: 'test-extractor-v2',
       reviewLastAction: 'watched',
       reviewPinned: true,
       reviewWatched: true,
@@ -2140,8 +2023,8 @@ describePostgres('postgres integration', () => {
       workspaceId: workspace.id,
     });
     const projection = await Effect.runPromise(
-      insertExtractedCandidateClaim(service, {
-        attributes: { extractor: 'deterministic-v1' },
+      insertExtractedClaim(service, {
+        attributes: { extractor: 'test-extractor' },
         confidence: 0.62,
         evidence: {
           eventType: rawEvent.eventType,
@@ -2219,7 +2102,7 @@ describePostgres('postgres integration', () => {
     );
     const contradicted = await Effect.runPromise(
       insertClaimEventAndProject(service, {
-        attributes: { extractor: 'deterministic-v2' },
+        attributes: { extractor: 'test-extractor-v2' },
         claimKey: projection.currentClaim.claimKey,
         confidence: 0.84,
         evidence: {
@@ -2244,7 +2127,7 @@ describePostgres('postgres integration', () => {
       adrPromoted: true,
       adrPromotedAt: '2026-06-19T21:00:00.000Z',
       adrTitle: 'Expose Claim Promotion',
-      extractor: 'deterministic-v2',
+      extractor: 'test-extractor-v2',
     });
   });
 
@@ -2263,8 +2146,8 @@ describePostgres('postgres integration', () => {
         workspaceId: workspace.id,
       });
       return Effect.runPromise(
-        insertExtractedCandidateClaim(db, {
-          attributes: { extractor: 'deterministic-v1' },
+        insertExtractedClaim(db, {
+          attributes: { extractor: 'test-extractor' },
           confidence: 0.68,
           evidence: {
             eventType: rawEvent.eventType,

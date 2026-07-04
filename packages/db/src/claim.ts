@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { candidateClaimKey, detectClaimContradiction } from '@saga/claims';
-import type { CandidateClaim, ClaimKind, ClaimEvidence } from '@saga/claims';
+import type { ClaimKind, ClaimEvidence } from '@saga/claims';
 import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
@@ -107,39 +106,6 @@ export type InsertClaimPromotionEventInput = {
 export class ClaimProjectionError extends Data.TaggedError('ClaimProjectionError')<{
   readonly message: string;
 }> {}
-
-export function insertExtractedCandidateClaim(
-  service: DatabaseService,
-  candidate: CandidateClaim,
-): Effect.Effect<ClaimProjectionResult, ClaimProjectionError | DatabaseError> {
-  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
-  return Effect.gen(function* () {
-    const result = yield* insertClaimEventAndProject(service, {
-      attributes: candidate.attributes,
-      claimKey: candidateClaimKey(candidate),
-      confidence: candidate.confidence,
-      evidence: candidate.evidence,
-      eventType: 'extracted',
-      kind: candidate.kind,
-      text: candidate.text,
-      workspaceId: candidate.workspaceId,
-    });
-    yield* projectContradictionsForCandidate(service, candidate, result.currentClaim.claimKey);
-    return result;
-  });
-}
-
-export function insertExtractedCandidateClaims(
-  service: DatabaseService,
-  candidates: readonly CandidateClaim[],
-): Effect.Effect<ClaimProjectionResult[], ClaimProjectionError | DatabaseError> {
-  // False positive: Effect.forEach(iterable, fn) is not Array.prototype.forEach;
-  // the second arg is the effectful callback, not a thisArg.
-  // oxlint-disable-next-line unicorn/no-array-method-this-argument
-  return Effect.forEach(candidates, (candidate) =>
-    insertExtractedCandidateClaim(service, candidate),
-  );
-}
 
 export function insertClaimEventAndProject(
   service: DatabaseService,
@@ -304,51 +270,6 @@ export function scoreClaimConfidence(input: ClaimConfidenceInput): ClaimConfiden
     inputs,
     score,
   };
-}
-
-function projectContradictionsForCandidate(
-  service: DatabaseService,
-  candidate: CandidateClaim,
-  candidateKey: string,
-): Effect.Effect<void, ClaimProjectionError | DatabaseError> {
-  // oxlint-disable-next-line func-names -- Effect.gen takes an anonymous generator
-  return Effect.gen(function* () {
-    const existingClaims = yield* listCurrentClaims(service, {
-      limit: 100,
-      workspaceId: candidate.workspaceId,
-    });
-    for (const claim of existingClaims) {
-      if (claim.claimKey === candidateKey) {
-        continue;
-      }
-      if (claim.state === 'rejected' || claim.state === 'contradicted') {
-        continue;
-      }
-
-      const contradiction = detectClaimContradiction(claim.claimText, candidate.text);
-      if (contradiction === undefined) {
-        continue;
-      }
-
-      yield* insertClaimEventAndProject(service, {
-        attributes: {
-          ...candidate.attributes,
-          contradiction: {
-            detectedByClaimKey: candidateKey,
-            detectedByClaimText: candidate.text,
-            score: contradiction.score,
-          },
-        },
-        claimKey: claim.claimKey,
-        confidence: candidate.confidence,
-        evidence: candidate.evidence,
-        eventType: 'contradicted',
-        kind: readClaimKind(claim.claimKind),
-        text: claim.claimText,
-        workspaceId: candidate.workspaceId,
-      });
-    }
-  });
 }
 
 export function insertClaimReviewEventAndProject(

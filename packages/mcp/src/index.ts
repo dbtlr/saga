@@ -17,39 +17,6 @@ export type JsonRpcResponse = {
   result?: unknown;
 };
 
-export type ActiveContextToolResult = {
-  document: unknown;
-  markdown: string;
-};
-
-export type SearchMemoryInput = {
-  limit?: number | undefined;
-  query: string;
-};
-
-export type SearchMemoryToolResult = {
-  matches: {
-    confidence: number;
-    key: string;
-    kind: string;
-    matchedFields?: string[] | undefined;
-    snippet?: string | undefined;
-    source?: string | undefined;
-    state: string;
-    text: string;
-  }[];
-  markdown: string;
-};
-
-export type ResolveSagaLinkInput = {
-  link: string;
-};
-
-export type ResolveSagaLinkToolResult = {
-  markdown: string;
-  resolved: unknown;
-};
-
 export type ListRecentSessionsInput = {
   activeOnly?: boolean | undefined;
   harness?: string | undefined;
@@ -89,56 +56,11 @@ export type GetSessionContextToolResult = {
 
 export type SagaMcpHandlers = {
   getSessionContext: (input: GetSessionContextInput) => Promise<GetSessionContextToolResult>;
-  getActiveContext: () => Promise<ActiveContextToolResult>;
   listRecentSessions: (input: ListRecentSessionsInput) => Promise<ListRecentSessionsToolResult>;
-  resolveSagaLink: (input: ResolveSagaLinkInput) => Promise<ResolveSagaLinkToolResult>;
-  searchMemory: (input: SearchMemoryInput) => Promise<SearchMemoryToolResult>;
   searchSessions: (input: SearchSessionsInput) => Promise<SearchSessionsToolResult>;
 };
 
 export const SAGA_MCP_TOOLS = [
-  {
-    description: 'Return the compiled Saga Active Context for the current workspace.',
-    inputSchema: {
-      additionalProperties: false,
-      properties: {},
-      type: 'object',
-    },
-    name: 'get_active_context',
-  },
-  {
-    description:
-      'Search projected Saga memory, recent activity, and compiled Active Context for the current workspace.',
-    inputSchema: {
-      additionalProperties: false,
-      properties: {
-        limit: {
-          minimum: 1,
-          type: 'integer',
-        },
-        query: {
-          type: 'string',
-        },
-      },
-      required: ['query'],
-      type: 'object',
-    },
-    name: 'search_memory',
-  },
-  {
-    description: 'Resolve a Saga Link into the configured connector target and provenance.',
-    inputSchema: {
-      additionalProperties: false,
-      properties: {
-        link: {
-          type: 'string',
-        },
-      },
-      required: ['link'],
-      type: 'object',
-    },
-    name: 'resolve_saga_link',
-  },
   {
     description:
       'List recent captured Saga sessions for the current workspace with session, raw-record, host-user, harness, model, and provenance metadata.',
@@ -285,21 +207,6 @@ export async function callSagaMcpTool(
     name: string;
   },
 ) {
-  if (input.name === 'get_active_context') {
-    const result = await handlers.getActiveContext();
-    return toolResult(result.markdown, result.document);
-  }
-
-  if (input.name === 'search_memory') {
-    const result = await handlers.searchMemory(parseSearchMemoryInput(input.arguments));
-    return toolResult(result.markdown, { matches: result.matches });
-  }
-
-  if (input.name === 'resolve_saga_link') {
-    const result = await handlers.resolveSagaLink(parseResolveSagaLinkInput(input.arguments));
-    return toolResult(result.markdown, result.resolved);
-  }
-
   if (input.name === 'list_recent_sessions') {
     const result = await handlers.listRecentSessions(parseListRecentSessionsInput(input.arguments));
     return toolResult(result.markdown, { sessions: result.sessions });
@@ -341,34 +248,6 @@ function parseToolCallParams(params: unknown): {
     arguments: isRecord(params.arguments) ? params.arguments : undefined,
     name: params.name,
   };
-}
-
-function parseSearchMemoryInput(input: Record<string, unknown> | undefined): SearchMemoryInput {
-  const query = input?.query;
-  if (typeof query !== 'string' || query.trim() === '') {
-    throw new Error('search_memory requires a non-empty query');
-  }
-
-  const limit = input?.limit;
-  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) {
-    throw new Error('search_memory limit must be a positive integer');
-  }
-
-  return {
-    limit,
-    query,
-  };
-}
-
-function parseResolveSagaLinkInput(
-  input: Record<string, unknown> | undefined,
-): ResolveSagaLinkInput {
-  const link = input?.link;
-  if (typeof link !== 'string' || link.trim() === '') {
-    throw new Error('resolve_saga_link requires a non-empty link');
-  }
-
-  return { link };
 }
 
 function parseListRecentSessionsInput(

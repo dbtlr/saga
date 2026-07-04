@@ -3,7 +3,6 @@ import { userInfo } from 'node:os';
 import { extname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { extractCandidateClaimsFromRawEvents } from '@saga/claims';
 import { rawEventFromClaudeHook, rawEventFromCodexHook } from '@saga/collectors';
 import type {
   ClaudeHookInput,
@@ -12,7 +11,6 @@ import type {
   HarnessSource,
 } from '@saga/collectors';
 import {
-  insertExtractedCandidateClaims,
   insertRawEvent,
   importLifecycleBoundaryEvent,
   importRawSessionRecord,
@@ -20,7 +18,6 @@ import {
   makeDatabase,
 } from '@saga/db';
 import type {
-  ClaimProjectionResult,
   LifecycleBoundaryInput,
   LifecycleBoundaryOperation,
   RawEvent,
@@ -56,12 +53,6 @@ export type IngestHookOptions = {
   stdin?: string | undefined;
 };
 
-export type ClaimIngestResult = {
-  candidates: number;
-  projected: number;
-  rawEvents: number;
-};
-
 export async function runIngestCommand(
   args: readonly string[],
   options: RenderOptions,
@@ -77,10 +68,6 @@ export async function runIngestCommand(
 
   if (subcommand === 'recent') {
     return inspectRecentRawEvents({ limit: parseLimit(args[1]) }, options);
-  }
-
-  if (subcommand === 'claims') {
-    return ingestClaims({ limit: parseLimit(args[1]) }, options);
   }
 
   throw new Error(`ingest ${subcommand ?? ''} is not implemented yet`.trim());
@@ -168,48 +155,6 @@ export async function inspectRecentRawEvents(
         id: 'raw-events',
         records: renderRawEvents(rows, options),
         value: rows.map(rawEventValue),
-      },
-      options.format,
-    );
-  } finally {
-    await Effect.runPromise(service.close());
-  }
-}
-
-export async function ingestClaims(
-  input: { cwd?: string; limit?: number | undefined },
-  options: RenderOptions,
-): Promise<string> {
-  const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
-  const binding = readBindingFile(projectRoot);
-  if (binding === undefined) {
-    throw new Error('workspace binding is missing; run saga init');
-  }
-
-  const config = await Effect.runPromise(loadRuntimeConfig({ cwd: projectRoot }));
-  const service = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
-  try {
-    const rawEvents = await Effect.runPromise(
-      listRecentRawEvents(service, {
-        limit: input.limit ?? 50,
-        workspaceId: binding.workspace.id,
-      }),
-    );
-    const candidates = extractCandidateClaimsFromRawEvents(rawEvents);
-    const projections = await Effect.runPromise(
-      insertExtractedCandidateClaims(service, candidates),
-    );
-    const result: ClaimIngestResult = {
-      candidates: candidates.length,
-      projected: projections.length,
-      rawEvents: rawEvents.length,
-    };
-
-    return formatCommandOutput(
-      {
-        id: 'claims',
-        records: renderClaimIngest(result, projections, options),
-        value: result,
       },
       options.format,
     );
@@ -511,26 +456,6 @@ function defaultAuthor(): RawSessionImportInput['author'] {
 
 function readHookString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
-function renderClaimIngest(
-  result: ClaimIngestResult,
-  projections: readonly ClaimProjectionResult[],
-  options: RenderOptions,
-): string {
-  return recordBlock(
-    'Claim ingest',
-    [
-      { label: 'raw events', value: String(result.rawEvents) },
-      { label: 'candidates', value: String(result.candidates) },
-      { label: 'projected', value: String(result.projected) },
-      ...projections.slice(0, 5).map((projection, index) => ({
-        label: `claim ${String(index + 1)}`,
-        value: projection.currentClaim.claimText,
-      })),
-    ],
-    options,
-  );
 }
 
 function parseHookInput(stdin: string): HarnessHookInput {

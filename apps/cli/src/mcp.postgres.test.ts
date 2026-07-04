@@ -10,7 +10,7 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import { runIndexCommand } from './index-command.js';
-import { ingestClaims, inspectRecentRawEvents } from './ingest.js';
+import { inspectRecentRawEvents } from './ingest.js';
 import { initProject } from './init.js';
 import { createProjectMcpServer } from './mcp.js';
 import type { ResolvedRecallEmbedding } from './recall.js';
@@ -312,7 +312,7 @@ describePostgres('MCP session recall postgres integration', () => {
     });
   });
 
-  test('does not return redacted raw event evidence through MCP search_memory or CLI recent events', async () => {
+  test('does not return redacted raw event evidence through CLI recent events', async () => {
     if (projectRoot === undefined) {
       throw new Error('project root was not initialized');
     }
@@ -364,45 +364,16 @@ describePostgres('MCP session recall postgres integration', () => {
     } finally {
       await Effect.runPromise(service.close());
     }
-    const claimProjection = await ingestClaims({ cwd: projectRoot, limit: 10 }, jsonRenderOptions);
-    expect(claimProjection).toContain('"projected": 1');
 
-    const server = createProjectMcpServer({ cwd: projectRoot });
-    const before = await server.handle({
-      id: 'search-memory-before-redaction',
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: {
-        arguments: {
-          query: secret,
-        },
-        name: 'search_memory',
-      },
-    });
-    expect(JSON.stringify((before?.result as ToolResult | undefined)?.structuredContent)).toContain(
-      secret,
+    const beforeRawEvents = await inspectRecentRawEvents(
+      { cwd: projectRoot, limit: 10 },
+      jsonRenderOptions,
     );
+    expect(beforeRawEvents).toContain(secret);
 
     await runSessionsCommand(['redact', imported.session.id, '--literal', secret], renderOptions, {
       cwd: projectRoot,
     });
-
-    const after = await server.handle({
-      id: 'search-memory-after-redaction',
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: {
-        arguments: {
-          query: secret,
-        },
-        name: 'search_memory',
-      },
-    });
-    const afterResult = after?.result as ToolResult | undefined;
-    expect(afterResult?.content[0]?.text).toContain(`No matches for ${secret}`);
-    expect(afterResult?.content[0]?.text).not.toContain('raw hook prompt');
-    expect(afterResult?.content[0]?.text).not.toContain('raw_event');
-    expect(JSON.stringify(afterResult?.structuredContent)).not.toContain(secret);
 
     const recentRawEvents = await inspectRecentRawEvents(
       { cwd: projectRoot, limit: 10 },
