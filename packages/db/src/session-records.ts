@@ -371,10 +371,30 @@ export function listRecentSessionRecords(
           ai.settled_at as activity_interval_settled_at,
           ai.settlement_reason as activity_interval_settlement_reason,
           ai.metadata as activity_interval_metadata,
-          coalesce(count(distinct all_ai.id), 0)::int as activity_intervals_count,
-          coalesce(count(distinct all_r.id), 0)::int as raw_records_count,
-          coalesce(count(distinct st.id), 0)::int as turns_count,
-          coalesce(count(distinct ss.id), 0)::int as segments_count
+          (
+            select count(*)
+            from activity_intervals all_ai
+            where all_ai.session_id = s.id
+              and all_ai.workspace_id = s.workspace_id
+          )::int as activity_intervals_count,
+          (
+            select count(*)
+            from raw_session_records all_r
+            where all_r.session_id = s.id
+              and all_r.workspace_id = s.workspace_id
+          )::int as raw_records_count,
+          (
+            select count(*)
+            from session_turns st
+            where st.raw_session_record_id = r.id
+              and st.workspace_id = r.workspace_id
+          )::int as turns_count,
+          (
+            select count(*)
+            from session_segments ss
+            where ss.raw_session_record_id = r.id
+              and ss.workspace_id = r.workspace_id
+          )::int as segments_count
         from raw_session_records r
         inner join sessions s
           on s.id = r.session_id
@@ -388,28 +408,10 @@ export function listRecentSessionRecords(
         left join activity_intervals ai
           on ai.id = r.activity_interval_id
           and ai.workspace_id = r.workspace_id
-        left join activity_intervals all_ai
-          on all_ai.session_id = s.id
-          and all_ai.workspace_id = s.workspace_id
-        left join raw_session_records all_r
-          on all_r.session_id = s.id
-          and all_r.workspace_id = s.workspace_id
-        left join session_turns st
-          on st.raw_session_record_id = r.id
-          and st.workspace_id = r.workspace_id
-        left join session_segments ss
-          on ss.raw_session_record_id = r.id
-          and ss.workspace_id = r.workspace_id
         where r.workspace_id = ${workspaceId}
           and (${harness ?? null}::text is null or r.harness = ${harness ?? null})
           and (${activeOnly}::boolean = false or r.is_active = true)
           and (r.is_active = true or r.status <> 'redacted')
-        group by
-          s.id,
-          u.id,
-          sb.id,
-          r.id,
-          ai.id
         order by r.captured_at desc, r.created_at desc, r.id asc
         limit ${limit}
       `;
