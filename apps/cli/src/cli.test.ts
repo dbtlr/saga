@@ -5,7 +5,6 @@ import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from './cli.js';
 
 function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandlers {
   return {
-    context: async () => 'context',
     doctor: async () => 'doctor',
     harness: async () => 'harness',
     index: async () => 'index',
@@ -23,10 +22,10 @@ function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandl
 describe('parseArgs', () => {
   it('parses global flags and command arguments', () => {
     expect(
-      parseArgs(['--format', 'json', '--color', 'never', '--ascii', 'context', 'preview']),
+      parseArgs(['--format', 'json', '--color', 'never', '--ascii', 'doctor', 'preview']),
     ).toStrictEqual({
       args: ['preview'],
-      command: 'context',
+      command: 'doctor',
       options: {
         ascii: true,
         color: 'never',
@@ -60,9 +59,9 @@ describe('parseArgs', () => {
         version: false,
       },
     });
-    expect(parseArgs(['context', '--format', 'json'])).toMatchObject({
+    expect(parseArgs(['doctor', '--format', 'json'])).toMatchObject({
       args: [],
-      command: 'context',
+      command: 'doctor',
       options: {
         format: 'json',
       },
@@ -81,7 +80,6 @@ describe('run', () => {
       'service',
       'harness',
       'mcp',
-      'context',
       'ingest',
       'index',
       'recall',
@@ -248,14 +246,20 @@ describe('run', () => {
     });
   });
 
-  it('dispatches context through the context handler', async () => {
+  it('rejects the removed context command', async () => {
     const output: string[] = [];
-    const handlers = commandHandlers({
-      context: async () => 'compiled context',
-    });
 
-    await expect(run(['context'], (text) => output.push(text), handlers)).resolves.toBe(0);
-    expect(output).toStrictEqual(['compiled context']);
+    await expect(run(['context'], (text) => output.push(text))).resolves.toBe(2);
+    expect(output).toStrictEqual(['✗ unknown command: context']);
+  });
+
+  it('rejects the removed ingest claims subcommand', async () => {
+    const output: string[] = [];
+
+    await expect(run(['ingest', 'claims'], (text) => output.push(text))).resolves.toBe(2);
+    expect(output).toStrictEqual([
+      '✗ ingest: unknown subcommand claims (expected: claude-hook | codex-hook | recent)',
+    ]);
   });
 
   it('dispatches mcp through the streaming mcp handler', async () => {
