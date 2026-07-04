@@ -1,6 +1,6 @@
 import { Data, Effect } from 'effect';
 
-import type { DatabaseError, DatabaseService } from './database.js';
+import type { DatabaseError, DatabaseService, SagaSql } from './database.js';
 import { safeContentPartsForSkippedSegments } from './session-content-redaction.js';
 import {
   redactAgentFacingJsonRecord,
@@ -19,6 +19,13 @@ const MAX_TURNS = 500;
 const MAX_SEGMENTS_PER_TURN = 25;
 const RAW_BODY_EXPOSURE_WARNING =
   'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.';
+
+// Single source of the redaction visibility rule: hard-redacted superseded
+// snapshots (inactive + status 'redacted') are hidden from every listing,
+// count, and fetch surface. Compose via fragment so the sites cannot drift.
+function visibleRawSessionRecord(sql: SagaSql, alias: string) {
+  return sql`(${sql(alias)}.is_active = true or ${sql(alias)}.status <> 'redacted')`;
+}
 
 type JsonRecord = Record<string, unknown>;
 type TimestampValue = Date | string | null;
@@ -382,7 +389,7 @@ export function listRecentSessionRecords(
             from raw_session_records all_r
             where all_r.session_id = s.id
               and all_r.workspace_id = s.workspace_id
-              and (all_r.is_active = true or all_r.status <> 'redacted')
+              and ${visibleRawSessionRecord(service.sql, 'all_r')}
           )::int as raw_records_count,
           (
             select count(*)
@@ -402,7 +409,7 @@ export function listRecentSessionRecords(
           where limited.workspace_id = ${workspaceId}
             and (${harness ?? null}::text is null or limited.harness = ${harness ?? null})
             and (${activeOnly}::boolean = false or limited.is_active = true)
-            and (limited.is_active = true or limited.status <> 'redacted')
+            and ${visibleRawSessionRecord(service.sql, 'limited')}
           order by limited.captured_at desc, limited.created_at desc, limited.id asc
           limit ${limit}
         ) r
@@ -598,7 +605,7 @@ export function getSessionDetail(
           and sb.workspace_id = s.workspace_id
         where r.workspace_id = ${workspaceId}
           and r.session_id = ${identity.session_id}
-          and (r.is_active = true or r.status <> 'redacted')
+          and ${visibleRawSessionRecord(service.sql, 'r')}
         order by r.snapshot_ordinal desc, r.captured_at desc, r.id asc
         limit ${maxRawRecords + 1}
       `;
@@ -670,7 +677,7 @@ export function getSessionDetail(
           where r.workspace_id = ${workspaceId}
             and r.session_id = ${identity.session_id}
             and r.id = ${identity.selected_raw_record_id}
-            and (r.is_active = true or r.status <> 'redacted')
+            and ${visibleRawSessionRecord(service.sql, 'r')}
           limit 1
         `;
         selectedRawSessionRecord =
