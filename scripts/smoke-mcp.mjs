@@ -13,6 +13,9 @@ const requireFromCli = createRequire(new URL('../apps/cli/package.json', import.
 const postgresModule = await import(pathToFileURL(requireFromCli.resolve('postgres')).href);
 const postgres = postgresModule.default;
 
+const SESSION_TOOLS = ['list_recent_sessions', 'search_sessions', 'get_session_context'];
+const REMOVED_TOOLS = ['get_active_context', 'search_memory', 'resolve_saga_link'];
+
 const adminDatabaseUrl = process.env.SAGA_TEST_DATABASE_URL?.trim();
 if (adminDatabaseUrl === undefined || adminDatabaseUrl === '') {
   console.error('missing required environment variable: SAGA_TEST_DATABASE_URL');
@@ -35,6 +38,9 @@ try {
   const env = {
     ...process.env,
     DATABASE_URL: databaseUrl.toString(),
+    // An empty installation config home keeps remote embeddings disabled by
+    // policy (ADR 0032): the search below stays lexical with no query egress.
+    SAGA_HOME: realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-home-'))),
   };
 
   run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
@@ -43,6 +49,20 @@ try {
     cwd: workspacePath,
     env,
   });
+  writeFileSync(
+    join(workspacePath, '.codex', 'mcp-smoke-transcript.jsonl'),
+    [
+      JSON.stringify({
+        text: 'We should dogfood Saga capture before broad rollout.',
+        type: 'user',
+      }),
+      JSON.stringify({
+        text: 'The assistant agrees the dogfood capture loop is the next milestone.',
+        type: 'assistant',
+      }),
+      '',
+    ].join('\n'),
+  );
   run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
     env,
@@ -50,41 +70,55 @@ try {
   });
 
   const binding = JSON.parse(readFileSync(join(workspacePath, '.saga.local.json'), 'utf8'));
-  await seedContextIndex(databaseUrl.toString(), binding);
 
   const responses = runMcpRequests(workspacePath, env, [
-    {
-      id: 1,
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: { arguments: {}, name: 'get_active_context' },
-    },
+    { id: 1, jsonrpc: '2.0', method: 'tools/list' },
     {
       id: 2,
       jsonrpc: '2.0',
       method: 'tools/call',
-      params: {
-        arguments: { limit: 5, query: 'dogfood capture' },
-        name: 'search_memory',
-      },
+      params: { arguments: { limit: 5 }, name: 'list_recent_sessions' },
     },
     {
       id: 3,
       jsonrpc: '2.0',
       method: 'tools/call',
       params: {
-        arguments: { link: 'saga:context/dogfood-note' },
-        name: 'resolve_saga_link',
+        arguments: { limit: 5, query: 'dogfood capture' },
+        name: 'search_sessions',
       },
     },
   ]);
 
-  assertActiveContextResponse(responses.get(1));
-  assertSearchResponse(responses.get(2));
-  assertResolveResponse(responses.get(3));
+  assertToolList(responses.get(1));
+  assertRecentSessionsResponse(responses.get(2));
+  const segmentId = assertSearchSessionsResponse(responses.get(3));
+
+  const contextResponses = runMcpRequests(workspacePath, env, [
+    {
+      id: 4,
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        arguments: { segmentId, windowTurns: 1 },
+        name: 'get_session_context',
+      },
+    },
+    ...REMOVED_TOOLS.map((name, index) => ({
+      id: 5 + index,
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { arguments: {}, name },
+    })),
+  ]);
+
+  assertSessionContextResponse(contextResponses.get(4));
+  for (const [index, name] of REMOVED_TOOLS.entries()) {
+    assertRemovedToolResponse(contextResponses.get(5 + index), name);
+  }
 
   console.log(`mcp smoke passed: ${binding.workspace.handle}`);
-  console.log('tools: get_active_context, search_memory, resolve_saga_link');
+  console.log(`tools: ${SESSION_TOOLS.join(', ')}`);
   failed = false;
 } finally {
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
@@ -134,62 +168,6 @@ function codexHookPayload(projectRoot) {
   };
 }
 
-async function seedContextIndex(databaseUrl, binding) {
-  const sql = postgres(databaseUrl, { max: 1 });
-  try {
-    const [source] = await sql`
-      insert into source_bindings (
-        workspace_id,
-        source_type,
-        source_uri,
-        display_name,
-        enabled,
-        config
-      )
-      values (
-        ${binding.workspace.id},
-        'document',
-        'https://docs.example.test/saga',
-        'Dogfood Docs',
-        true,
-        '{}'::jsonb
-      )
-      returning id
-    `;
-
-    await sql`
-      insert into context_index_entries (
-        workspace_id,
-        source_binding_id,
-        key,
-        title,
-        description,
-        external_id,
-        saga_link,
-        importance,
-        include_policy,
-        metadata
-      )
-      values (
-        ${binding.workspace.id},
-        ${source.id},
-        'dogfood-note',
-        'Dogfood Capture Note',
-        'Smoke seeded retrieval door for MCP Saga Link resolution.',
-        'notes/dogfood-capture.md',
-        'saga:context/dogfood-note',
-        0.91,
-        'always',
-        ${sql.json({
-          content: 'Dogfood capture evidence should be available through MCP Saga Link resolution.',
-        })}
-      )
-    `;
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
-}
-
 function runMcpRequests(cwd, env, requests) {
   const stdout = run(process.execPath, [cliBin, 'mcp'], {
     cwd,
@@ -198,11 +176,7 @@ function runMcpRequests(cwd, env, requests) {
   });
   const responses = new Map();
   for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== '')) {
-    const response = JSON.parse(line);
-    if (response.error !== undefined) {
-      throw new Error(`MCP request failed: ${line}`);
-    }
-    responses.set(response.id, response);
+    responses.set(JSON.parse(line).id, JSON.parse(line));
   }
   return responses;
 }
@@ -234,47 +208,60 @@ function run(command, args, options) {
   return result.stdout;
 }
 
-function assertActiveContextResponse(response) {
-  const result = response?.result;
-  if (!toolText(result).includes('codex.UserPromptSubmit')) {
+function assertOk(response, label) {
+  if (response?.error !== undefined) {
+    throw new Error(`${label} failed: ${json(response)}`);
+  }
+  return response?.result;
+}
+
+function assertToolList(response) {
+  const result = assertOk(response, 'tools/list');
+  const names = (result?.tools ?? []).map((tool) => tool?.name);
+  if (JSON.stringify(names) !== JSON.stringify(SESSION_TOOLS)) {
     throw new Error(
-      `get_active_context text did not include recent hook activity: ${json(result)}`,
+      `tools/list must expose exactly the session capture and recall tools: ${json(names)}`,
     );
   }
+}
 
-  const sections = result?.structuredContent?.sections;
-  if (!Array.isArray(sections)) {
-    throw new Error(`get_active_context structured content was missing sections: ${json(result)}`);
+function assertRecentSessionsResponse(response) {
+  const result = assertOk(response, 'list_recent_sessions');
+  if (!toolText(result).includes('mcp-smoke-session')) {
+    throw new Error(`list_recent_sessions did not include the captured session: ${json(result)}`);
+  }
+
+  const sessions = result?.structuredContent?.sessions;
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    throw new Error(`list_recent_sessions structured sessions were empty: ${json(result)}`);
   }
 }
 
-function assertSearchResponse(response) {
-  const result = response?.result;
+function assertSearchSessionsResponse(response) {
+  const result = assertOk(response, 'search_sessions');
   if (!toolText(result).includes('dogfood')) {
-    throw new Error(`search_memory text did not include dogfood matches: ${json(result)}`);
+    throw new Error(`search_sessions text did not include dogfood matches: ${json(result)}`);
   }
 
-  const matches = result?.structuredContent?.matches;
-  if (!Array.isArray(matches) || matches.length === 0) {
-    throw new Error(`search_memory structured matches were empty: ${json(result)}`);
+  const segmentId = result?.structuredContent?.sessions?.[0]?.matches?.[0]?.segment?.id;
+  if (typeof segmentId !== 'string' || segmentId === '') {
+    throw new Error(`search_sessions did not return a matched segment id: ${json(result)}`);
+  }
+  return segmentId;
+}
+
+function assertSessionContextResponse(response) {
+  const result = assertOk(response, 'get_session_context');
+  const text = toolText(result);
+  if (!text.includes('dogfood Saga capture') || !text.includes('next milestone')) {
+    throw new Error(`get_session_context did not expand surrounding turns: ${json(result)}`);
   }
 }
 
-function assertResolveResponse(response) {
-  const result = response?.result;
-  if (!toolText(result).includes('Dogfood capture evidence')) {
-    throw new Error(`resolve_saga_link text did not include retrieved content: ${json(result)}`);
-  }
-
-  const resolved = result?.structuredContent;
-  if (resolved?.entry?.sagaLink !== 'saga:context/dogfood-note') {
-    throw new Error(`resolve_saga_link structured content had wrong link: ${json(result)}`);
-  }
-
-  if (
-    resolved?.retrieval?.target?.url !== 'https://docs.example.test/saga/notes/dogfood-capture.md'
-  ) {
-    throw new Error(`resolve_saga_link target URL was wrong: ${json(result)}`);
+function assertRemovedToolResponse(response, name) {
+  const message = response?.error?.message;
+  if (message !== `unknown Saga MCP tool: ${name}`) {
+    throw new Error(`removed tool ${name} should be unknown, got: ${json(response)}`);
   }
 }
 

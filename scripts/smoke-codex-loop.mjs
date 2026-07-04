@@ -55,6 +55,16 @@ try {
   );
   assertCodexHarnessStatus(status);
 
+  writeFileSync(
+    join(workspacePath, '.codex', 'smoke-transcript.jsonl'),
+    [
+      JSON.stringify({
+        text: 'We should dogfood Saga capture before broad rollout.',
+        type: 'user',
+      }),
+      '',
+    ].join('\n'),
+  );
   const hookResult = run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
     env,
@@ -70,17 +80,17 @@ try {
   );
   assertRecentEvents(recent);
 
-  const context = JSON.parse(
-    run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'context'], {
+  const sessions = JSON.parse(
+    run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'sessions', 'recent'], {
       cwd: workspacePath,
       env,
     }),
   );
-  assertActiveContext(context);
+  assertCapturedSession(sessions);
 
-  console.log(`codex hook capture smoke passed: ${context.workspace.handle}`);
+  console.log('codex hook capture smoke passed');
   console.log(`raw events: ${recent.length.toString()}`);
-  console.log(`current claims: ${currentClaimLines(context).length.toString()}`);
+  console.log(`sessions: ${sessions.length.toString()}`);
   failed = false;
 } finally {
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
@@ -192,27 +202,13 @@ function assertRecentEvents(value) {
   }
 }
 
-function assertActiveContext(value) {
-  const currentClaims = currentClaimLines(value);
-  if (currentClaims.length !== 0) {
-    throw new Error(`Hook capture projected per-turn claims: ${JSON.stringify(value, null, 2)}`);
+function assertCapturedSession(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`recent sessions were empty: ${JSON.stringify(value)}`);
   }
 
-  const recentActivity = sectionLines(value, 'Recent Activity');
-  if (!recentActivity.some((line) => line.includes('codex.UserPromptSubmit'))) {
-    throw new Error(
-      `Active Context did not include recent Codex activity: ${JSON.stringify(value)}`,
-    );
+  const entry = value.find((row) => row?.session?.harnessSessionId === 'codex-loop-smoke-session');
+  if (entry === undefined) {
+    throw new Error(`Codex session was not captured: ${JSON.stringify(value, null, 2)}`);
   }
-}
-
-function currentClaimLines(value) {
-  return sectionLines(value, 'Current Claims').filter(
-    (line) => line !== 'No current claims projected yet.',
-  );
-}
-
-function sectionLines(value, title) {
-  const section = value?.sections?.find((entry) => entry?.title === title);
-  return Array.isArray(section?.lines) ? section.lines : [];
 }

@@ -59,6 +59,10 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
             </div>
             <span>{formatTimestamp(snapshot.generatedAt)}</span>
           </div>
+          <p className="phase-note">
+            Active Context compiles from claims. Claims arrive with Phase 2 consolidation — nothing
+            writes them yet, so this view stays empty for now.
+          </p>
           {snapshot.activeContext === undefined ? (
             <div className="context-preview">
               <EmptyState message="Bind this repo with saga init and configure DATABASE_URL to preview Active Context." />
@@ -74,6 +78,9 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
           <SourceBindingsPanel snapshot={snapshot} />
           <section>
             <h2>Claims</h2>
+            <p className="phase-note">
+              Claims arrive with Phase 2 consolidation — nothing writes them yet.
+            </p>
             {snapshot.claims.length === 0 ? (
               <EmptyState message="No current claims projected yet." />
             ) : (

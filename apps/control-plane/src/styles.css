@@ -481,6 +481,12 @@ textarea {
   color: #65716b;
 }
 
+.phase-note {
+  margin: 0;
+  color: #65716b;
+  font-size: 0.82rem;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     padding: 18px;
