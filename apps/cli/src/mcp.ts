@@ -918,7 +918,10 @@ export function redactMcpStructuredOutput(value: unknown): unknown {
 }
 
 function isUnsafeMcpStructuredKey(key: string): boolean {
-  return key === 'config' || key.toLowerCase().includes('sourcelocator');
+  // `metadata` holds internal bookkeeping (normalization spans, lifecycle events,
+  // subagent evidence, embedded harness instructions) that can weigh hundreds of
+  // kilobytes per record; agent-facing structured output ships pointers, not blobs.
+  return key === 'config' || key === 'metadata' || key.toLowerCase().includes('sourcelocator');
 }
 
 function formatSourceBinding(sourceBinding: {

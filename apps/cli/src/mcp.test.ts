@@ -465,6 +465,10 @@ describe('redactMcpStructuredOutput', () => {
       rawSessionRecord: {
         id: 'raw-1',
         metadata: {
+          lifecycleEvents: [{ payload: { type: 'task_started' }, type: 'task_started' }],
+          normalization: { sessionMeta: { base_instructions: 'huge harness prompt' } },
+        },
+        details: {
           capturedText:
             'Use /work/saga, /home/drew/work/saga, /custom-root/saga, C:\\Users\\drew\\.codex\\transcripts\\session.jsonl, and file:///tmp/saga/session.jsonl but keep https://example.com/docs/path and saga:context/workflow.',
           embedded: 'cwd=/work/saga log=/custom-root/saga/session.log',
@@ -515,7 +519,7 @@ describe('redactMcpStructuredOutput', () => {
     expect(redacted).toMatchObject({
       rawSessionRecord: {
         id: 'raw-1',
-        metadata: {
+        details: {
           capturedText:
             'Use [local-path-redacted], [local-path-redacted], [local-path-redacted], [local-path-redacted], and [local-path-redacted] but keep https://example.com/docs/path and saga:context/workflow.',
           embedded: 'cwd=[local-path-redacted] log=[local-path-redacted]',
@@ -557,6 +561,10 @@ describe('redactMcpStructuredOutput', () => {
     expect(JSON.stringify(redacted)).not.toContain('sourceLocator');
     expect(JSON.stringify(redacted)).not.toContain('config');
     expect(JSON.stringify(redacted)).not.toContain('secret-token');
+    // Internal bookkeeping blobs never ship through agent-facing structured output.
+    expect(JSON.stringify(redacted)).not.toContain('"metadata"');
+    expect(JSON.stringify(redacted)).not.toContain('lifecycleEvents');
+    expect(JSON.stringify(redacted)).not.toContain('base_instructions');
     expect(JSON.stringify(redacted)).not.toContain('/Volumes/data/workspaces/saga');
     expect(JSON.stringify(redacted)).not.toContain('/Users/drew/work/saga');
     expect(JSON.stringify(redacted)).not.toContain('/home/drew/work/saga');
