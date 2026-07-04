@@ -212,6 +212,10 @@ describePostgres('session safety', () => {
     expect(JSON.stringify(recent)).not.toContain('super-secret-token');
     expect(JSON.stringify(recent)).not.toContain(secretOrigin);
     expect(JSON.stringify(recent)).not.toContain(secretReason);
+    // The listed count must match the fetchable set: the hard-redacted inactive
+    // snapshot is hidden from listings, so it must not be counted either.
+    const recentEntry = recent.find((record) => record.session.id === imported.session.id);
+    expect(recentEntry?.counts.rawSessionRecords).toBe(1);
 
     const recall = await Effect.runPromise(
       searchSessionRecall(service, {

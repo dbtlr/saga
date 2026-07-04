@@ -382,6 +382,7 @@ export function listRecentSessionRecords(
             from raw_session_records all_r
             where all_r.session_id = s.id
               and all_r.workspace_id = s.workspace_id
+              and (all_r.is_active = true or all_r.status <> 'redacted')
           )::int as raw_records_count,
           (
             select count(*)
@@ -395,7 +396,16 @@ export function listRecentSessionRecords(
             where ss.raw_session_record_id = r.id
               and ss.workspace_id = r.workspace_id
           )::int as segments_count
-        from raw_session_records r
+        from (
+          select limited.*
+          from raw_session_records limited
+          where limited.workspace_id = ${workspaceId}
+            and (${harness ?? null}::text is null or limited.harness = ${harness ?? null})
+            and (${activeOnly}::boolean = false or limited.is_active = true)
+            and (limited.is_active = true or limited.status <> 'redacted')
+          order by limited.captured_at desc, limited.created_at desc, limited.id asc
+          limit ${limit}
+        ) r
         inner join sessions s
           on s.id = r.session_id
           and s.workspace_id = r.workspace_id
@@ -408,12 +418,7 @@ export function listRecentSessionRecords(
         left join activity_intervals ai
           on ai.id = r.activity_interval_id
           and ai.workspace_id = r.workspace_id
-        where r.workspace_id = ${workspaceId}
-          and (${harness ?? null}::text is null or r.harness = ${harness ?? null})
-          and (${activeOnly}::boolean = false or r.is_active = true)
-          and (r.is_active = true or r.status <> 'redacted')
         order by r.captured_at desc, r.created_at desc, r.id asc
-        limit ${limit}
       `;
 
       return rows.map(mapRecentSessionRecordRow);
