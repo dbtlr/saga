@@ -460,6 +460,69 @@ describe('loadRuntimeConfig installation config', () => {
   });
 });
 
+describe('loadRuntimeConfig production build profile', () => {
+  it('does not read project env files when the build is production', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
+    const homeDir = makeInstallationHome(
+      JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
+    );
+
+    const config = await Effect.runPromise(
+      loadRuntimeConfig({ cwd, env: {}, homeDir, isProduction: true }),
+    );
+
+    expect(config.databaseUrl).toBe('postgres://installation/saga');
+    expect(config.databaseUrlSource).toBe('installation-config');
+  });
+
+  it('still lets explicit env win in a production build', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
+    const homeDir = makeInstallationHome(
+      JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
+    );
+
+    const config = await Effect.runPromise(
+      loadRuntimeConfig({
+        cwd,
+        env: { SAGA_DATABASE_URL: 'postgres://env/saga' },
+        homeDir,
+        isProduction: true,
+      }),
+    );
+
+    expect(config.databaseUrl).toBe('postgres://env/saga');
+    expect(config.databaseUrlSource).toBe('environment');
+  });
+
+  it('reads project env files when the build is source (dev)', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
+    const homeDir = makeInstallationHome(
+      JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
+    );
+
+    const config = await Effect.runPromise(
+      loadRuntimeConfig({ cwd, env: {}, homeDir, isProduction: false }),
+    );
+
+    expect(config.databaseUrl).toBe('postgres://project/saga');
+    expect(config.databaseUrlSource).toBe('project-env-file');
+  });
+
+  it('ignores non-database project env values too when production', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
+    writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\n');
+
+    const config = await Effect.runPromise(
+      loadRuntimeConfig({ cwd, env: {}, installationConfig: false, isProduction: true }),
+    );
+
+    expect(config.logLevel).toBe('info');
+  });
+});
+
 function makeInstallationHome(contents?: string): string {
   const homeDir = mkdtempSync(join(tmpdir(), 'saga-config-home-'));
   if (contents !== undefined) {
