@@ -63,3 +63,14 @@ release. When a release is cut, this section is promoted to
   flags any integration still pointing at a checkout and names the command that
   fixes it. Removed the unused, config-unaware `db:migrate` script — the
   sanctioned apply paths are `saga self-update` and `@saga/service migrate`.
+
+### Fixed
+
+- **Supervised service starts when installed from a checkout on a non-boot
+  volume** (SGA-230). `saga service install` baked the launchd `WorkingDirectory`
+  to the directory it ran from; for an install off a checkout on `/Volumes`, the
+  launchd agent lacks Full-Disk-Access to the volume, so `chdir` failed and the
+  service died silently before any output. The compiled service's
+  `WorkingDirectory` now uses the home directory — safe because a production build
+  resolves config from `SAGA_DATABASE_URL` / `~/.saga/config.json`, never
+  cwd-relative `.env` — while source/dev installs keep the checkout as cwd.
