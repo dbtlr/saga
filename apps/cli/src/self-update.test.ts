@@ -123,6 +123,7 @@ function fakeSupervisor(
 function baseDeps(overrides: Partial<SelfUpdateDependencies> = {}): SelfUpdateDependencies {
   return {
     arch: 'arm64',
+    argv1: '/$bunfs/root/saga',
     binPath: '/Users/x/.local/bin/saga',
     migrate: async () => currentStatus,
     platform: 'darwin',
@@ -208,7 +209,8 @@ describe('runSelfUpdateCommand', () => {
     const { fetcher } = releaseFetcher();
     await expect(
       runSelfUpdateCommand([], options, () => undefined, {
-        binPath: '/usr/local/bin/node',
+        // A real filesystem argv[1] (not /$bunfs/) means a from-source run.
+        argv1: '/Volumes/data/workspaces/saga/apps/cli/src/main.ts',
         fetcher,
         replaceBinary,
       }),

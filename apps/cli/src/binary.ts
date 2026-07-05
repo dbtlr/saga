@@ -1,21 +1,22 @@
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 /**
- * How this process was launched. A `bun build --compile` single-file binary
- * runs with `process.execPath` pointing at the compiled artifact (basename
- * `saga`), whereas a from-source run goes through the Node/Bun runtime
- * (`process.execPath` basename `node`/`bun`, with tsx loading the TypeScript).
- * Self-update swaps `process.execPath`, so it must only ever run in the compiled
- * case; the plist install path likewise points at the compiled stable-path
- * binary when compiled and falls back to the tsx+source invocation otherwise.
+ * How this process was launched. A `bun build --compile` standalone binary runs
+ * its entrypoint out of Bun's embedded filesystem, so `process.argv[1]` starts
+ * with `/$bunfs/` — a positive, name-independent signal present regardless of
+ * what the binary is called or which user args follow. A from-source run (bun
+ * or node+tsx) has a real filesystem path there instead. Detection is
+ * fail-closed: an unrecognized launcher is treated as source and refuses to
+ * self-update. Self-update still swaps `process.execPath` (the running binary);
+ * only the compiled-vs-source *decision* keys off argv[1].
  */
-export function isRunningFromSource(binPath: string = process.execPath): boolean {
-  return /^(node|bun)/u.test(basename(binPath));
+export function isCompiledBinary(argv1: string | undefined = process.argv[1]): boolean {
+  return (argv1 ?? '').startsWith('/$bunfs/');
 }
 
-export function isCompiledBinary(binPath: string = process.execPath): boolean {
-  return !isRunningFromSource(binPath);
+export function isRunningFromSource(argv1: string | undefined = process.argv[1]): boolean {
+  return !isCompiledBinary(argv1);
 }
 
 /**
