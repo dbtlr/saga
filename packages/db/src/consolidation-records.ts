@@ -115,10 +115,7 @@ export function insertConsolidationRecord(
   input: InsertConsolidationRecordInput,
 ): Effect.Effect<ConsolidationRecordDetail, DatabaseError | ConsolidationRecordError> {
   return Effect.tryPromise({
-    try: () =>
-      service.db.transaction((tx) => insertConsolidationRecordUnsafe(tx as Tx, input)) as Promise<
-        ConsolidationRecordDetail
-      >,
+    try: () => service.db.transaction((tx) => insertConsolidationRecordUnsafe(tx, input)),
     catch: (cause) =>
       cause instanceof ConsolidationRecordError
         ? cause
@@ -471,7 +468,10 @@ async function loadRecordDetails(
               inArray(consolidationEvidencePointers.findingId, findingIds),
             ),
           )
-          .orderBy(asc(consolidationEvidencePointers.createdAt), asc(consolidationEvidencePointers.id));
+          .orderBy(
+            asc(consolidationEvidencePointers.createdAt),
+            asc(consolidationEvidencePointers.id),
+          );
 
   const dispositionRows = await db
     .select()

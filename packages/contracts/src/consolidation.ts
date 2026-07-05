@@ -1,3 +1,5 @@
+// oxlint-disable new-cap -- Effect Schema exposes its combinators as capitalized
+// factory functions (Struct, Literal, Array); calling them is the intended API.
 import { Schema } from 'effect';
 
 /**

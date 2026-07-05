@@ -16,7 +16,7 @@ const sessionId = '33333333-3333-4333-8333-333333333333';
 
 describe('consolidation contract', () => {
   it('enumerates exactly the four finding types', () => {
-    expect(FindingType.literals).toEqual([
+    expect(FindingType.literals).toStrictEqual([
       'decision',
       'follow_up',
       'deviation_or_correction',
@@ -35,14 +35,16 @@ describe('consolidation contract', () => {
           evidence: [{ sessionId, activityIntervalOrdinal: 0, turnOrdinal: 4 }],
         },
       ],
-      dispositions: [{ kind: 'builds_on' as const, fromFindingId: findingA, toFindingId: findingB }],
+      dispositions: [
+        { kind: 'builds_on' as const, fromFindingId: findingA, toFindingId: findingB },
+      ],
     };
 
-    expect(Schema.decodeUnknownEither(ConsolidationOutput)(output)._tag).toBe('Right');
+    expect(Either.isRight(Schema.decodeUnknownEither(ConsolidationOutput)(output))).toBe(true);
   });
 
   it('allows evidence pointers that name only a session', () => {
-    expect(Schema.decodeUnknownSync(EvidencePointer)({ sessionId })).toEqual({ sessionId });
+    expect(Schema.decodeUnknownSync(EvidencePointer)({ sessionId })).toStrictEqual({ sessionId });
   });
 
   it('rejects an unknown finding type', () => {
