@@ -2,9 +2,14 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { promisify } from 'node:util';
 
-import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
+import { assertMigrationsCurrent, makeDatabase, recordJobRun } from '@saga/db';
+import type { DatabaseService } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
+
+import { heartbeatJob } from './jobs/heartbeat.js';
+import { startJobRunner } from './jobs/job-runner.js';
+import type { Job, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
 
 export type SagaServiceHandle = {
   close: () => Promise<void>;
@@ -13,13 +18,23 @@ export type SagaServiceHandle = {
   url: string;
 };
 
+export type HealthJobStatus = {
+  consecutiveFailures: number;
+  lastOutcome: JobStatus['lastOutcome'];
+  lastRunAt: string | null;
+  name: string;
+};
+
 export type HealthPayload = {
+  jobs: HealthJobStatus[];
   ok: true;
   service: 'saga';
   uptimeSeconds: number;
 };
 
 export type SagaServiceDependencies = {
+  jobs?: readonly Job[] | undefined;
+  recordRun?: JobRunRecorder | undefined;
   validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
 };
 
@@ -29,9 +44,23 @@ export async function startSagaService(
 ): Promise<SagaServiceHandle> {
   await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
+
+  const jobs = dependencies.jobs ?? [heartbeatJob];
+  // A DB-backed recorder needs a long-lived connection; only open one when the
+  // caller has not supplied its own recorder (tests inject an in-memory one).
+  let jobDatabase: DatabaseService | undefined;
+  let recordRun = dependencies.recordRun;
+  if (recordRun === undefined) {
+    jobDatabase = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+    const service = jobDatabase;
+    recordRun = (run) => recordJobRun(service, run).pipe(Effect.asVoid);
+  }
+  const runner = startJobRunner({ jobs, recordRun });
+
   const server = createServer((request, response) => {
     if (request.url === '/health') {
       const payload: HealthPayload = {
+        jobs: runner.status().map(toHealthJobStatus),
         ok: true,
         service: 'saga',
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
@@ -54,10 +83,26 @@ export async function startSagaService(
   const port = address.port;
 
   return {
-    close: () => close(server),
+    close: async () => {
+      // Interrupt job fibers cleanly before releasing their connection and the port.
+      await runner.stop();
+      if (jobDatabase !== undefined) {
+        await Effect.runPromise(jobDatabase.close());
+      }
+      await close(server);
+    },
     host,
     port,
     url: `http://${host}:${port}`,
+  };
+}
+
+function toHealthJobStatus(status: JobStatus): HealthJobStatus {
+  return {
+    consecutiveFailures: status.consecutiveFailures,
+    lastOutcome: status.lastOutcome,
+    lastRunAt: status.lastRunAt === null ? null : status.lastRunAt.toISOString(),
+    name: status.name,
   };
 }
 
