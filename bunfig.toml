@@ -1,0 +1,14 @@
+# Supply-chain release-age gate, the bun equivalent of pnpm's
+# minimumReleaseAge/minimumReleaseAgeExclude settings.
+#
+# Behavior (verified against bun 1.3.14):
+# - minimumReleaseAge is in seconds and applies at resolution time
+#   (`bun add` / `bun update`); versions already in bun.lock install
+#   unaffected, so `bun install --frozen-lockfile` never trips it.
+# - minimumReleaseAgeExcludes matches package NAMES only; version-qualified
+#   entries (name@version) are silently ignored.
+[install]
+# New upstream releases must be at least 24 hours old before they resolve.
+minimumReleaseAge = 86400
+# First-party tooling releases are consumed immediately after publish.
+minimumReleaseAgeExcludes = ["@dbtlr/tooling"]
