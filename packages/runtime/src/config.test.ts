@@ -511,48 +511,6 @@ describe('loadRuntimeConfig production build profile', () => {
     expect(config.databaseUrlSource).toBe('project-env-file');
   });
 
-  it('ignores a database env value that only echoes the repo .env in production (Bun auto-load)', async () => {
-    // Bun auto-loads .env into process.env even for a compiled binary, so simulate
-    // an explicit env whose SAGA_DATABASE_URL equals the on-disk .env value.
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://dotenv/saga\n');
-    const homeDir = makeInstallationHome(
-      JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
-    );
-
-    const config = await Effect.runPromise(
-      loadRuntimeConfig({
-        cwd,
-        env: { SAGA_DATABASE_URL: 'postgres://dotenv/saga' },
-        homeDir,
-        isProduction: true,
-      }),
-    );
-
-    expect(config.databaseUrl).toBe('postgres://installation/saga');
-    expect(config.databaseUrlSource).toBe('installation-config');
-  });
-
-  it('keeps a genuine deployment export that differs from the repo .env in production', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://dotenv/saga\n');
-    const homeDir = makeInstallationHome(
-      JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
-    );
-
-    const config = await Effect.runPromise(
-      loadRuntimeConfig({
-        cwd,
-        env: { SAGA_DATABASE_URL: 'postgres://real-export/saga' },
-        homeDir,
-        isProduction: true,
-      }),
-    );
-
-    expect(config.databaseUrl).toBe('postgres://real-export/saga');
-    expect(config.databaseUrlSource).toBe('environment');
-  });
-
   it('ignores non-database project env values too when production', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\n');

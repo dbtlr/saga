@@ -83,7 +83,12 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             define+=(--define "SAGA_BUILD_VERSION=\"${GITHUB_REF_NAME#v}\"")
           fi
-          bun build apps/cli/src/main.ts --compile "${define[@]}" \
+          # --no-compile-autoload-dotenv: Bun otherwise auto-loads repo .env files
+          # into process.env at runtime, even for a standalone binary, which would
+          # let a project .env silently select the database (ADR-0044, SGA-224). The
+          # installed binary must resolve config from explicit env + installation
+          # config only; this is a build property of the artifact (tag and PR alike).
+          bun build apps/cli/src/main.ts --compile --no-compile-autoload-dotenv "${define[@]}" \
             --outfile "dist/${{ matrix.asset }}"
 
       - name: Upload binary
