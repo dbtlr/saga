@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolveCodexAuth } from './codex-auth.js';
 import type { CodexAuthMode, CodexAuthStatus } from './codex-auth.js';
 import { installationConfigLocation } from './embedding-policy.js';
+import {
+  isRecord,
+  optionalString,
+  readInstallationConfig,
+  readOpenAiApiKeyFromEnv,
+} from './internal/credential-io.js';
 
 // Where an OpenAI embedding credential was sourced from, highest precedence first:
 // an explicit environment variable, the installation config, then a cached Codex key.
@@ -40,8 +46,8 @@ export type EmbeddingCredential = EmbeddingCredentialAvailable | EmbeddingCreden
 // carried forward so that if resolution ultimately degrades to lexical, doctor/recall name
 // the operator's actual misconfiguration instead of masking it behind the Codex message.
 type TierResult =
-  | { status: 'found'; apiKey: string; detail: string; displayPath: string }
-  | { status: 'issue'; issue: string }
+  | { apiKey: string; detail: string; displayPath: string; status: 'found' }
+  | { issue: string; status: 'issue' }
   | { status: 'absent' };
 
 // Resolve the OpenAI embedding key by precedence — explicit env, then installation config,
@@ -55,7 +61,7 @@ export function resolveEmbeddingCredential(
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
   const issues: string[] = [];
 
-  const fromEnv = readEnvApiKey(env, readFile);
+  const fromEnv = readOpenAiApiKeyFromEnv(env, readFile);
   if (fromEnv.status === 'found') {
     return {
       apiKey: fromEnv.apiKey,
@@ -116,42 +122,6 @@ function fromCodexAuth(auth: CodexAuthStatus, issues: readonly string[]): Embedd
   };
 }
 
-function readEnvApiKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string): TierResult {
-  const direct = optionalString(env.OPENAI_API_KEY);
-  if (direct !== undefined) {
-    return {
-      apiKey: direct,
-      detail: 'OPENAI_API_KEY present in the environment',
-      displayPath: 'OPENAI_API_KEY',
-      status: 'found',
-    };
-  }
-
-  const filePath = optionalString(env.OPENAI_API_KEY_FILE);
-  if (filePath === undefined) {
-    return { status: 'absent' };
-  }
-  let contents: string;
-  try {
-    contents = readFile(filePath);
-  } catch (error) {
-    return {
-      issue: `OPENAI_API_KEY_FILE could not be read: ${errorMessage(error)}`,
-      status: 'issue',
-    };
-  }
-  const value = optionalString(contents);
-  if (value === undefined) {
-    return { issue: `OPENAI_API_KEY_FILE points at an empty file (${filePath})`, status: 'issue' };
-  }
-  return {
-    apiKey: value,
-    detail: `OPENAI_API_KEY read from ${filePath} (OPENAI_API_KEY_FILE)`,
-    displayPath: 'OPENAI_API_KEY_FILE',
-    status: 'found',
-  };
-}
-
 function readInstallationApiKey(
   env: NodeJS.ProcessEnv,
   options: EmbeddingCredentialResolutionOptions,
@@ -162,27 +132,16 @@ function readInstallationApiKey(
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
   });
 
-  let rawConfig: string;
-  try {
-    rawConfig = readFile(location.path);
-  } catch (error) {
-    // A missing installation config is a quiet skip; an unreadable one is a real problem.
-    return isMissingFileError(error)
-      ? { status: 'absent' }
-      : {
-          issue: `could not read ${location.displayPath}: ${errorMessage(error)}`,
-          status: 'issue',
-        };
+  const read = readInstallationConfig(location, readFile);
+  // A missing installation config is a quiet skip; unreadable or malformed is a real problem.
+  if (read.status === 'missing') {
+    return { status: 'absent' };
+  }
+  if (read.status === 'unreadable' || read.status === 'malformed') {
+    return { issue: read.message, status: 'issue' };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawConfig) as unknown;
-  } catch {
-    // Never echo raw config text: it may contain the key or other secrets.
-    return { issue: `could not parse ${location.displayPath}`, status: 'issue' };
-  }
-
+  const parsed = read.value;
   if (!isRecord(parsed) || !isRecord(parsed.embeddings)) {
     return { status: 'absent' };
   }
@@ -203,21 +162,4 @@ function readInstallationApiKey(
     displayPath: location.displayPath,
     status: 'found',
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function optionalString(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed === '' ? undefined : trimmed;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

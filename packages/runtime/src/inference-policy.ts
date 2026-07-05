@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { installationConfigLocation } from './embedding-policy.js';
 import type { EmbeddingPolicyResolutionOptions } from './embedding-policy.js';
+import { isRecord, optionalString, readInstallationConfig } from './internal/credential-io.js';
 
 // The remote-inference policy gate. Unlike the embedding gate (which collapses every
 // non-enabled outcome to 'disabled'), inference distinguishes an explicit installation
@@ -42,31 +43,18 @@ export function resolveInferenceConfig(
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
   const location = installationConfigLocation(options);
 
-  let rawConfig: string;
-  try {
-    rawConfig = readFile(location.path);
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return notConfigured(
-        `no installation config at ${location.displayPath}; remote inference not configured`,
-      );
-    }
+  const read = readInstallationConfig(location, readFile);
+  if (read.status === 'missing') {
     return notConfigured(
-      `could not read ${location.displayPath}: ${errorMessage(error)}; remote inference not configured`,
+      `no installation config at ${location.displayPath}; remote inference not configured`,
     );
   }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawConfig) as unknown;
-  } catch {
-    // Never echo raw config text: it may contain the API key or other secrets.
-    return notConfigured(
-      `could not parse ${location.displayPath}; remote inference not configured`,
-    );
+  // Never echo raw config text on a malformed file: it may contain the API key or secrets.
+  if (read.status === 'unreadable' || read.status === 'malformed') {
+    return notConfigured(`${read.message}; remote inference not configured`);
   }
 
-  const inference = readInferenceSection(parsed);
+  const inference = readInferenceSection(read.value);
   if (inference === undefined) {
     return notConfigured(
       `${location.displayPath} does not set inference.remote; remote inference not configured`,
@@ -165,21 +153,4 @@ function readModel(value: unknown): ModelResult {
   }
   const model = optionalString(value);
   return model === undefined ? { status: 'invalid' } : { model, status: 'ok' };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function optionalString(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed === '' ? undefined : trimmed;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
