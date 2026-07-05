@@ -24,6 +24,7 @@ on:
       - 'packages/**'
       - 'package.json'
       - 'bun.lock'
+      - '.tool-versions'
       - '.github/workflows/release.yml'
       - 'install.sh'
 

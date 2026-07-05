@@ -42,7 +42,7 @@ jobs:
           # The control plane (apps/control-plane) is intentionally absent — it is
           # excluded from the release artifact (ADR-0044).
           changed=$(git diff --name-only "${base}...HEAD")
-          if ! echo "$changed" | grep -qE '^(apps/cli/|apps/service/|packages/|package\.json$|bun\.lock$|install\.sh$|\.github/workflows/(release|prerelease)\.yml$)'; then
+          if ! echo "$changed" | grep -qE '^(apps/cli/|apps/service/|packages/|package\.json$|bun\.lock$|\.tool-versions$|install\.sh$|\.github/workflows/(release|prerelease)\.yml$)'; then
             echo "No build-affecting paths changed — changelog entry not required."
             exit 0
           fi
