@@ -734,6 +734,25 @@ export const sessionSegmentEmbeddings = pgTable(
   ],
 );
 
+// Installation-level (workspace-independent) ledger of background job executions.
+// Bounded growth is enforced at write time by pruning each job's rows beyond the
+// most recent retention window, so no separate cleanup job is required.
+export const jobRuns = pgTable(
+  'job_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobName: text('job_name').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
+    outcome: text('outcome').notNull(),
+    error: text('error'),
+  },
+  (table) => [
+    index('job_runs_job_name_finished_idx').on(table.jobName, table.finishedAt),
+    check('job_runs_outcome_check', sql`${table.outcome} in ('succeeded', 'failed')`),
+  ],
+);
+
 export const workspaceRelations = relations(workspaces, ({ many, one }) => ({
   activityIntervals: many(activityIntervals),
   claimEvents: many(claimEvents),
@@ -968,6 +987,7 @@ export const schema = {
   contextIndexEntryRelations,
   currentClaimRelations,
   currentClaims,
+  jobRuns,
   rawEventRelations,
   rawEvents,
   rawSessionRecordRelations,
@@ -1024,3 +1044,5 @@ export type SessionSegment = typeof sessionSegments.$inferSelect;
 export type NewSessionSegment = typeof sessionSegments.$inferInsert;
 export type SessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferSelect;
 export type NewSessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferInsert;
+export type JobRun = typeof jobRuns.$inferSelect;
+export type NewJobRun = typeof jobRuns.$inferInsert;
