@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import {
   activityIntervals,
   claimEvents,
+  consolidationDispositions,
+  consolidationEvidencePointers,
+  consolidationFindings,
+  consolidationRecords,
   contextIndexEntries,
   currentClaims,
   rawEvents,
@@ -37,6 +41,43 @@ describe('schema', () => {
     expect(getTableName(sessionRelationships)).toBe('session_relationships');
     expect(getTableName(sessionSegments)).toBe('session_segments');
     expect(getTableName(sessionSegmentEmbeddings)).toBe('session_segment_embeddings');
+    expect(getTableName(consolidationRecords)).toBe('consolidation_records');
+    expect(getTableName(consolidationFindings)).toBe('consolidation_findings');
+    expect(getTableName(consolidationEvidencePointers)).toBe('consolidation_evidence_pointers');
+    expect(getTableName(consolidationDispositions)).toBe('consolidation_dispositions');
+  });
+
+  it('keeps consolidation records scoped and provenance-stamped', () => {
+    const recordColumns = getTableColumns(consolidationRecords);
+    const findingColumns = getTableColumns(consolidationFindings);
+    const pointerColumns = getTableColumns(consolidationEvidencePointers);
+    const dispositionColumns = getTableColumns(consolidationDispositions);
+
+    expect(recordColumns.workspaceId.notNull).toBe(true);
+    expect(recordColumns.sessionId.notNull).toBe(true);
+    expect(recordColumns.activityIntervalId.notNull).toBe(true);
+    expect(recordColumns.narrative.notNull).toBe(true);
+    expect(recordColumns.modelId.notNull).toBe(true);
+    expect(recordColumns.authPath.notNull).toBe(true);
+
+    expect(findingColumns.workspaceId.notNull).toBe(true);
+    expect(findingColumns.sessionId.notNull).toBe(true);
+    expect(findingColumns.recordId.notNull).toBe(true);
+    expect(findingColumns.findingType.notNull).toBe(true);
+    expect(findingColumns.text.notNull).toBe(true);
+    expect(findingColumns.ordinal.notNull).toBe(true);
+
+    expect(pointerColumns.workspaceId.notNull).toBe(true);
+    expect(pointerColumns.findingId.notNull).toBe(true);
+    expect(pointerColumns.pointerSessionId.notNull).toBe(true);
+    expect(pointerColumns.activityIntervalOrdinal.notNull).toBe(false);
+    expect(pointerColumns.turnOrdinal.notNull).toBe(false);
+
+    expect(dispositionColumns.workspaceId.notNull).toBe(true);
+    expect(dispositionColumns.recordId.notNull).toBe(true);
+    expect(dispositionColumns.fromFindingId.notNull).toBe(true);
+    expect(dispositionColumns.toFindingId.notNull).toBe(true);
+    expect(dispositionColumns.kind.notNull).toBe(true);
   });
 
   it('keeps workspace profile one-to-one with workspace', () => {
