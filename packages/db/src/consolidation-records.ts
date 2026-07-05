@@ -1,8 +1,18 @@
-import type { DispositionKind, FindingType } from '@saga/contracts';
+import { randomUUID } from 'node:crypto';
+
+import { ConsolidationOutput } from '@saga/contracts';
+import type {
+  DispositionKind,
+  EvidencePointer,
+  FindingType,
+  OutputDisposition,
+  OutputFinding,
+} from '@saga/contracts';
 import { and, asc, eq, inArray, sql as drizzleSql } from 'drizzle-orm';
-import { Data, Effect } from 'effect';
+import { Data, Effect, Schema } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
+import { rowsFromExecute } from './raw-rows.js';
 import {
   activityIntervals,
   consolidationDispositions,
@@ -12,26 +22,13 @@ import {
 } from './schema.js';
 
 type Tx = Parameters<Parameters<DatabaseService['db']['transaction']>[0]>[0];
-type JsonRecord = Record<string, unknown>;
 
-export type ConsolidationEvidencePointerInput = {
-  activityIntervalOrdinal?: number | undefined;
-  sessionId: string;
-  turnOrdinal?: number | undefined;
-};
-
-export type ConsolidationFindingInput = {
-  evidence: readonly ConsolidationEvidencePointerInput[];
-  id: string;
-  text: string;
-  type: FindingType;
-};
-
-export type ConsolidationDispositionInput = {
-  fromFindingId: string;
-  kind: DispositionKind;
-  toFindingId: string;
-};
+// The write-path input types are the contract's extractor-facing shapes: the
+// contract (not a hand-rolled duplicate) is the source of truth, and it runs at
+// the persistence boundary via Schema.decodeUnknownSync below.
+export type ConsolidationEvidencePointerInput = EvidencePointer;
+export type ConsolidationFindingInput = OutputFinding;
+export type ConsolidationDispositionInput = OutputDisposition;
 
 export type InsertConsolidationRecordInput = {
   activityIntervalId: string;
@@ -39,7 +36,6 @@ export type InsertConsolidationRecordInput = {
   dispositions?: readonly ConsolidationDispositionInput[] | undefined;
   findings: readonly ConsolidationFindingInput[];
   id?: string | undefined;
-  metadata?: JsonRecord | undefined;
   modelId: string;
   narrative: string;
   sessionId: string;
@@ -47,10 +43,11 @@ export type InsertConsolidationRecordInput = {
 };
 
 export type ConsolidationEvidencePointer = {
-  activityIntervalOrdinal: number | null;
+  activityIntervalOrdinal: number | undefined;
   id: string;
+  ordinal: number;
   sessionId: string;
-  turnOrdinal: number | null;
+  turnOrdinal: number | undefined;
 };
 
 export type ConsolidationFinding = {
@@ -65,6 +62,7 @@ export type ConsolidationDisposition = {
   fromFindingId: string;
   id: string;
   kind: DispositionKind;
+  ordinal: number;
   toFindingId: string;
 };
 
@@ -91,7 +89,7 @@ export type ListConsolidationRecordsBySessionInput = {
   workspaceId: string;
 };
 
-export type DeleteConsolidationRecordsForSessionInput = {
+export type DeleteConsolidationRecordsForLineageInput = {
   sessionId: string;
   workspaceId: string;
 };
@@ -100,15 +98,30 @@ export class ConsolidationRecordError extends Data.TaggedError('ConsolidationRec
   readonly message: string;
 }> {}
 
+// A disposition resolved from local keys to minted/persisted finding UUIDs.
+type ResolvedDisposition = {
+  external: boolean;
+  fromFindingId: string;
+  kind: DispositionKind;
+  toFindingId: string;
+};
+
 /**
  * Insert one complete, immutable Consolidation Record (record + findings +
  * evidence pointers + disposition edges) in a single transaction.
  *
- * The write path is a safety boundary for the one rule the database cannot
- * express: a disposition may only target a finding in the same session or its
- * continuation lineage (sessions joined by explicit continuation evidence). The
- * unique-per-interval, finding-type, disposition-kind, and no-self-loop
- * guarantees are enforced by database constraints and are not re-checked here.
+ * The input is the extractor-facing {@link ConsolidationOutput} shape: findings
+ * carry LOCAL keys, never row ids. This function mints the finding UUIDs, resolves
+ * every local-key reference to a minted UUID, validates that cross-record targets
+ * lie in the session's continuation lineage, and persists the resolved graph.
+ *
+ * Two validations live here because the database cannot express them:
+ *   - duplicate local finding keys are rejected before minting (pre-mint dedup);
+ *   - a cross-record disposition target must belong to the same session or its
+ *     continuation lineage (sessions joined by explicit continuation evidence).
+ *
+ * The unique-per-interval, finding-type, disposition-kind, no-self-loop, and
+ * unique-edge guarantees are owned by database constraints and are not re-checked.
  */
 export function insertConsolidationRecord(
   service: DatabaseService,
@@ -127,23 +140,32 @@ async function insertConsolidationRecordUnsafe(
   tx: Tx,
   input: InsertConsolidationRecordInput,
 ): Promise<ConsolidationRecordDetail> {
-  const findings = input.findings;
-  const dispositions = input.dispositions ?? [];
+  const output = decodeOutput(input);
 
-  if (findings.length === 0 && dispositions.length > 0) {
-    throw new ConsolidationRecordError({
-      message: 'a record with dispositions must contain findings',
-    });
+  // Mint one UUID per finding, rejecting duplicate local keys (a check the
+  // database cannot do because it never sees the keys).
+  const idByKey = new Map<string, string>();
+  for (const finding of output.findings) {
+    if (idByKey.has(finding.key)) {
+      throw new ConsolidationRecordError({
+        message: `duplicate finding key "${finding.key}" within the record`,
+      });
+    }
+    idByKey.set(finding.key, randomUUID());
   }
 
-  const findingIds = new Set(findings.map((finding) => finding.id));
-  if (findingIds.size !== findings.length) {
-    throw new ConsolidationRecordError({ message: 'finding ids must be unique within a record' });
-  }
+  const resolvedDispositions = output.dispositions.map((disposition) =>
+    resolveDisposition(disposition, idByKey),
+  );
 
-  await validateDispositionLineage(tx, {
-    dispositions,
-    findingIds,
+  await validateExternalTargets(tx, {
+    externalTargets: [
+      ...new Set(
+        resolvedDispositions
+          .filter((d) => d.external)
+          .map((disposition) => disposition.toFindingId),
+      ),
+    ],
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
   });
@@ -154,9 +176,8 @@ async function insertConsolidationRecordUnsafe(
       activityIntervalId: input.activityIntervalId,
       authPath: input.authPath,
       id: input.id,
-      metadata: input.metadata ?? {},
       modelId: input.modelId,
-      narrative: input.narrative,
+      narrative: output.narrative,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
     })
@@ -165,96 +186,114 @@ async function insertConsolidationRecordUnsafe(
     throw new ConsolidationRecordError({ message: 'consolidation record insert returned no row' });
   }
 
-  if (findings.length > 0) {
-    await tx.insert(consolidationFindings).values(
-      findings.map((finding, index) => ({
-        findingType: finding.type,
-        id: finding.id,
-        ordinal: index,
-        recordId: recordRow.id,
-        sessionId: input.sessionId,
-        text: finding.text,
-        workspaceId: input.workspaceId,
-      })),
-    );
+  const findingRows =
+    output.findings.length === 0
+      ? []
+      : await tx
+          .insert(consolidationFindings)
+          .values(
+            output.findings.map((finding, index) => ({
+              findingType: finding.type,
+              id: idByKey.get(finding.key),
+              ordinal: index,
+              recordId: recordRow.id,
+              sessionId: input.sessionId,
+              text: finding.text,
+              workspaceId: input.workspaceId,
+            })),
+          )
+          .returning();
 
-    const pointerValues = findings.flatMap((finding) =>
-      finding.evidence.map((pointer) => ({
-        activityIntervalOrdinal: pointer.activityIntervalOrdinal ?? null,
-        findingId: finding.id,
-        pointerSessionId: pointer.sessionId,
-        turnOrdinal: pointer.turnOrdinal ?? null,
-        workspaceId: input.workspaceId,
-      })),
-    );
-    if (pointerValues.length > 0) {
-      await tx.insert(consolidationEvidencePointers).values(pointerValues);
-    }
+  const pointerValues = output.findings.flatMap((finding) =>
+    finding.evidence.map((pointer, ordinal) => ({
+      activityIntervalOrdinal: pointer.activityIntervalOrdinal ?? null,
+      findingId: idByKey.get(finding.key) ?? '',
+      ordinal,
+      pointerSessionId: pointer.sessionId,
+      turnOrdinal: pointer.turnOrdinal ?? null,
+      workspaceId: input.workspaceId,
+    })),
+  );
+  const pointerRows =
+    pointerValues.length === 0
+      ? []
+      : await tx.insert(consolidationEvidencePointers).values(pointerValues).returning();
+
+  const dispositionRows =
+    resolvedDispositions.length === 0
+      ? []
+      : await tx
+          .insert(consolidationDispositions)
+          .values(
+            resolvedDispositions.map((disposition, ordinal) => ({
+              fromFindingId: disposition.fromFindingId,
+              kind: disposition.kind,
+              ordinal,
+              recordId: recordRow.id,
+              sessionId: input.sessionId,
+              toFindingId: disposition.toFindingId,
+              workspaceId: input.workspaceId,
+            })),
+          )
+          .returning();
+
+  // Assemble the returned detail straight from the transaction's writes rather
+  // than issuing four more SELECTs (parity with loadRecordDetails is asserted by test).
+  const detail = buildRecordDetails([recordRow], findingRows, pointerRows, dispositionRows)[0];
+  if (detail === undefined) {
+    throw new ConsolidationRecordError({
+      message: 'consolidation record disappeared after insert',
+    });
   }
-
-  if (dispositions.length > 0) {
-    await tx.insert(consolidationDispositions).values(
-      dispositions.map((disposition) => ({
-        fromFindingId: disposition.fromFindingId,
-        kind: disposition.kind,
-        recordId: recordRow.id,
-        sessionId: input.sessionId,
-        toFindingId: disposition.toFindingId,
-        workspaceId: input.workspaceId,
-      })),
-    );
-  }
-
-  return loadRecordDetails(tx, {
-    recordIds: [recordRow.id],
-    workspaceId: input.workspaceId,
-  }).then((records) => {
-    const record = records[0];
-    if (record === undefined) {
-      throw new ConsolidationRecordError({
-        message: 'consolidation record disappeared after insert',
-      });
-    }
-    return record;
-  });
+  return detail;
 }
 
-async function validateDispositionLineage(
+function decodeOutput(input: InsertConsolidationRecordInput): ConsolidationOutput {
+  try {
+    return Schema.decodeUnknownSync(ConsolidationOutput)({
+      narrative: input.narrative,
+      findings: input.findings,
+      dispositions: input.dispositions ?? [],
+    });
+  } catch (cause) {
+    throw new ConsolidationRecordError({
+      message: `invalid consolidation output: ${errorMessage(cause)}`,
+    });
+  }
+}
+
+function resolveDisposition(
+  disposition: OutputDisposition,
+  idByKey: ReadonlyMap<string, string>,
+): ResolvedDisposition {
+  const fromFindingId = idByKey.get(disposition.fromKey);
+  if (fromFindingId === undefined) {
+    throw new ConsolidationRecordError({
+      message: `disposition source key "${disposition.fromKey}" is not a finding in this record`,
+    });
+  }
+  if ('toKey' in disposition) {
+    const toFindingId = idByKey.get(disposition.toKey);
+    if (toFindingId === undefined) {
+      throw new ConsolidationRecordError({
+        message: `disposition target key "${disposition.toKey}" is not a finding in this record`,
+      });
+    }
+    return { external: false, fromFindingId, kind: disposition.kind, toFindingId };
+  }
+  return {
+    external: true,
+    fromFindingId,
+    kind: disposition.kind,
+    toFindingId: disposition.toFindingId,
+  };
+}
+
+async function validateExternalTargets(
   tx: Tx,
-  input: {
-    dispositions: readonly ConsolidationDispositionInput[];
-    findingIds: ReadonlySet<string>;
-    sessionId: string;
-    workspaceId: string;
-  },
+  input: { externalTargets: readonly string[]; sessionId: string; workspaceId: string },
 ): Promise<void> {
-  if (input.dispositions.length === 0) {
-    return;
-  }
-
-  for (const disposition of input.dispositions) {
-    if (!input.findingIds.has(disposition.fromFindingId)) {
-      throw new ConsolidationRecordError({
-        message: `disposition source finding ${disposition.fromFindingId} is not part of this record`,
-      });
-    }
-    if (disposition.fromFindingId === disposition.toFindingId) {
-      throw new ConsolidationRecordError({
-        message: 'a disposition may not reference the same finding as source and target',
-      });
-    }
-  }
-
-  // Targets inside this record are same-session by construction; only targets in
-  // previously persisted records need the lineage check.
-  const externalTargets = [
-    ...new Set(
-      input.dispositions
-        .map((disposition) => disposition.toFindingId)
-        .filter((id) => !input.findingIds.has(id)),
-    ),
-  ];
-  if (externalTargets.length === 0) {
+  if (input.externalTargets.length === 0) {
     return;
   }
 
@@ -265,12 +304,12 @@ async function validateDispositionLineage(
     .where(
       and(
         eq(consolidationFindings.workspaceId, input.workspaceId),
-        inArray(consolidationFindings.id, externalTargets),
+        inArray(consolidationFindings.id, [...input.externalTargets]),
       ),
     );
   const targetSessionById = new Map(targetRows.map((row) => [row.id, row.sessionId]));
 
-  for (const targetId of externalTargets) {
+  for (const targetId of input.externalTargets) {
     const targetSessionId = targetSessionById.get(targetId);
     if (targetSessionId === undefined) {
       throw new ConsolidationRecordError({
@@ -288,7 +327,8 @@ async function validateDispositionLineage(
 /**
  * The continuation lineage of a session: the session itself plus every session
  * reachable through explicit continuation evidence, in either direction,
- * transitively.
+ * transitively. Shared by disposition validation and lineage invalidation so both
+ * see the same set. A depth cap bounds a pathological continuation graph.
  */
 async function lineageSessionIds(
   tx: Tx,
@@ -297,14 +337,15 @@ async function lineageSessionIds(
 ): Promise<Set<string>> {
   const rows = rowsFromExecute<{ session_id: string }>(
     await tx.execute(drizzleSql`
-      with recursive lineage(session_id) as (
-        select ${sessionId}::uuid as session_id
+      with recursive lineage(session_id, depth) as (
+        select ${sessionId}::uuid as session_id, 0 as depth
         union
         select
           case
             when sr.source_session_id = l.session_id then sr.target_session_id
             else sr.source_session_id
-          end as session_id
+          end as session_id,
+          l.depth + 1 as depth
         from session_relationships sr
         inner join lineage l
           on sr.source_session_id = l.session_id
@@ -312,8 +353,9 @@ async function lineageSessionIds(
         where sr.workspace_id = ${workspaceId}
           and sr.relationship_type = 'continuation'
           and sr.confidence = 'explicit'
+          and l.depth < 64
       )
-      select session_id::text as session_id from lineage
+      select distinct session_id::text as session_id from lineage
     `),
   );
   return new Set(rows.map((row) => row.session_id));
@@ -397,34 +439,48 @@ export function listConsolidationRecordsBySession(
 }
 
 /**
- * Chain-delete every Consolidation Record for a session. Cascades remove the
- * records' findings, evidence pointers, and disposition edges (including
- * cross-record dispositions that targeted those findings). The future redaction
- * cascade calls this to invalidate a session's whole record chain.
+ * Chain-delete every Consolidation Record for the continuation lineage of a
+ * session — the session itself and every session joined to it by explicit
+ * continuation evidence. Chain invalidation operates on the lineage, not a single
+ * session, because cross-session disposition edges cannot be rebuilt by per-session
+ * regeneration: dropping one session's chain would leave dangling edges (or, once
+ * regenerated, no way to reproduce them). Cascades remove the records' findings,
+ * evidence pointers, and disposition edges. Returns the number of records deleted.
  */
-export function deleteConsolidationRecordsForSession(
+export function deleteConsolidationRecordsForLineage(
   service: DatabaseService,
-  input: DeleteConsolidationRecordsForSessionInput,
+  input: DeleteConsolidationRecordsForLineageInput,
 ): Effect.Effect<number, DatabaseError | ConsolidationRecordError> {
   return Effect.tryPromise({
-    try: async () => {
-      const deleted = await service.db
-        .delete(consolidationRecords)
-        .where(
-          and(
-            eq(consolidationRecords.workspaceId, input.workspaceId),
-            eq(consolidationRecords.sessionId, input.sessionId),
-          ),
-        )
-        .returning({ id: consolidationRecords.id });
-      return deleted.length;
-    },
+    try: () =>
+      service.db.transaction(async (tx) => {
+        const lineage = await lineageSessionIds(tx, input.workspaceId, input.sessionId);
+        const sessionIds = [...lineage];
+        if (sessionIds.length === 0) {
+          return 0;
+        }
+        const deleted = await tx
+          .delete(consolidationRecords)
+          .where(
+            and(
+              eq(consolidationRecords.workspaceId, input.workspaceId),
+              inArray(consolidationRecords.sessionId, sessionIds),
+            ),
+          )
+          .returning({ id: consolidationRecords.id });
+        return deleted.length;
+      }),
     catch: (cause) =>
       cause instanceof ConsolidationRecordError
         ? cause
         : new ConsolidationRecordError({ message: errorMessage(cause) }),
   });
 }
+
+type RecordRow = typeof consolidationRecords.$inferSelect;
+type FindingRow = typeof consolidationFindings.$inferSelect;
+type PointerRow = typeof consolidationEvidencePointers.$inferSelect;
+type DispositionRow = typeof consolidationDispositions.$inferSelect;
 
 async function loadRecordDetails(
   db: DatabaseService['db'] | Tx,
@@ -469,8 +525,8 @@ async function loadRecordDetails(
             ),
           )
           .orderBy(
-            asc(consolidationEvidencePointers.createdAt),
-            asc(consolidationEvidencePointers.id),
+            asc(consolidationEvidencePointers.findingId),
+            asc(consolidationEvidencePointers.ordinal),
           );
 
   const dispositionRows = await db
@@ -482,42 +538,54 @@ async function loadRecordDetails(
         inArray(consolidationDispositions.recordId, [...input.recordIds]),
       ),
     )
-    .orderBy(asc(consolidationDispositions.createdAt), asc(consolidationDispositions.id));
+    .orderBy(asc(consolidationDispositions.recordId), asc(consolidationDispositions.ordinal));
 
+  return buildRecordDetails(recordRows, findingRows, pointerRows, dispositionRows);
+}
+
+// Single assembler shared by the write path (from `.returning()` rows) and the
+// read path (from SELECTed rows), so the two are provably identical in shape and
+// order. Ordering is by the persisted ordinals, so input row order is irrelevant.
+function buildRecordDetails(
+  recordRows: readonly RecordRow[],
+  findingRows: readonly FindingRow[],
+  pointerRows: readonly PointerRow[],
+  dispositionRows: readonly DispositionRow[],
+): ConsolidationRecordDetail[] {
   const pointersByFinding = new Map<string, ConsolidationEvidencePointer[]>();
-  for (const row of pointerRows) {
+  for (const row of [...pointerRows].toSorted((a, b) => a.ordinal - b.ordinal)) {
     const existing = pointersByFinding.get(row.findingId) ?? [];
     existing.push({
-      activityIntervalOrdinal: row.activityIntervalOrdinal,
+      activityIntervalOrdinal: row.activityIntervalOrdinal ?? undefined,
       id: row.id,
+      ordinal: row.ordinal,
       sessionId: row.pointerSessionId,
-      turnOrdinal: row.turnOrdinal,
+      turnOrdinal: row.turnOrdinal ?? undefined,
     });
     pointersByFinding.set(row.findingId, existing);
   }
 
   const findingsByRecord = new Map<string, ConsolidationFinding[]>();
-  for (const row of findingRows) {
+  for (const row of [...findingRows].toSorted((a, b) => a.ordinal - b.ordinal)) {
     const existing = findingsByRecord.get(row.recordId) ?? [];
     existing.push({
       evidence: pointersByFinding.get(row.id) ?? [],
       id: row.id,
       ordinal: row.ordinal,
       text: row.text,
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- finding_type is check-constrained to FindingType at the database
-      type: row.findingType as FindingType,
+      type: row.findingType,
     });
     findingsByRecord.set(row.recordId, existing);
   }
 
   const dispositionsByRecord = new Map<string, ConsolidationDisposition[]>();
-  for (const row of dispositionRows) {
+  for (const row of [...dispositionRows].toSorted((a, b) => a.ordinal - b.ordinal)) {
     const existing = dispositionsByRecord.get(row.recordId) ?? [];
     existing.push({
       fromFindingId: row.fromFindingId,
       id: row.id,
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- kind is check-constrained to DispositionKind at the database
-      kind: row.kind as DispositionKind,
+      kind: row.kind,
+      ordinal: row.ordinal,
       toFindingId: row.toFindingId,
     });
     dispositionsByRecord.set(row.recordId, existing);
@@ -535,23 +603,6 @@ async function loadRecordDetails(
     sessionId: row.sessionId,
     workspaceId: row.workspaceId,
   }));
-}
-
-function rowsFromExecute<T>(value: unknown): T[] {
-  if (Array.isArray(value)) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
-    return value as T[];
-  }
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'rows' in value &&
-    Array.isArray((value as { rows: unknown }).rows)
-  ) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
-    return (value as { rows: T[] }).rows;
-  }
-  return [];
 }
 
 function errorMessage(cause: unknown): string {

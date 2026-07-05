@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
+import { ConsolidationRecord } from '@saga/contracts';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import {
   ConsolidationRecordError,
-  deleteConsolidationRecordsForSession,
+  deleteConsolidationRecordsForLineage,
   getConsolidationRecordByInterval,
   insertConsolidationRecord,
   listConsolidationRecordsBySession,
@@ -153,11 +154,10 @@ describePostgres('consolidation records', () => {
     });
   }
 
-  test('inserts a complete record and reads it back by interval', async () => {
+  test('mints finding ids, inserts a complete record, and reads it back by interval', async () => {
     const workspaceId = await createWorkspace('insert');
     const sessionId = await createSession(workspaceId);
     const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
-    const findingId = randomUUID();
 
     const inserted = await Effect.runPromise(
       insertConsolidationRecord(
@@ -170,7 +170,7 @@ describePostgres('consolidation records', () => {
           authPath: 'api_key',
           findings: [
             {
-              id: findingId,
+              key: 'a',
               type: 'decision',
               text: 'Chose composite foreign keys.',
               evidence: [{ sessionId, activityIntervalOrdinal: 0, turnOrdinal: 3 }],
@@ -183,14 +183,115 @@ describePostgres('consolidation records', () => {
     expect(inserted.modelId).toBe('gpt-test');
     expect(inserted.authPath).toBe('api_key');
     expect(inserted.findings).toHaveLength(1);
+    // The finding id is a system-minted UUID, not the local key.
+    expect(inserted.findings[0]?.id).toMatch(/^[0-9a-f-]{36}$/u);
     expect(inserted.findings[0]?.evidence[0]?.turnOrdinal).toBe(3);
 
     const fetched = await Effect.runPromise(
       getConsolidationRecordByInterval(db(), { workspaceId, activityIntervalId }),
     );
     expect(fetched?.id).toBe(inserted.id);
-    expect(fetched?.findings[0]?.id).toBe(findingId);
+    expect(fetched?.findings[0]?.id).toBe(inserted.findings[0]?.id);
     expect(fetched?.findings[0]?.type).toBe('decision');
+  });
+
+  test('assembled insert detail matches the read path (parity)', async () => {
+    const workspaceId = await createWorkspace('parity');
+    const sessionId = await createSession(workspaceId);
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const inserted = await Effect.runPromise(
+      insertConsolidationRecord(
+        db(),
+        baseRecord({
+          activityIntervalId,
+          sessionId,
+          workspaceId,
+          findings: [
+            {
+              key: 'a',
+              type: 'decision',
+              text: 'a',
+              evidence: [
+                { sessionId, activityIntervalOrdinal: 0, turnOrdinal: 1 },
+                { sessionId, turnOrdinal: 2 },
+              ],
+            },
+            { key: 'b', type: 'follow_up', text: 'b', evidence: [] },
+          ],
+          dispositions: [{ kind: 'builds_on', fromKey: 'b', toKey: 'a' }],
+        }),
+      ),
+    );
+
+    const fetched = await Effect.runPromise(
+      getConsolidationRecordByInterval(db(), { workspaceId, activityIntervalId }),
+    );
+    expect(fetched).toStrictEqual(inserted);
+  });
+
+  test('a persisted record detail decodes against the ConsolidationRecord contract', async () => {
+    const workspaceId = await createWorkspace('roundtrip');
+    const sessionId = await createSession(workspaceId);
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const inserted = await Effect.runPromise(
+      insertConsolidationRecord(
+        db(),
+        baseRecord({
+          activityIntervalId,
+          sessionId,
+          workspaceId,
+          findings: [
+            // no ordinals -> absent decodes as undefined (not null) against the contract
+            { key: 'a', type: 'decision', text: 'a', evidence: [{ sessionId }] },
+          ],
+        }),
+      ),
+    );
+
+    const decoded = Schema.decodeUnknownSync(ConsolidationRecord)(inserted);
+    expect(decoded.id).toBe(inserted.id);
+    expect(decoded.findings[0]?.id).toBe(inserted.findings[0]?.id);
+  });
+
+  test('round-trips evidence pointers in their emitted order', async () => {
+    const workspaceId = await createWorkspace('pointerorder');
+    const sessionId = await createSession(workspaceId);
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const inserted = await Effect.runPromise(
+      insertConsolidationRecord(
+        db(),
+        baseRecord({
+          activityIntervalId,
+          sessionId,
+          workspaceId,
+          findings: [
+            {
+              key: 'a',
+              type: 'decision',
+              text: 'ordered',
+              evidence: [
+                { sessionId, turnOrdinal: 100 },
+                { sessionId, turnOrdinal: 200 },
+                { sessionId, turnOrdinal: 300 },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(inserted.findings[0]?.evidence.map((pointer) => pointer.turnOrdinal)).toStrictEqual([
+      100, 200, 300,
+    ]);
+
+    const fetched = await Effect.runPromise(
+      getConsolidationRecordByInterval(db(), { workspaceId, activityIntervalId }),
+    );
+    expect(fetched?.findings[0]?.evidence.map((pointer) => pointer.turnOrdinal)).toStrictEqual([
+      100, 200, 300,
+    ]);
   });
 
   test('lists a session records in activity-interval order', async () => {
@@ -219,6 +320,60 @@ describePostgres('consolidation records', () => {
     expect(records.map((record) => record.narrative)).toStrictEqual(['first', 'second']);
   });
 
+  test('rejects a duplicate local finding key before minting', async () => {
+    const workspaceId = await createWorkspace('dupkey');
+    const sessionId = await createSession(workspaceId);
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        insertConsolidationRecord(
+          db(),
+          baseRecord({
+            activityIntervalId,
+            sessionId,
+            workspaceId,
+            findings: [
+              { key: 'dup', type: 'decision', text: 'first', evidence: [] },
+              { key: 'dup', type: 'follow_up', text: 'second', evidence: [] },
+            ],
+          }),
+        ),
+      ),
+    );
+    expect(error).toBeInstanceOf(ConsolidationRecordError);
+    expect(error.message).toContain('duplicate finding key');
+
+    const written = await db()
+      .db.select()
+      .from(consolidationRecords)
+      .where(eq(consolidationRecords.sessionId, sessionId));
+    expect(written).toHaveLength(0);
+  });
+
+  test('rejects a disposition whose local target key names no finding', async () => {
+    const workspaceId = await createWorkspace('unknownkey');
+    const sessionId = await createSession(workspaceId);
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        insertConsolidationRecord(
+          db(),
+          baseRecord({
+            activityIntervalId,
+            sessionId,
+            workspaceId,
+            findings: [{ key: 'a', type: 'decision', text: 'a', evidence: [] }],
+            dispositions: [{ kind: 'builds_on', fromKey: 'a', toKey: 'missing' }],
+          }),
+        ),
+      ),
+    );
+    expect(error).toBeInstanceOf(ConsolidationRecordError);
+    expect(error.message).toContain('is not a finding in this record');
+  });
+
   test('rejects a second record for the same interval', async () => {
     const workspaceId = await createWorkspace('unique');
     const sessionId = await createSession(workspaceId);
@@ -238,28 +393,15 @@ describePostgres('consolidation records', () => {
     const workspaceId = await createWorkspace('findingtype');
     const sessionId = await createSession(workspaceId);
     const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
-    const [record] = await db()
-      .db.insert(consolidationRecords)
-      .values({
-        workspaceId,
-        sessionId,
-        activityIntervalId,
-        narrative: 'n',
-        modelId: 'm',
-        authPath: 'a',
-      })
-      .returning();
+    const record = await Effect.runPromise(
+      insertConsolidationRecord(db(), baseRecord({ activityIntervalId, sessionId, workspaceId })),
+    );
+    // Bypass the typed API to prove the check constraint owns the finding type.
     await expect(
-      db()
-        .db.insert(consolidationFindings)
-        .values({
-          workspaceId,
-          sessionId,
-          recordId: record?.id ?? '',
-          ordinal: 0,
-          findingType: 'speculation',
-          text: 't',
-        }),
+      db().sql`
+        insert into consolidation_findings (workspace_id, session_id, record_id, ordinal, finding_type, text)
+        values (${workspaceId}, ${sessionId}, ${record.id}, 0, 'speculation', 't')
+      `,
     ).rejects.toBeInstanceOf(Error);
   });
 
@@ -267,59 +409,37 @@ describePostgres('consolidation records', () => {
     const workspaceId = await createWorkspace('disp');
     const sessionId = await createSession(workspaceId);
     const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
-    const findingId = randomUUID();
-    await Effect.runPromise(
+    const record = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
         baseRecord({
           activityIntervalId,
           sessionId,
           workspaceId,
-          findings: [{ id: findingId, type: 'decision', text: 't', evidence: [] }],
+          findings: [
+            { key: 'a', type: 'decision', text: 't', evidence: [] },
+            { key: 'b', type: 'follow_up', text: 't2', evidence: [] },
+          ],
         }),
       ),
     );
-    const [record] = await db()
-      .db.select({ id: consolidationRecords.id })
-      .from(consolidationRecords)
-      .where(eq(consolidationRecords.activityIntervalId, activityIntervalId));
-    const otherFindingId = randomUUID();
-    await db()
-      .db.insert(consolidationFindings)
-      .values({
-        id: otherFindingId,
-        workspaceId,
-        sessionId,
-        recordId: record?.id ?? '',
-        ordinal: 1,
-        findingType: 'follow_up',
-        text: 't2',
-      });
+    const findingA = record.findings[0]?.id ?? '';
+    const findingB = record.findings[1]?.id ?? '';
 
     await expect(
-      db()
-        .db.insert(consolidationDispositions)
-        .values({
-          workspaceId,
-          sessionId,
-          recordId: record?.id ?? '',
-          fromFindingId: findingId,
-          toFindingId: otherFindingId,
-          kind: 'contradicts',
-        }),
+      db().sql`
+        insert into consolidation_dispositions
+          (workspace_id, session_id, record_id, from_finding_id, to_finding_id, kind, ordinal)
+        values (${workspaceId}, ${sessionId}, ${record.id}, ${findingA}, ${findingB}, 'contradicts', 5)
+      `,
     ).rejects.toBeInstanceOf(Error);
 
     await expect(
-      db()
-        .db.insert(consolidationDispositions)
-        .values({
-          workspaceId,
-          sessionId,
-          recordId: record?.id ?? '',
-          fromFindingId: findingId,
-          toFindingId: findingId,
-          kind: 'builds_on',
-        }),
+      db().sql`
+        insert into consolidation_dispositions
+          (workspace_id, session_id, record_id, from_finding_id, to_finding_id, kind, ordinal)
+        values (${workspaceId}, ${sessionId}, ${record.id}, ${findingA}, ${findingA}, 'builds_on', 6)
+      `,
     ).rejects.toBeInstanceOf(Error);
   });
 
@@ -327,8 +447,6 @@ describePostgres('consolidation records', () => {
     const workspaceId = await createWorkspace('cascade');
     const sessionId = await createSession(workspaceId);
     const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
-    const findingA = randomUUID();
-    const findingB = randomUUID();
 
     const inserted = await Effect.runPromise(
       insertConsolidationRecord(
@@ -338,18 +456,14 @@ describePostgres('consolidation records', () => {
           sessionId,
           workspaceId,
           findings: [
-            {
-              id: findingA,
-              type: 'decision',
-              text: 'a',
-              evidence: [{ sessionId, turnOrdinal: 1 }],
-            },
-            { id: findingB, type: 'candidate_learning', text: 'b', evidence: [] },
+            { key: 'a', type: 'decision', text: 'a', evidence: [{ sessionId, turnOrdinal: 1 }] },
+            { key: 'b', type: 'candidate_learning', text: 'b', evidence: [] },
           ],
-          dispositions: [{ kind: 'builds_on', fromFindingId: findingB, toFindingId: findingA }],
+          dispositions: [{ kind: 'builds_on', fromKey: 'b', toKey: 'a' }],
         }),
       ),
     );
+    const findingA = inserted.findings[0]?.id ?? '';
 
     await db().db.delete(consolidationRecords).where(eq(consolidationRecords.id, inserted.id));
 
@@ -370,53 +484,116 @@ describePostgres('consolidation records', () => {
     expect(dispositions).toHaveLength(0);
   });
 
-  test('chain-deletes every record for a session', async () => {
-    const workspaceId = await createWorkspace('chain');
+  test('deleting an activity interval cascades into the consolidation tables', async () => {
+    const workspaceId = await createWorkspace('interval-cascade');
     const sessionId = await createSession(workspaceId);
-    const interval0 = await createInterval(workspaceId, sessionId, 0);
-    const interval1 = await createInterval(workspaceId, sessionId, 1);
-    await Effect.runPromise(
+    const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
+
+    const inserted = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
-        baseRecord({ activityIntervalId: interval0, sessionId, workspaceId }),
-      ),
-    );
-    await Effect.runPromise(
-      insertConsolidationRecord(
-        db(),
-        baseRecord({ activityIntervalId: interval1, sessionId, workspaceId }),
+        baseRecord({
+          activityIntervalId,
+          sessionId,
+          workspaceId,
+          findings: [
+            { key: 'a', type: 'decision', text: 'a', evidence: [{ sessionId, turnOrdinal: 1 }] },
+          ],
+        }),
       ),
     );
 
-    const deleted = await Effect.runPromise(
-      deleteConsolidationRecordsForSession(db(), { workspaceId, sessionId }),
-    );
-    expect(deleted).toBe(2);
-    const remaining = await Effect.runPromise(
-      listConsolidationRecordsBySession(db(), { workspaceId, sessionId }),
-    );
-    expect(remaining).toHaveLength(0);
+    await db().db.delete(activityIntervals).where(eq(activityIntervals.id, activityIntervalId));
+
+    const records = await db()
+      .db.select()
+      .from(consolidationRecords)
+      .where(eq(consolidationRecords.id, inserted.id));
+    const findings = await db()
+      .db.select()
+      .from(consolidationFindings)
+      .where(eq(consolidationFindings.recordId, inserted.id));
+    const pointers = await db()
+      .db.select()
+      .from(consolidationEvidencePointers)
+      .where(eq(consolidationEvidencePointers.findingId, inserted.findings[0]?.id ?? ''));
+    expect(records).toHaveLength(0);
+    expect(findings).toHaveLength(0);
+    expect(pointers).toHaveLength(0);
   });
 
-  test('accepts a same-session disposition into an earlier record', async () => {
+  test('lineage delete removes the record chains of every continuation-linked session', async () => {
+    const workspaceId = await createWorkspace('lineage-delete');
+    const priorSessionId = await createSession(workspaceId);
+    const priorInterval = await createInterval(workspaceId, priorSessionId, 0);
+    const prior = await Effect.runPromise(
+      insertConsolidationRecord(
+        db(),
+        baseRecord({
+          activityIntervalId: priorInterval,
+          sessionId: priorSessionId,
+          workspaceId,
+          findings: [{ key: 'p', type: 'decision', text: 'prior', evidence: [] }],
+        }),
+      ),
+    );
+    const priorFindingId = prior.findings[0]?.id ?? '';
+
+    const continuationSessionId = await createSession(workspaceId);
+    await linkContinuation(workspaceId, continuationSessionId, priorSessionId);
+    const continuationInterval = await createInterval(workspaceId, continuationSessionId, 0);
+    // A cross-record disposition edge into the prior session's finding.
+    await Effect.runPromise(
+      insertConsolidationRecord(
+        db(),
+        baseRecord({
+          activityIntervalId: continuationInterval,
+          sessionId: continuationSessionId,
+          workspaceId,
+          findings: [{ key: 'c', type: 'follow_up', text: 'cont', evidence: [] }],
+          dispositions: [{ kind: 'builds_on', fromKey: 'c', toFindingId: priorFindingId }],
+        }),
+      ),
+    );
+
+    // Deleting from either session's lineage removes BOTH chains.
+    const deleted = await Effect.runPromise(
+      deleteConsolidationRecordsForLineage(db(), {
+        workspaceId,
+        sessionId: continuationSessionId,
+      }),
+    );
+    expect(deleted).toBe(2);
+
+    const priorRemaining = await Effect.runPromise(
+      listConsolidationRecordsBySession(db(), { workspaceId, sessionId: priorSessionId }),
+    );
+    const continuationRemaining = await Effect.runPromise(
+      listConsolidationRecordsBySession(db(), { workspaceId, sessionId: continuationSessionId }),
+    );
+    expect(priorRemaining).toHaveLength(0);
+    expect(continuationRemaining).toHaveLength(0);
+  });
+
+  test('accepts a same-session cross-record disposition into an earlier record', async () => {
     const workspaceId = await createWorkspace('samelineage');
     const sessionId = await createSession(workspaceId);
     const interval0 = await createInterval(workspaceId, sessionId, 0);
     const interval1 = await createInterval(workspaceId, sessionId, 1);
-    const earlierFinding = randomUUID();
-    const laterFinding = randomUUID();
 
-    await Effect.runPromise(
+    const earlier = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
         baseRecord({
           activityIntervalId: interval0,
           sessionId,
           workspaceId,
-          findings: [{ id: earlierFinding, type: 'decision', text: 'earlier', evidence: [] }],
+          findings: [{ key: 'earlier', type: 'decision', text: 'earlier', evidence: [] }],
         }),
       ),
     );
+    const earlierFindingId = earlier.findings[0]?.id ?? '';
+
     const later = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
@@ -424,38 +601,35 @@ describePostgres('consolidation records', () => {
           activityIntervalId: interval1,
           sessionId,
           workspaceId,
-          findings: [{ id: laterFinding, type: 'follow_up', text: 'later', evidence: [] }],
-          dispositions: [
-            { kind: 'builds_on', fromFindingId: laterFinding, toFindingId: earlierFinding },
-          ],
+          findings: [{ key: 'later', type: 'follow_up', text: 'later', evidence: [] }],
+          dispositions: [{ kind: 'builds_on', fromKey: 'later', toFindingId: earlierFindingId }],
         }),
       ),
     );
     expect(later.dispositions).toHaveLength(1);
-    expect(later.dispositions[0]?.toFindingId).toBe(earlierFinding);
+    expect(later.dispositions[0]?.toFindingId).toBe(earlierFindingId);
   });
 
   test('accepts a disposition into an explicitly continued session', async () => {
     const workspaceId = await createWorkspace('continuation');
     const priorSessionId = await createSession(workspaceId);
     const priorInterval = await createInterval(workspaceId, priorSessionId, 0);
-    const priorFinding = randomUUID();
-    await Effect.runPromise(
+    const prior = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
         baseRecord({
           activityIntervalId: priorInterval,
           sessionId: priorSessionId,
           workspaceId,
-          findings: [{ id: priorFinding, type: 'decision', text: 'prior', evidence: [] }],
+          findings: [{ key: 'prior', type: 'decision', text: 'prior', evidence: [] }],
         }),
       ),
     );
+    const priorFindingId = prior.findings[0]?.id ?? '';
 
     const continuationSessionId = await createSession(workspaceId);
     await linkContinuation(workspaceId, continuationSessionId, priorSessionId);
     const continuationInterval = await createInterval(workspaceId, continuationSessionId, 0);
-    const continuationFinding = randomUUID();
 
     const record = await Effect.runPromise(
       insertConsolidationRecord(
@@ -464,36 +638,33 @@ describePostgres('consolidation records', () => {
           activityIntervalId: continuationInterval,
           sessionId: continuationSessionId,
           workspaceId,
-          findings: [{ id: continuationFinding, type: 'follow_up', text: 'cont', evidence: [] }],
-          dispositions: [
-            { kind: 'builds_on', fromFindingId: continuationFinding, toFindingId: priorFinding },
-          ],
+          findings: [{ key: 'cont', type: 'follow_up', text: 'cont', evidence: [] }],
+          dispositions: [{ kind: 'builds_on', fromKey: 'cont', toFindingId: priorFindingId }],
         }),
       ),
     );
-    expect(record.dispositions[0]?.toFindingId).toBe(priorFinding);
+    expect(record.dispositions[0]?.toFindingId).toBe(priorFindingId);
   });
 
   test('rejects a disposition into an unrelated session', async () => {
     const workspaceId = await createWorkspace('unrelated');
     const unrelatedSessionId = await createSession(workspaceId);
     const unrelatedInterval = await createInterval(workspaceId, unrelatedSessionId, 0);
-    const unrelatedFinding = randomUUID();
-    await Effect.runPromise(
+    const unrelated = await Effect.runPromise(
       insertConsolidationRecord(
         db(),
         baseRecord({
           activityIntervalId: unrelatedInterval,
           sessionId: unrelatedSessionId,
           workspaceId,
-          findings: [{ id: unrelatedFinding, type: 'decision', text: 'other', evidence: [] }],
+          findings: [{ key: 'other', type: 'decision', text: 'other', evidence: [] }],
         }),
       ),
     );
+    const unrelatedFindingId = unrelated.findings[0]?.id ?? '';
 
     const sessionId = await createSession(workspaceId);
     const activityIntervalId = await createInterval(workspaceId, sessionId, 0);
-    const localFinding = randomUUID();
 
     // Effect.flip moves the expected failure onto the success channel so the
     // assertions are unconditional; an unexpected success rejects runPromise.
@@ -505,9 +676,9 @@ describePostgres('consolidation records', () => {
             activityIntervalId,
             sessionId,
             workspaceId,
-            findings: [{ id: localFinding, type: 'follow_up', text: 'local', evidence: [] }],
+            findings: [{ key: 'local', type: 'follow_up', text: 'local', evidence: [] }],
             dispositions: [
-              { kind: 'builds_on', fromFindingId: localFinding, toFindingId: unrelatedFinding },
+              { kind: 'builds_on', fromKey: 'local', toFindingId: unrelatedFindingId },
             ],
           }),
         ),
