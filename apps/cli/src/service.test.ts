@@ -187,6 +187,44 @@ describe('renderLaunchdPlist', () => {
     expect(plist).not.toContain('tsx/dist/cli.mjs');
     expect(plist).not.toContain('apps/cli/src/main.ts');
   });
+
+  it('uses an accessible home WorkingDirectory (not the checkout) when compiled', () => {
+    // The compiled binary is location-independent (it reads ~/.saga/config.json,
+    // not repo files). A launchd agent lacks Full-Disk-Access to non-boot volumes,
+    // so a checkout-on-/Volumes WorkingDirectory makes chdir fail and the process
+    // die silently before any output (SGA-230). Compiled plists must not reference
+    // the checkout at all.
+    const plist = renderLaunchdPlist({
+      binPath: '/Users/drew/.local/bin/saga',
+      compiled: true,
+      home: '/Users/drew',
+      paths: {
+        plistPath: '/Users/drew/Library/LaunchAgents/com.saga.service.plist',
+        stderrPath: '/Users/drew/Library/Logs/saga/service.err.log',
+        stdoutPath: '/Users/drew/Library/Logs/saga/service.out.log',
+      },
+      projectRoot: '/Volumes/data/workspaces/saga',
+    });
+
+    expect(plist).toContain('<key>WorkingDirectory</key>\n  <string>/Users/drew</string>');
+    expect(plist).not.toContain('/Volumes/data/workspaces/saga');
+  });
+
+  it('keeps the project checkout as WorkingDirectory in source mode', () => {
+    const plist = renderLaunchdPlist({
+      compiled: false,
+      paths: {
+        plistPath: '/Users/drew/Library/LaunchAgents/com.saga.service.plist',
+        stderrPath: '/Users/drew/Library/Logs/saga/service.err.log',
+        stdoutPath: '/Users/drew/Library/Logs/saga/service.out.log',
+      },
+      projectRoot: '/Volumes/data/workspaces/saga',
+    });
+
+    expect(plist).toContain(
+      '<key>WorkingDirectory</key>\n  <string>/Volumes/data/workspaces/saga</string>',
+    );
+  });
 });
 
 describe('launchdPrintProcess', () => {
