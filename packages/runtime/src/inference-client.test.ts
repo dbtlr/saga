@@ -11,6 +11,7 @@ import {
   InferenceMalformedResponse,
   InferenceNotConfigured,
   InferencePolicyDisabled,
+  InferenceTransportError,
   makeCodexSubscriptionInferenceClient,
   makeOpenAiApiInferenceClient,
   resolveInferenceClient,
@@ -82,10 +83,29 @@ const fetch401: typeof fetch = async () => new Response('', { status: 401 });
 const fetchNoOutputText: typeof fetch = async () => Response.json({ output: [] });
 const fetchSchemaInvalid: typeof fetch = async () => openAiResponse({ count: 'not-a-number' });
 const fetchEmptyStream: typeof fetch = async () =>
-  sseResponse(['data: {"type":"response.completed"}', 'data: [DONE]', ''].join('\n'));
+  sseResponse(['data: {"type":"response.completed"}', '', 'data: [DONE]', ''].join('\n'));
 const neverFetch: typeof fetch = async () => {
   throw new Error('fetch should not be called during resolution');
 };
+// A fetch that only settles when its abort signal fires, so a tiny timeout override drives it.
+const neverResolvingFetch: typeof fetch = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    const signal = init?.signal ?? undefined;
+    signal?.addEventListener('abort', () => {
+      reject(signal.reason as Error);
+    });
+  });
+const fetchRefusal: typeof fetch = async () =>
+  Response.json({
+    output: [
+      {
+        content: [{ refusal: 'I will not do that secret thing', type: 'refusal' }],
+        type: 'message',
+      },
+    ],
+  });
+const fetchIncomplete: typeof fetch = async () =>
+  Response.json({ incomplete_details: { reason: 'max_output_tokens' }, status: 'incomplete' });
 
 function tempHome(): string {
   return mkdtempSync(join(tmpdir(), 'saga-inference-client-'));
@@ -120,7 +140,73 @@ describe('makeOpenAiApiInferenceClient', () => {
     });
     const body = parseRequestBody(calls[0]?.init);
     expect(body.model).toBe('gpt-4o-mini');
-    expect(body.text).toMatchObject({ format: { strict: true, type: 'json_schema' } });
+    expect(body.text).toMatchObject({ format: { type: 'json_schema' } });
+  });
+
+  it('does not send strict:true and round-trips a schema with optional fields', async () => {
+    const OptionalSchema = Schema.Struct({
+      count: Schema.Number,
+      note: Schema.optional(Schema.String),
+    });
+    const calls: CapturedCall[] = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      calls.push({ init, url: requestUrl(url) });
+      // The model omits the optional field entirely; strict mode would have 400'd the request.
+      return openAiResponse({ count: 4 });
+    };
+    const client = makeOpenAiApiInferenceClient({ apiKey: 'sk', fetch: fetchImpl, model: 'm' });
+
+    const result = await runEither(
+      client.generateStructured({
+        input: 'x',
+        instructions: 'y',
+        schema: OptionalSchema,
+      }),
+    );
+
+    expect(expectRight(result)).toStrictEqual({ count: 4 });
+    const format = parseRequestBody(calls[0]?.init).text as { format: Record<string, unknown> };
+    expect(format.format.strict).toBeUndefined();
+  });
+
+  it('maps a timed-out request to InferenceTransportError', async () => {
+    const client = makeOpenAiApiInferenceClient({
+      apiKey: 'sk',
+      fetch: neverResolvingFetch,
+      model: 'm',
+      timeoutMs: 5,
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    const error = expectLeft(result);
+    expect(error).toBeInstanceOf(InferenceTransportError);
+    expect((error as InferenceTransportError).detail).toContain('timed out');
+  });
+
+  it('maps a refusal content part to a generic InferenceMalformedResponse', async () => {
+    const client = makeOpenAiApiInferenceClient({ apiKey: 'sk', fetch: fetchRefusal, model: 'm' });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    const error = expectLeft(result);
+    expect(error).toBeInstanceOf(InferenceMalformedResponse);
+    expect((error as InferenceMalformedResponse).detail).toBe('model refused the request');
+    expect((error as InferenceMalformedResponse).detail).not.toContain('secret');
+  });
+
+  it('maps a top-level incomplete response to InferenceTransportError', async () => {
+    const client = makeOpenAiApiInferenceClient({
+      apiKey: 'sk',
+      fetch: fetchIncomplete,
+      model: 'm',
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    const error = expectLeft(result);
+    expect(error).toBeInstanceOf(InferenceTransportError);
+    expect((error as InferenceTransportError).detail).toContain('truncated');
   });
 
   it('maps HTTP 401 to InferenceAuthExpired', async () => {
@@ -162,8 +248,11 @@ describe('makeCodexSubscriptionInferenceClient', () => {
     'data: {"type":"response.created"}',
     '',
     String.raw`data: {"type":"response.output_text.delta","delta":"{\"title\":"}`,
+    '',
     String.raw`data: {"type":"response.output_text.delta","delta":"\"Session\",\"count\":7}"}`,
+    '',
     'data: {"type":"response.completed"}',
+    '',
     'data: [DONE]',
     '',
   ].join('\n');
@@ -219,6 +308,79 @@ describe('makeCodexSubscriptionInferenceClient', () => {
     const result = await runEither(client.generateStructured(request()));
 
     expect(expectLeft(result)).toBeInstanceOf(InferenceMalformedResponse);
+  });
+
+  it('joins the multiple data: lines of a single event before parsing', async () => {
+    const stream = [
+      'data: {"type":"response.output_text.delta","delta":',
+      String.raw`data: "{\"title\":\"S\",\"count\":1}"}`,
+      '',
+      'data: {"type":"response.completed"}',
+      '',
+    ].join('\n');
+    const client = makeCodexSubscriptionInferenceClient({
+      accessToken: 'a',
+      accountId: 'b',
+      fetch: async () => sseResponse(stream),
+      model: 'm',
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    expect(expectRight(result)).toStrictEqual({ count: 1, title: 'S' });
+  });
+
+  it('assembles output from a CR-terminated stream', async () => {
+    const stream = [
+      String.raw`data: {"type":"response.output_text.delta","delta":"{\"title\":\"S\",\"count\":2}"}`,
+      '',
+      'data: {"type":"response.completed"}',
+      '',
+      '',
+    ].join('\r');
+    const client = makeCodexSubscriptionInferenceClient({
+      accessToken: 'a',
+      accountId: 'b',
+      fetch: async () => sseResponse(stream),
+      model: 'm',
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    expect(expectRight(result)).toStrictEqual({ count: 2, title: 'S' });
+  });
+
+  it('maps a response.failed terminal event to InferenceTransportError', async () => {
+    const stream = [
+      'data: {"type":"response.failed","response":{"error":{"code":"server_error"}}}',
+      '',
+    ].join('\n');
+    const client = makeCodexSubscriptionInferenceClient({
+      accessToken: 'a',
+      accountId: 'b',
+      fetch: async () => sseResponse(stream),
+      model: 'm',
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    expect(expectLeft(result)).toBeInstanceOf(InferenceTransportError);
+  });
+
+  it('fails a stream that ends without a terminal event instead of succeeding silently', async () => {
+    const stream = ['data: {"type":"response.output_text.delta","delta":"partial"}', ''].join('\n');
+    const client = makeCodexSubscriptionInferenceClient({
+      accessToken: 'a',
+      accountId: 'b',
+      fetch: async () => sseResponse(stream),
+      model: 'm',
+    });
+
+    const result = await runEither(client.generateStructured(request()));
+
+    const error = expectLeft(result);
+    expect(error).toBeInstanceOf(InferenceTransportError);
+    expect((error as InferenceTransportError).detail).toContain('without a terminal event');
   });
 });
 

@@ -1,12 +1,22 @@
 import { Data, Effect, JSONSchema, Schema } from 'effect';
 
 import { resolveCodexInferenceAuth } from './codex-inference-auth.js';
+import type { CodexInferenceAuthUnavailableReason } from './codex-inference-auth.js';
 import { resolveInferenceApiKey } from './inference-credential.js';
 import { resolveInferenceConfig } from './inference-policy.js';
+import type { InferenceProvider } from './inference-policy.js';
 
 const OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
 // The Codex CLI's ChatGPT backend, the Responses API surface for subscription auth.
 const CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+
+// The json_schema format name is fixed; the Responses API does not use it for anything the
+// caller needs to control, and a per-request name is a needless surface.
+const STRUCTURED_OUTPUT_NAME = 'structured_output';
+// A single shared request deadline. Tests override it via the client options.
+const REQUEST_TIMEOUT_MS = 120_000;
+// Cap the assembled streaming output so a runaway/abusive stream cannot exhaust memory.
+const MAX_STREAM_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 // Errors known at resolution time (before any request is made). The consuming job can
 // discriminate a deliberate opt-out from a misconfiguration.
@@ -18,9 +28,15 @@ export class InferenceNotConfigured extends Data.TaggedError('InferenceNotConfig
   readonly detail: string;
 }> {}
 
+// The reason a resolution-time auth failure was raised. The codex reasons come straight from
+// the Codex-auth reader; the openai-api transport contributes its own key-unavailable reason.
+export type InferenceAuthUnavailableReason =
+  | CodexInferenceAuthUnavailableReason
+  | 'openai-api-key-unavailable';
+
 export class InferenceAuthUnavailable extends Data.TaggedError('InferenceAuthUnavailable')<{
   readonly detail: string;
-  readonly reason: string;
+  readonly reason: InferenceAuthUnavailableReason;
 }> {}
 
 // Errors raised at call time. AuthExpired (HTTP 401) is the signal the consolidation job
@@ -54,14 +70,13 @@ export type StructuredGenerationRequest<A, I> = {
   input: string;
   instructions: string;
   schema: Schema.Schema<A, I>;
-  schemaName?: string | undefined;
 };
 
 export type InferenceClient = {
   generateStructured: <A, I>(
     request: StructuredGenerationRequest<A, I>,
   ) => Effect.Effect<A, InferenceGenerationError>;
-  provider: 'openai-api' | 'codex-subscription';
+  provider: InferenceProvider;
 };
 
 export type OpenAiApiInferenceClientOptions = {
@@ -69,6 +84,7 @@ export type OpenAiApiInferenceClientOptions = {
   baseUrl?: string | undefined;
   fetch?: typeof fetch | undefined;
   model: string;
+  timeoutMs?: number | undefined;
 };
 
 export type CodexSubscriptionInferenceClientOptions = {
@@ -77,6 +93,7 @@ export type CodexSubscriptionInferenceClientOptions = {
   baseUrl?: string | undefined;
   fetch?: typeof fetch | undefined;
   model: string;
+  timeoutMs?: number | undefined;
 };
 
 // The union of the config, credential, and Codex-auth resolution inputs (all share the same
@@ -143,21 +160,20 @@ export function resolveInferenceClient(
 }
 
 // Transport A: the standard OpenAI Responses API with native structured output. The JSON
-// schema is derived from the Effect Schema and sent as text.format json_schema (strict); the
+// schema is derived from the Effect Schema and sent as text.format json_schema; the
 // non-streaming response's output_text is parsed and re-validated against the same schema.
 export function makeOpenAiApiInferenceClient(
   options: OpenAiApiInferenceClientOptions,
 ): InferenceClient {
   const fetchImpl = options.fetch ?? fetch;
-  const baseUrl = options.baseUrl ?? OPENAI_API_BASE_URL;
+  const baseUrl = resolveBaseUrl(options.baseUrl, OPENAI_API_BASE_URL);
 
   return {
     provider: 'openai-api',
     generateStructured: (request) =>
-      Effect.tryPromise({
-        try: () => requestOpenAiApi(fetchImpl, baseUrl, options, request),
-        catch: toGenerationError,
-      }).pipe(Effect.flatMap((text) => decodeStructured(request.schema, text))),
+      finishStructured(request, (schema) =>
+        requestOpenAiApi(fetchImpl, baseUrl, options, request, schema),
+      ),
   };
 }
 
@@ -169,16 +185,37 @@ export function makeCodexSubscriptionInferenceClient(
   options: CodexSubscriptionInferenceClientOptions,
 ): InferenceClient {
   const fetchImpl = options.fetch ?? fetch;
-  const baseUrl = options.baseUrl ?? CODEX_BASE_URL;
+  const baseUrl = resolveBaseUrl(options.baseUrl, CODEX_BASE_URL);
 
   return {
     provider: 'codex-subscription',
     generateStructured: (request) =>
-      Effect.tryPromise({
-        try: () => requestCodex(fetchImpl, baseUrl, options, request),
-        catch: toGenerationError,
-      }).pipe(Effect.flatMap((text) => decodeStructured(request.schema, text))),
+      finishStructured(request, (schema) =>
+        requestCodex(fetchImpl, baseUrl, options, request, schema),
+      ),
   };
+}
+
+// The shared client tail. The JSON schema is derived EAGERLY, outside tryPromise: an
+// unsupported schema is a programmer error (Effect.die), not a retryable transport failure,
+// and its raw Effect message must never surface. Each transport supplies only the fetch
+// closure; everything after — timeout mapping, decode, re-validation — is shared.
+function finishStructured<A, I>(
+  request: StructuredGenerationRequest<A, I>,
+  send: (schema: Record<string, unknown>) => Promise<string>,
+): Effect.Effect<A, InferenceGenerationError> {
+  return Effect.suspend(() => {
+    let schema: Record<string, unknown>;
+    try {
+      schema = toResponseJsonSchema(request.schema);
+    } catch {
+      return Effect.die(new Error('schema unsupported for structured output'));
+    }
+    return Effect.tryPromise({
+      catch: toGenerationError,
+      try: () => send(schema),
+    }).pipe(Effect.flatMap((text) => decodeStructured(request.schema, text)));
+  });
 }
 
 async function requestOpenAiApi<A, I>(
@@ -186,8 +223,8 @@ async function requestOpenAiApi<A, I>(
   baseUrl: string,
   options: OpenAiApiInferenceClientOptions,
   request: StructuredGenerationRequest<A, I>,
+  schema: Record<string, unknown>,
 ): Promise<string> {
-  const schema = toResponseJsonSchema(request.schema);
   const response = await fetchImpl(`${baseUrl}/responses`, {
     body: JSON.stringify({
       input: request.input,
@@ -195,9 +232,12 @@ async function requestOpenAiApi<A, I>(
       model: options.model,
       text: {
         format: {
-          name: request.schemaName ?? 'structured_output',
+          name: STRUCTURED_OUTPUT_NAME,
           schema,
-          strict: true,
+          // No strict:true here: Effect's JSONSchema.make omits optional fields from the
+          // `required` array, which OpenAI strict mode rejects with a 400. The schema guides
+          // the model; local decodeStructured re-validation is the real enforcement on both
+          // transports.
           type: 'json_schema',
         },
       },
@@ -207,9 +247,10 @@ async function requestOpenAiApi<A, I>(
       'content-type': 'application/json',
     },
     method: 'POST',
+    signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
   });
-  assertOkResponse('openai-api', response);
-  const body = await readJsonBody(response);
+  await assertOkResponse('openai-api', response);
+  const body = await readJsonBody('openai-api', response);
   return extractResponsesOutputText(body);
 }
 
@@ -218,8 +259,8 @@ async function requestCodex<A, I>(
   baseUrl: string,
   options: CodexSubscriptionInferenceClientOptions,
   request: StructuredGenerationRequest<A, I>,
+  schema: Record<string, unknown>,
 ): Promise<string> {
-  const schema = toResponseJsonSchema(request.schema);
   const instructions = `${request.instructions}\n\nRespond with ONLY a single JSON object that validates against this JSON Schema. Do not include prose, explanation, or code fences.\nJSON Schema:\n${JSON.stringify(schema)}`;
   const response = await fetchImpl(`${baseUrl}/responses`, {
     body: JSON.stringify({
@@ -235,19 +276,34 @@ async function requestCodex<A, I>(
       'content-type': 'application/json',
     },
     method: 'POST',
+    signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
   });
-  assertOkResponse('codex-subscription', response);
+  await assertOkResponse('codex-subscription', response);
   const text = await assembleSseOutputText(response);
   if (text.trim() === '') {
     throw new InferenceMalformedResponse({
-      detail: 'codex-subscription stream produced no response.output_text.delta events',
+      detail: 'codex-subscription stream produced no output_text',
     });
   }
   return text;
 }
 
-// Concatenate the delta of every response.output_text.delta SSE event, ignoring other event
-// types and the [DONE] sentinel.
+type SseTerminal =
+  | { kind: 'completed' }
+  | { kind: 'incomplete'; reason: string }
+  | { kind: 'error'; code: string | undefined; status: number | undefined };
+
+type SseAction =
+  | { kind: 'none' }
+  | { kind: 'append'; delta: string }
+  | { kind: 'terminal'; terminal: SseTerminal };
+
+// A spec-lite SSE parser for the Responses streaming surface. Events are framed by blank
+// lines; the (possibly multiple) data: lines of one event join with '\n' before parsing.
+// Dispatch is by the JSON event's `type`. Exactly one terminal event is expected: a
+// response.completed yields the accumulated text; failure/error and incomplete raise the
+// matching call-time error; reaching EOF with no terminal is itself an error (never a silent
+// success). Unknown event types are ignored.
 async function assembleSseOutputText(response: Response): Promise<string> {
   const body = response.body;
   if (body === null) {
@@ -259,14 +315,17 @@ async function assembleSseOutputText(response: Response): Promise<string> {
   const decoder = new TextDecoder();
   let buffer = '';
   let assembled = '';
+  let overflow = false;
+  let pendingData: string[] = [];
+  let terminal: SseTerminal | undefined;
 
-  const consumeLine = (line: string): void => {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) {
+  const flushEvent = (): void => {
+    if (pendingData.length === 0) {
       return;
     }
-    const payload = trimmed.slice('data:'.length).trim();
-    if (payload === '' || payload === '[DONE]') {
+    const payload = pendingData.join('\n');
+    pendingData = [];
+    if (payload === '[DONE]') {
       return;
     }
     let event: unknown;
@@ -276,52 +335,198 @@ async function assembleSseOutputText(response: Response): Promise<string> {
       // Ignore keepalives or partial frames that are not valid JSON.
       return;
     }
-    if (
-      isRecord(event) &&
-      event.type === 'response.output_text.delta' &&
-      typeof event.delta === 'string'
-    ) {
-      assembled += event.delta;
+    const action = classifySseEvent(event);
+    if (action.kind === 'append') {
+      assembled += action.delta;
+      if (assembled.length > MAX_STREAM_OUTPUT_BYTES) {
+        overflow = true;
+      }
+    } else if (action.kind === 'terminal') {
+      terminal = action.terminal;
     }
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  const handleLine = (line: string): void => {
+    if (line === '') {
+      flushEvent();
+      return;
     }
-    buffer += decoder.decode(value, { stream: true });
-    let newlineIndex = buffer.indexOf('\n');
-    while (newlineIndex !== -1) {
-      consumeLine(buffer.slice(0, newlineIndex));
-      buffer = buffer.slice(newlineIndex + 1);
-      newlineIndex = buffer.indexOf('\n');
+    if (line.startsWith(':')) {
+      return; // SSE comment / heartbeat.
     }
+    const colon = line.indexOf(':');
+    const field = colon === -1 ? line : line.slice(0, colon);
+    if (field !== 'data') {
+      return; // Ignore event:, id:, retry: — dispatch is by the JSON `type`.
+    }
+    let value = colon === -1 ? '' : line.slice(colon + 1);
+    if (value.startsWith(' ')) {
+      value = value.slice(1);
+    }
+    pendingData.push(value);
+  };
+
+  const takeLines = (): string[] => {
+    const lines: string[] = [];
+    for (;;) {
+      const match = /\r\n|\r|\n/.exec(buffer);
+      if (match === null) {
+        break;
+      }
+      // A lone trailing '\r' may be the first half of a '\r\n' split across chunks; hold it.
+      if (match[0] === '\r' && match.index === buffer.length - 1) {
+        break;
+      }
+      lines.push(buffer.slice(0, match.index));
+      buffer = buffer.slice(match.index + match[0].length);
+    }
+    return lines;
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer.length > 0) {
+          handleLine(buffer);
+          buffer = '';
+        }
+        flushEvent();
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      for (const line of takeLines()) {
+        handleLine(line);
+        if (terminal !== undefined || overflow) {
+          break;
+        }
+      }
+      if (terminal !== undefined || overflow) {
+        break;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
-  buffer += decoder.decode();
-  if (buffer.length > 0) {
-    consumeLine(buffer);
+
+  if (overflow) {
+    throw new InferenceMalformedResponse({
+      detail: 'codex-subscription stream exceeded the maximum response size',
+    });
   }
-  return assembled;
+  if (terminal === undefined) {
+    throw new InferenceTransportError({
+      detail: 'codex-subscription stream ended without a terminal event',
+    });
+  }
+  if (terminal.kind === 'completed') {
+    return assembled;
+  }
+  if (terminal.kind === 'incomplete') {
+    throw new InferenceTransportError({
+      detail: `codex-subscription stream truncated: ${terminal.reason}`,
+    });
+  }
+  if (terminal.status === 401 || isAuthErrorCode(terminal.code)) {
+    throw new InferenceAuthExpired({
+      detail: 'codex-subscription stream reported an authentication failure',
+    });
+  }
+  throw new InferenceTransportError({
+    detail: `codex-subscription stream failed${terminal.code === undefined ? '' : ` (${terminal.code})`}`,
+    ...(terminal.status === undefined ? {} : { status: terminal.status }),
+  });
 }
 
-function assertOkResponse(provider: string, response: Response): void {
+function classifySseEvent(event: unknown): SseAction {
+  if (!isRecord(event) || typeof event.type !== 'string') {
+    return { kind: 'none' };
+  }
+  switch (event.type) {
+    case 'response.output_text.delta': {
+      return typeof event.delta === 'string'
+        ? { delta: event.delta, kind: 'append' }
+        : { kind: 'none' };
+    }
+    case 'response.completed': {
+      return { kind: 'terminal', terminal: { kind: 'completed' } };
+    }
+    case 'response.incomplete': {
+      return {
+        kind: 'terminal',
+        terminal: { kind: 'incomplete', reason: sseIncompleteReason(event) },
+      };
+    }
+    case 'error':
+    case 'response.failed': {
+      return { kind: 'terminal', terminal: { kind: 'error', ...extractSseError(event) } };
+    }
+    default: {
+      return { kind: 'none' };
+    }
+  }
+}
+
+function sseIncompleteReason(event: Record<string, unknown>): string {
+  const response = isRecord(event.response) ? event.response : event;
+  const details = isRecord(response.incomplete_details) ? response.incomplete_details : undefined;
+  return details !== undefined && typeof details.reason === 'string' ? details.reason : 'unknown';
+}
+
+function extractSseError(event: Record<string, unknown>): {
+  code: string | undefined;
+  status: number | undefined;
+} {
+  const direct = isRecord(event.error) ? event.error : undefined;
+  const nested =
+    isRecord(event.response) && isRecord(event.response.error) ? event.response.error : undefined;
+  const err = direct ?? nested ?? event;
+  const code = typeof err.code === 'string' ? err.code : undefined;
+  const status = optionalNumber(err.status) ?? optionalNumber(event.status);
+  return { code, status };
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+function isAuthErrorCode(code: string | undefined): boolean {
+  if (code === undefined) {
+    return false;
+  }
+  const normalized = code.toLowerCase();
+  return normalized === '401' || normalized === 'unauthorized' || normalized === 'invalid_api_key';
+}
+
+async function assertOkResponse(provider: string, response: Response): Promise<void> {
+  if (response.ok) {
+    return;
+  }
+  // The body is unconsumed on this path; release it before throwing.
+  await response.body?.cancel().catch(() => undefined);
   if (response.status === 401) {
     throw new InferenceAuthExpired({
       detail: `${provider} request rejected with HTTP 401 (authentication failed)`,
     });
   }
-  if (!response.ok) {
-    throw new InferenceTransportError({
-      detail: `${provider} request failed with HTTP ${String(response.status)} (${httpFailureCategory(response.status)})`,
-      status: response.status,
-    });
-  }
+  throw new InferenceTransportError({
+    detail: `${provider} request failed with HTTP ${String(response.status)}`,
+    status: response.status,
+  });
 }
 
-async function readJsonBody(response: Response): Promise<unknown> {
+async function readJsonBody(provider: string, response: Response): Promise<unknown> {
+  let raw: string;
   try {
-    return await response.json();
+    // Read the body as text first: a network/read failure here is a transport problem, not a
+    // malformed-payload problem.
+    raw = await response.text();
+  } catch {
+    throw new InferenceTransportError({ detail: `${provider} response body could not be read` });
+  }
+  try {
+    return JSON.parse(raw) as unknown;
   } catch {
     throw new InferenceMalformedResponse({ detail: 'inference response body was not valid JSON' });
   }
@@ -332,6 +537,11 @@ async function readJsonBody(response: Response): Promise<unknown> {
 function extractResponsesOutputText(body: unknown): string {
   if (!isRecord(body)) {
     throw new InferenceMalformedResponse({ detail: 'inference response was not an object' });
+  }
+  if (body.status === 'incomplete') {
+    throw new InferenceTransportError({
+      detail: `truncated: ${responseIncompleteReason(body)}`,
+    });
   }
   if (typeof body.output_text === 'string' && body.output_text !== '') {
     return body.output_text;
@@ -344,7 +554,14 @@ function extractResponsesOutputText(body: unknown): string {
         continue;
       }
       for (const part of item.content) {
-        if (isRecord(part) && part.type === 'output_text' && typeof part.text === 'string') {
+        if (!isRecord(part)) {
+          continue;
+        }
+        if (part.type === 'refusal') {
+          // Never echo the refusal text; the model declined and that is all the caller needs.
+          throw new InferenceMalformedResponse({ detail: 'model refused the request' });
+        }
+        if (part.type === 'output_text' && typeof part.text === 'string') {
           assembled += part.text;
         }
       }
@@ -356,6 +573,11 @@ function extractResponsesOutputText(body: unknown): string {
   throw new InferenceMalformedResponse({
     detail: 'inference response contained no output_text content',
   });
+}
+
+function responseIncompleteReason(body: Record<string, unknown>): string {
+  const details = isRecord(body.incomplete_details) ? body.incomplete_details : undefined;
+  return details !== undefined && typeof details.reason === 'string' ? details.reason : 'unknown';
 }
 
 function decodeStructured<A, I>(
@@ -379,14 +601,26 @@ function decodeStructured<A, I>(
   );
 }
 
+// Strip a leading ```json (or bare ```) fence and its trailing ``` by index, not by a
+// backtracking regex. A fence is a first line that starts with ``` and a final ``` fence.
 function stripCodeFence(text: string): string {
   const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
-  return fenced?.[1] ?? trimmed;
+  if (!trimmed.startsWith('```')) {
+    return trimmed;
+  }
+  const firstNewline = trimmed.indexOf('\n');
+  if (firstNewline === -1) {
+    return trimmed;
+  }
+  let body = trimmed.slice(firstNewline + 1);
+  if (body.endsWith('```')) {
+    body = body.slice(0, -3);
+  }
+  return body.trim();
 }
 
-// Derive a strict JSON Schema for the Responses API / schema-in-prompt. The $schema meta key
-// is dropped so the schema object embeds cleanly into the request.
+// Derive a JSON Schema for the Responses API / schema-in-prompt. The $schema meta key is
+// dropped so the schema object embeds cleanly into the request.
 function toResponseJsonSchema<A, I>(schema: Schema.Schema<A, I>): Record<string, unknown> {
   const generated: Record<string, unknown> = { ...JSONSchema.make(schema) };
   delete generated.$schema;
@@ -401,39 +635,26 @@ function toGenerationError(error: unknown): InferenceGenerationError {
   ) {
     return error;
   }
-  return new InferenceTransportError({
-    detail: `inference request failed: ${error instanceof Error ? error.message : String(error)}`,
-  });
+  if (isTimeoutError(error)) {
+    return new InferenceTransportError({ detail: 'inference request timed out' });
+  }
+  // Never echo raw error.message: header-construction and similar errors can embed the bearer
+  // credential. The category plus the error name is enough to triage.
+  const name = error instanceof Error ? error.name : 'UnknownError';
+  return new InferenceTransportError({ detail: `inference request failed (${name})` });
 }
 
-function httpFailureCategory(status: number): string {
-  switch (status) {
-    case 400:
-    case 422: {
-      return 'invalid request';
-    }
-    case 403: {
-      return 'authorization failed';
-    }
-    case 408: {
-      return 'request timeout';
-    }
-    case 409: {
-      return 'request conflict';
-    }
-    case 429: {
-      return 'rate limited';
-    }
-    default: {
-      if (status >= 400 && status < 500) {
-        return 'client error';
-      }
-      if (status >= 500 && status < 600) {
-        return 'server error';
-      }
-      return 'unexpected status';
-    }
-  }
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+}
+
+function resolveBaseUrl(override: string | undefined, fallback: string): string {
+  return optionalString(override) ?? fallback;
+}
+
+function optionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
