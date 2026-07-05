@@ -18,7 +18,7 @@ import { Effect } from 'effect';
 
 import { isRunningFromSource } from './binary.js';
 import { migrationDoctorCheck } from './doctor.js';
-import type { DoctorStatus } from './doctor.js';
+import type { DoctorCheck, DoctorStatus } from './doctor.js';
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { glyph, recordBlock } from './render.js';
@@ -153,11 +153,12 @@ export type SelfUpdateSelection = {
   tag?: string | undefined;
 };
 
-export type MigrationState = 'ahead' | 'behind' | 'current' | 'mismatch';
+export type MigrationState = 'ahead' | 'behind' | 'current' | 'mismatch' | 'unknown';
 
 export type SelfUpdateResult = {
   asset: string;
   doctor: DoctorStatus;
+  doctorDetail: string;
   from: string;
   migration: {
     applied: number;
@@ -265,6 +266,130 @@ function serviceRestartSummary(restarted: boolean, restartFailed: boolean): stri
   return 'not restarted';
 }
 
+type ConvergenceOutcome = {
+  doctor: DoctorCheck;
+  migrateFailed: boolean;
+  restartFailed: boolean;
+  restarted: boolean;
+  status: MigrationStatus | undefined;
+};
+
+/**
+ * Run pending migrations, then restart the supervised service, then doctor-check
+ * the schema (ADR-0045). Best-effort by construction — a migrate failure sets a
+ * failing doctor state and is reported but never re-thrown, so a swapped binary
+ * is never undone. Migrate is skipped-then-restart only when it succeeds: a
+ * failed migrate leaves the service on the pre-migrate schema, and restarting
+ * into the new binary would only make it refuse startup. Run in both the
+ * already-current and post-swap paths so a prior half-finished update converges.
+ */
+async function convergeSchemaAndService(
+  dependencies: SelfUpdateDependencies,
+  platform: NodeJS.Platform,
+  options: RenderOptions,
+  write: (text: string) => void,
+  structured: boolean,
+): Promise<ConvergenceOutcome> {
+  let status: MigrationStatus | undefined;
+  let doctor: DoctorCheck;
+  let migrateFailed = false;
+  try {
+    status = await (dependencies.migrate ?? runMigrationStep)();
+    doctor = migrationDoctorCheck(status);
+  } catch (error) {
+    migrateFailed = true;
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = `migration failed: ${message} — re-run \`saga self-update\``;
+    doctor = { detail, label: 'migrations', status: 'fail' };
+    if (!structured) {
+      write(`${glyph('warning', options)} ${detail}`);
+    }
+  }
+
+  let restarted = false;
+  let restartFailed = false;
+  if (!migrateFailed && platform === 'darwin') {
+    const supervisor = dependencies.supervisor ?? createLaunchdSupervisor();
+    const inspection = await supervisor.inspect();
+    if (isSupervisorLoaded(inspection.state)) {
+      try {
+        await supervisor.restart();
+        restarted = true;
+      } catch {
+        restartFailed = true;
+      }
+    }
+  }
+  if (restartFailed && !structured) {
+    write(
+      `${glyph('warning', options)} service did not restart — run \`saga service restart\` (binary is updated)`,
+    );
+  }
+
+  return { doctor, migrateFailed, restartFailed, restarted, status };
+}
+
+function selfUpdateResult(input: {
+  asset: string;
+  converged: ConvergenceOutcome;
+  from: string;
+  to: string;
+  updated: boolean;
+}): SelfUpdateResult {
+  const { converged } = input;
+  const migration =
+    converged.status === undefined
+      ? { applied: 0, expected: 0, state: 'unknown' as const }
+      : {
+          applied: converged.status.applied,
+          expected: converged.status.expected,
+          state: migrationState(converged.status),
+        };
+  return {
+    asset: input.asset,
+    doctor: converged.doctor.status,
+    doctorDetail: converged.doctor.detail,
+    from: input.from,
+    migration,
+    restartFailed: converged.restartFailed,
+    restarted: converged.restarted,
+    to: input.to,
+    updated: input.updated,
+  };
+}
+
+function renderSelfUpdate(result: SelfUpdateResult, options: RenderOptions): string {
+  const header = result.updated
+    ? [
+        { label: 'updated', value: `${result.from} → ${result.to}` },
+        { label: 'asset', value: result.asset },
+      ]
+    : [{ label: 'status', value: `already up to date (${result.from})` }];
+  return formatCommandOutput(
+    {
+      id: 'self-update',
+      records: recordBlock(
+        'Saga self-update',
+        [
+          ...header,
+          {
+            label: 'migrations',
+            value: `${String(result.migration.applied)}/${String(result.migration.expected)} applied (${result.migration.state})`,
+          },
+          {
+            label: 'service',
+            value: serviceRestartSummary(result.restarted, result.restartFailed),
+          },
+          { label: 'doctor', value: `migrations ${result.doctor}: ${result.doctorDetail}` },
+        ],
+        options,
+      ),
+      value: result,
+    },
+    options.format,
+  );
+}
+
 export async function runSelfUpdateCommand(
   args: readonly string[],
   options: RenderOptions,
@@ -291,34 +416,24 @@ export async function runSelfUpdateCommand(
   const target = stripV(targetTag);
 
   if (alreadyCurrent) {
-    const result: SelfUpdateResult = {
-      asset,
-      doctor: 'ok',
-      from: version,
-      migration: { applied: 0, expected: 0, state: 'current' },
-      restartFailed: false,
-      restarted: false,
-      to: target,
-      updated: false,
-    };
+    // Already on the target version, but still converge: a prior run may have
+    // swapped the binary and then failed to migrate, leaving this host stuck
+    // binary-ahead-of-DB (the ADR-0045 incident class). Re-running recovers the
+    // schema and reports the real DB state instead of a false "up to date".
+    const converged = await convergeSchemaAndService(
+      dependencies,
+      platform,
+      options,
+      write,
+      structured,
+    );
     write(
-      formatCommandOutput(
-        {
-          id: 'self-update',
-          records: recordBlock(
-            'Saga self-update',
-            [
-              { label: 'status', value: `already up to date (${version})` },
-              { label: 'version', value: version },
-            ],
-            options,
-          ),
-          value: result,
-        },
-        options.format,
+      renderSelfUpdate(
+        selfUpdateResult({ asset, converged, from: version, to: target, updated: false }),
+        options,
       ),
     );
-    return 0;
+    return converged.migrateFailed ? 1 : 0;
   }
 
   if (!structured) {
@@ -332,69 +447,21 @@ export async function runSelfUpdateCommand(
   verifyChecksum(body, sums, asset);
   (dependencies.replaceBinary ?? replaceBinary)(binPath, body);
 
-  // The binary is swapped; every step after this is best-effort convergence and
-  // must not undo the install.
-  const status = await (dependencies.migrate ?? runMigrationStep)();
-  const doctor = migrationDoctorCheck(status);
-
-  let restarted = false;
-  let restartFailed = false;
-  const supervisor = dependencies.supervisor ?? createLaunchdSupervisor();
-  if (platform === 'darwin') {
-    const inspection = await supervisor.inspect();
-    if (isSupervisorLoaded(inspection.state)) {
-      try {
-        await supervisor.restart();
-        restarted = true;
-      } catch {
-        restartFailed = true;
-      }
-    }
-  }
-
-  if (restartFailed && !structured) {
-    write(
-      `${glyph('warning', options)} service did not restart — run \`saga service restart\` (binary is updated)`,
-    );
-  }
-
-  const result: SelfUpdateResult = {
-    asset,
-    doctor: doctor.status,
-    from: version,
-    migration: {
-      applied: status.applied,
-      expected: status.expected,
-      state: migrationState(status),
-    },
-    restartFailed,
-    restarted,
-    to: target,
-    updated: true,
-  };
-
+  // The binary is swapped; convergence is best-effort and must never re-throw.
+  const converged = await convergeSchemaAndService(
+    dependencies,
+    platform,
+    options,
+    write,
+    structured,
+  );
   write(
-    formatCommandOutput(
-      {
-        id: 'self-update',
-        records: recordBlock(
-          'Saga self-update',
-          [
-            { label: 'updated', value: `${version} → ${target}` },
-            { label: 'asset', value: asset },
-            {
-              label: 'migrations',
-              value: `${String(status.applied)}/${String(status.expected)} applied (${migrationState(status)})`,
-            },
-            { label: 'service', value: serviceRestartSummary(restarted, restartFailed) },
-            { label: 'doctor', value: `migrations ${doctor.status}: ${doctor.detail}` },
-          ],
-          options,
-        ),
-        value: result,
-      },
-      options.format,
+    renderSelfUpdate(
+      selfUpdateResult({ asset, converged, from: version, to: target, updated: true }),
+      options,
     ),
   );
-  return 0;
+  // A failed post-swap migrate leaves the binary installed but the schema
+  // unconverged — return non-zero so operators and automation notice.
+  return converged.migrateFailed ? 1 : 0;
 }
