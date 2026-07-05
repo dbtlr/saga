@@ -10,7 +10,7 @@ services:
       DATABASE_URL: postgres://saga:saga@postgres:5432/saga
       SAGA_ENV: production
       SAGA_LOG_LEVEL: info
-    command: ['bun', 'run', '--filter', '@saga/service', 'migrate']
+    command: ['node', '--import', 'tsx', 'src/migrate.ts']
     restart: 'no'
 
   saga-service:

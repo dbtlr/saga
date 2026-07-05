@@ -218,12 +218,15 @@ describe('service entrypoint', () => {
 });
 
 describe('deploy targets', () => {
-  it('systemd target runs the service package entrypoint', () => {
+  it('systemd target execs the service entrypoint as the signal recipient', () => {
     const unit = readFileSync(join(workspaceRoot, 'deploy', 'systemd', 'saga.service'), 'utf8');
 
     expect(unit).toContain('EnvironmentFile=/etc/saga/saga.env');
     expect(unit).not.toContain('ExecStartPre');
-    expect(unit).toContain('bun run --cwd /opt/saga --filter @saga/service start');
+    // Direct exec: `bun run --filter` does not forward SIGTERM to the script
+    // child, so the unit must start the service process itself.
+    expect(unit).toContain('WorkingDirectory=/opt/saga/apps/service');
+    expect(unit).toContain('ExecStart=/usr/bin/env node --import tsx src/main.ts');
   });
 
   it('systemd docs make migrations an explicit deploy step', () => {
@@ -241,5 +244,14 @@ describe('deploy targets', () => {
 
     expect(env).toContain('DATABASE_URL_FILE=/run/secrets/saga_database_url');
     expect(env).toContain('SAGA_SERVICE_HOST=0.0.0.0');
+  });
+
+  it('container image pins the bun version from .tool-versions', () => {
+    const toolVersions = readFileSync(join(workspaceRoot, '.tool-versions'), 'utf8');
+    const bunVersion = /^bun (\S+)$/mu.exec(toolVersions)?.[1];
+    const dockerfile = readFileSync(join(workspaceRoot, 'apps', 'service', 'Dockerfile'), 'utf8');
+
+    expect(bunVersion).toBeDefined();
+    expect(dockerfile).toContain(`oven/bun:${bunVersion ?? ''}`);
   });
 });
