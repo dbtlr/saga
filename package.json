@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "description": "Postgres-backed workspace memory system for agentic work.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "type": "module",
   "scripts": {
     "build": "turbo run build",
@@ -19,25 +23,24 @@
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "smoke:service-compose": "node scripts/smoke-service-compose.mjs",
     "staged": "vp staged",
-    "test": "pnpm run test:unit",
+    "test": "bun run test:unit",
     "test:integration": "node scripts/require-env.mjs SAGA_TEST_DATABASE_URL && vp test run apps/cli/src/index-command.postgres.test.ts apps/cli/src/init.postgres.test.ts apps/cli/src/ingest.postgres.test.ts apps/cli/src/mcp.postgres.test.ts apps/cli/src/recall.postgres.test.ts packages/db/src/consolidation-records.postgres.test.ts packages/db/src/database.postgres.test.ts packages/db/src/job-runs.postgres.test.ts packages/db/src/raw-session-import.postgres.test.ts packages/db/src/session-embeddings.postgres.test.ts packages/db/src/session-recall.postgres.test.ts packages/db/src/session-safety.postgres.test.ts",
     "test:unit": "vp test run --passWithNoTests --exclude apps/cli/src/index-command.postgres.test.ts --exclude apps/cli/src/init.postgres.test.ts --exclude apps/cli/src/ingest.postgres.test.ts --exclude apps/cli/src/mcp.postgres.test.ts --exclude apps/cli/src/recall.postgres.test.ts --exclude packages/db/src/consolidation-records.postgres.test.ts --exclude packages/db/src/database.postgres.test.ts --exclude packages/db/src/job-runs.postgres.test.ts --exclude packages/db/src/raw-session-import.postgres.test.ts --exclude packages/db/src/session-embeddings.postgres.test.ts --exclude packages/db/src/session-recall.postgres.test.ts --exclude packages/db/src/session-safety.postgres.test.ts --exclude packages/db/src/session-recall-bench.postgres.test.ts",
-    "verify": "pnpm run verify:unit",
-    "verify:integration": "pnpm run check && pnpm run test:integration",
-    "verify:unit": "pnpm run check && pnpm run test:unit"
+    "verify": "bun run verify:unit",
+    "verify:integration": "bun run check && bun run test:integration",
+    "verify:unit": "bun run check && bun run test:unit"
   },
   "devDependencies": {
     "@dbtlr/tooling": "0.3.0",
     "@types/node": "^24.0.0",
-    "oxlint": "^1.70.0",
-    "turbo": "^2.9.18",
+    "oxlint": "1.70.0",
+    "turbo": "2.9.18",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.2.1",
+    "vite-plus": "0.2.1",
     "vitest": "4.1.9"
   },
   "engines": {
     "node": ">=24.0.0 <27.0.0",
     "pnpm": "^11.0.0"
-  },
-  "packageManager": "pnpm@11.8.0"
+  }
 }

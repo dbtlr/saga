@@ -124,7 +124,6 @@ const config = {
     },
     fmt: {
       ignorePatterns: [
-        'pnpm-lock.yaml',
         'bun.lock',
         'CHANGELOG.md',
         'dist/**',

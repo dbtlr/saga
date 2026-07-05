@@ -14,7 +14,6 @@ backups/
 # Node
 node_modules/
 npm-debug.log*
-pnpm-debug.log*
 
 # TypeScript incremental build cache
 *.tsbuildinfo
@@ -30,6 +29,3 @@ pnpm-debug.log*
 
 # Agent Artifacts
 docs/superpowers
-
-# SGA-221 spike (bun tooling eval) — pnpm-lock.yaml remains source of truth
-bun.lock

@@ -1,8 +1,0 @@
-packages:
-  - 'apps/*'
-  - 'packages/*'
-allowBuilds:
-  esbuild: true
-minimumReleaseAgeExclude:
-  - effect@3.21.4
-  - '@dbtlr/tooling@0.3.0'
