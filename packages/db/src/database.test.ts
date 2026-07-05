@@ -91,13 +91,13 @@ describe('databaseLive', () => {
 });
 
 describe('assertMigrationsCurrent', () => {
-  it('fails when fewer than the expected migrations are applied', async () => {
+  it('fails when the database is behind this build and names self-update', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT - 1)),
       ),
     ).rejects.toMatchObject({
-      message: `database migrations are not current: ${String(EXPECTED_MIGRATION_COUNT - 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Apply migrations before starting Saga.`,
+      message: `database migrations are behind this Saga build: ${String(EXPECTED_MIGRATION_COUNT - 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Run \`saga self-update\` to converge the binary, schema, and service.`,
     });
   });
 
@@ -127,13 +127,16 @@ describe('assertMigrationsCurrent', () => {
     });
   });
 
-  it('fails when the database has newer migrations than this build expects', async () => {
+  it('tolerates a database ahead of this build (asymmetric skew, ADR-0045)', async () => {
     await expect(
       Effect.runPromise(
         assertMigrationsCurrent(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT + 1)),
       ),
-    ).rejects.toMatchObject({
-      message: `database has newer migrations than this Saga build understands: ${String(EXPECTED_MIGRATION_COUNT + 1)} applied; expected ${String(EXPECTED_MIGRATION_COUNT)}. Upgrade Saga or restore a compatible backup before continuing.`,
+    ).resolves.toStrictEqual({
+      applied: EXPECTED_MIGRATION_COUNT + 1,
+      compatible: false,
+      expected: EXPECTED_MIGRATION_COUNT,
+      mismatch: undefined,
     });
   });
 });
@@ -159,6 +162,32 @@ describe('runMigrationsSafely', () => {
       compatible: true,
       expected: EXPECTED_MIGRATION_COUNT,
       mismatch: undefined,
+    });
+  });
+
+  it('tolerates a database ahead of this build without running DDL', async () => {
+    await expect(
+      Effect.runPromise(
+        runMigrationsSafely(serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT + 1)),
+      ),
+    ).resolves.toStrictEqual({
+      applied: EXPECTED_MIGRATION_COUNT + 1,
+      compatible: false,
+      expected: EXPECTED_MIGRATION_COUNT,
+      mismatch: undefined,
+    });
+  });
+
+  it('refuses when an applied hash mismatches the shared prefix', async () => {
+    await expect(
+      Effect.runPromise(
+        runMigrationsSafely(
+          serviceWithMigrationCount(EXPECTED_MIGRATION_COUNT, { wrongHashAt: 0 }),
+        ),
+      ),
+    ).rejects.toMatchObject({
+      message:
+        'database migration 0 (0000_initial) does not match this Saga build. Restore a compatible backup or run a matching Saga build before continuing.',
     });
   });
 });
