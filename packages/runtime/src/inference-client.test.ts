@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Effect, Either, Schema } from 'effect';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   InferenceAuthExpired,
@@ -107,9 +107,20 @@ const fetchRefusal: typeof fetch = async () =>
 const fetchIncomplete: typeof fetch = async () =>
   Response.json({ incomplete_details: { reason: 'max_output_tokens' }, status: 'incomplete' });
 
+const tempDirs: string[] = [];
+
 function tempHome(): string {
-  return mkdtempSync(join(tmpdir(), 'saga-inference-client-'));
+  const dir = mkdtempSync(join(tmpdir(), 'saga-inference-client-'));
+  tempDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { force: true, recursive: true });
+  }
+  tempDirs.length = 0;
+});
 
 function writeSagaConfig(home: string, contents: string): void {
   mkdirSync(join(home, '.saga'), { recursive: true });

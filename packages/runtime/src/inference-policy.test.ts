@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CODEX_SUBSCRIPTION_MODEL,
@@ -11,9 +11,20 @@ import {
   resolveInferenceConfig,
 } from './inference-policy.js';
 
+const tempDirs: string[] = [];
+
 function tempHome(): string {
-  return mkdtempSync(join(tmpdir(), 'saga-inference-policy-'));
+  const dir = mkdtempSync(join(tmpdir(), 'saga-inference-policy-'));
+  tempDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { force: true, recursive: true });
+  }
+  tempDirs.length = 0;
+});
 
 function writeSagaConfig(home: string, contents: string): void {
   mkdirSync(join(home, '.saga'), { recursive: true });

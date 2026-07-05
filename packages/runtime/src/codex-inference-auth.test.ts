@@ -1,14 +1,25 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { resolveCodexInferenceAuth } from './codex-inference-auth.js';
 
+const tempDirs: string[] = [];
+
 function tempHome(): string {
-  return mkdtempSync(join(tmpdir(), 'saga-codex-inference-'));
+  const dir = mkdtempSync(join(tmpdir(), 'saga-codex-inference-'));
+  tempDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { force: true, recursive: true });
+  }
+  tempDirs.length = 0;
+});
 
 function writeCodexAuth(dir: string, contents: string): string {
   mkdirSync(dir, { recursive: true });
