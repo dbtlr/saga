@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { loadRuntimeConfig } from '@saga/runtime';
+import { IS_PRODUCTION, loadRuntimeConfig } from '@saga/runtime';
 import { startSagaService } from '@saga/service';
 import { Effect } from 'effect';
 
@@ -417,16 +417,19 @@ export function renderLaunchdPlist(input: {
   binPath?: string;
   compiled?: boolean;
   home?: string;
+  isProduction?: boolean;
   paths: ReturnType<typeof launchdPaths>;
   projectRoot: string;
 }): string {
-  // A compiled binary self-updates by swapping its own file (ADR-0045), so the
-  // plist must exec the stable-path binary directly (ADR-0044) — that is what
-  // launchd re-execs after a swap. A from-source/dev run keeps the tsx+source
-  // invocation so `service install` still works out of a checkout.
+  // Two independent signals, two questions (build-profile.ts). `compiled` (argv1
+  // in Bun's embedded fs) answers "what do I exec": a compiled binary self-updates
+  // by swapping its own file (ADR-0045), so the plist execs the stable-path binary
+  // directly (ADR-0044) — what launchd re-execs after a swap; a from-source/dev run
+  // keeps the tsx+source invocation so `service install` still works out of a
+  // checkout.
   const compiled = input.compiled ?? isCompiledBinary();
   const programArguments = compiled
-    ? [input.binPath ?? stableBinPath(), 'service', 'run']
+    ? [input.binPath ?? stableBinPath(input.home), 'service', 'run']
     : [
         process.execPath,
         join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
@@ -434,13 +437,16 @@ export function renderLaunchdPlist(input: {
         'service',
         'run',
       ];
-  // The compiled binary is location-independent — it resolves everything from the
-  // installation config (~/.saga/config.json), never repo files — so it must NOT
-  // chdir into the project checkout. A launchd agent lacks Full-Disk-Access to
-  // non-boot volumes, so a checkout-on-/Volumes WorkingDirectory makes chdir fail
-  // and the process die silently before any output (SGA-230). Home is always
-  // accessible. Source mode still needs the checkout as cwd for tsx/node_modules.
-  const workingDirectory = compiled ? (input.home ?? homedir()) : input.projectRoot;
+  // `isProduction` answers the *different* question of whether config reads
+  // cwd-relative project `.env` (config.ts gates that layer off in production).
+  // The cwd move keys on this one, NOT `compiled`: only when project `.env` is
+  // gated off is it safe to leave the checkout, so a production run uses home
+  // (always accessible) and avoids the silent-death when a launchd agent — lacking
+  // Full-Disk-Access to a non-boot volume — cannot chdir into a checkout on
+  // /Volumes (SGA-230). A dev/source or compiled-but-not-`--define`d build still
+  // reads `.env` from cwd, so it must stay in the checkout.
+  const isProduction = input.isProduction ?? IS_PRODUCTION;
+  const workingDirectory = isProduction ? (input.home ?? homedir()) : input.projectRoot;
   const programArgumentsXml = programArguments
     .map((argument) => `    <string>${escapePlist(argument)}</string>`)
     .join('\n');
