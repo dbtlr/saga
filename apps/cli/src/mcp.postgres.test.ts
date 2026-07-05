@@ -312,7 +312,7 @@ describePostgres('MCP session recall postgres integration', () => {
     });
   });
 
-  test('does not return redacted raw event evidence through CLI recent events', async () => {
+  test('does not return redacted evidence through CLI recent events or MCP session tools', async () => {
     if (projectRoot === undefined) {
       throw new Error('project root was not initialized');
     }
@@ -381,6 +381,51 @@ describePostgres('MCP session recall postgres integration', () => {
     );
     expect(recentRawEvents).not.toContain(secret);
     expect(recentRawEvents).toContain('[REDACTED]');
+
+    // The agent-facing MCP session tools read the same imported session; the
+    // redacted literal must not survive into any tool response.
+    const server = createProjectMcpServer({
+      cwd: projectRoot,
+      resolveRecallEmbedding: async (): Promise<ResolvedRecallEmbedding> => ({
+        posture: { mode: 'lexical', reason: 'disabled-by-policy' },
+      }),
+    });
+    const search = await server.handle({
+      id: 'search-after-redaction',
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        arguments: { query: 'raw event safety test' },
+        name: 'search_sessions',
+      },
+    });
+    const searchResult = search?.result as ToolResult | undefined;
+    expect(JSON.stringify(searchResult)).not.toContain(secret);
+    expect(searchResult?.content[0]?.text).toContain('[REDACTED]');
+
+    const segmentId = firstSegmentId(searchResult?.structuredContent);
+    expect(segmentId).toMatch(/[0-9a-f-]{36}/u);
+    const context = await server.handle({
+      id: 'context-after-redaction',
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        arguments: { segmentId, windowTurns: 1 },
+        name: 'get_session_context',
+      },
+    });
+    expect(JSON.stringify(context?.result)).not.toContain(secret);
+
+    const recentSessions = await server.handle({
+      id: 'recent-after-redaction',
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        arguments: { limit: 5 },
+        name: 'list_recent_sessions',
+      },
+    });
+    expect(JSON.stringify(recentSessions?.result)).not.toContain(secret);
   });
 });
 
