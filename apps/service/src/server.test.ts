@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { createServer as createNetServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -89,6 +91,46 @@ describe('startSagaService', () => {
       );
     } finally {
       await service.close();
+    }
+  });
+
+  it('starts no job fibers when the port is already taken', async () => {
+    // Occupy an ephemeral port so listen() rejects with EADDRINUSE.
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const taken = (blocker.address() as AddressInfo).port;
+
+    let recordCalls = 0;
+    const recordRun = () =>
+      Effect.sync(() => {
+        recordCalls += 1;
+      });
+
+    try {
+      await expect(
+        startSagaService(
+          {
+            databaseUrl: 'postgres://test/saga',
+            databaseUrlSource: 'environment',
+            environment: 'test',
+            logLevel: 'info',
+            service: { host: '127.0.0.1', port: taken },
+            secrets: { openaiApiKey: undefined },
+          },
+          {
+            jobs: [{ interval: Duration.millis(1), name: 'counter', run: Effect.void }],
+            recordRun,
+            validateDatabase: async () => undefined,
+          },
+        ),
+      ).rejects.toThrow(/EADDRINUSE/);
+
+      // A millisecond-interval job would have recorded many times by now had any
+      // fiber been forked; a failed bind must never start the runner.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(recordCalls).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
     }
   });
 

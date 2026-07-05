@@ -7,9 +7,12 @@ import type { DatabaseService } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
+import { describeError } from './errors.js';
 import { heartbeatJob } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
-import type { Job, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
+import type { Job, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
+
+export { describeError as describeReadinessCause } from './errors.js';
 
 export type SagaServiceHandle = {
   close: () => Promise<void>;
@@ -18,12 +21,7 @@ export type SagaServiceHandle = {
   url: string;
 };
 
-export type HealthJobStatus = {
-  consecutiveFailures: number;
-  lastOutcome: JobStatus['lastOutcome'];
-  lastRunAt: string | null;
-  name: string;
-};
+export type HealthJobStatus = Omit<JobStatus, 'lastRunAt'> & { lastRunAt: string | null };
 
 export type HealthPayload = {
   jobs: HealthJobStatus[];
@@ -46,21 +44,16 @@ export async function startSagaService(
   const startedAt = Date.now();
 
   const jobs = dependencies.jobs ?? [heartbeatJob];
-  // A DB-backed recorder needs a long-lived connection; only open one when the
-  // caller has not supplied its own recorder (tests inject an in-memory one).
+  // The job database connection and runner fibers are acquired only after the
+  // port is bound, so a failed listen can never leak them. Until then /health
+  // reports an empty jobs list.
   let jobDatabase: DatabaseService | undefined;
-  let recordRun = dependencies.recordRun;
-  if (recordRun === undefined) {
-    jobDatabase = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
-    const service = jobDatabase;
-    recordRun = (run) => recordJobRun(service, run).pipe(Effect.asVoid);
-  }
-  const runner = startJobRunner({ jobs, recordRun });
+  let runner: JobRunnerHandle | undefined;
 
   const server = createServer((request, response) => {
     if (request.url === '/health') {
       const payload: HealthPayload = {
-        jobs: runner.status().map(toHealthJobStatus),
+        jobs: runner === undefined ? [] : runner.status().map(toHealthJobStatus),
         ok: true,
         service: 'saga',
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
@@ -77,19 +70,62 @@ export async function startSagaService(
   await listen(server, config.service.port, config.service.host);
   const address = server.address();
   if (address === null || typeof address === 'string') {
+    await close(server);
     throw new Error('expected the service to be listening on a TCP address');
   }
   const host = address.address;
   const port = address.port;
 
+  // Post-listen acquisition: on any failure, release whatever was acquired and
+  // the bound port before rethrowing so startup never leaks resources.
+  try {
+    // A DB-backed recorder needs a long-lived connection; only open one when the
+    // caller has not supplied its own recorder (tests inject an in-memory one).
+    let recordRun = dependencies.recordRun;
+    if (recordRun === undefined) {
+      jobDatabase = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
+      const service = jobDatabase;
+      recordRun = (run) => recordJobRun(service, run).pipe(Effect.asVoid);
+    }
+    runner = startJobRunner({ jobs, recordRun });
+  } catch (cause) {
+    if (runner !== undefined) {
+      await runner.stop();
+    }
+    if (jobDatabase !== undefined) {
+      await Effect.runPromise(jobDatabase.close());
+    }
+    await close(server);
+    throw cause;
+  }
+
+  const startedRunner = runner;
   return {
     close: async () => {
-      // Interrupt job fibers cleanly before releasing their connection and the port.
-      await runner.stop();
-      if (jobDatabase !== undefined) {
-        await Effect.runPromise(jobDatabase.close());
+      // Every step runs even if an earlier one rejects, so the listening socket
+      // is always released; the first error is surfaced after cleanup completes.
+      const errors: unknown[] = [];
+      try {
+        // Interrupt job fibers cleanly before releasing their connection.
+        await startedRunner.stop();
+      } catch (cause) {
+        errors.push(cause);
       }
-      await close(server);
+      if (jobDatabase !== undefined) {
+        try {
+          await Effect.runPromise(jobDatabase.close());
+        } catch (cause) {
+          errors.push(cause);
+        }
+      }
+      try {
+        await close(server);
+      } catch (cause) {
+        errors.push(cause);
+      }
+      if (errors.length > 0) {
+        throw errors[0];
+      }
     },
     host,
     port,
@@ -99,10 +135,8 @@ export async function startSagaService(
 
 function toHealthJobStatus(status: JobStatus): HealthJobStatus {
   return {
-    consecutiveFailures: status.consecutiveFailures,
-    lastOutcome: status.lastOutcome,
+    ...status,
     lastRunAt: status.lastRunAt === null ? null : status.lastRunAt.toISOString(),
-    name: status.name,
   };
 }
 
@@ -120,22 +154,10 @@ export async function validateDatabaseReady(config: RuntimeConfig): Promise<void
     await service.sql`select 1`;
     await Effect.runPromise(assertMigrationsCurrent(service));
   } catch (cause) {
-    throw new Error(`saga database is not ready: ${describeReadinessCause(cause)}`, { cause });
+    throw new Error(`saga database is not ready: ${describeError(cause)}`, { cause });
   } finally {
     await Effect.runPromise(service.close());
   }
-}
-
-// postgres.js reports connection refusal as an AggregateError with an empty
-// message; unwrap it so the startup log names the unreachable target.
-export function describeReadinessCause(cause: unknown): string {
-  if (cause instanceof AggregateError && cause.errors.length > 0) {
-    return cause.errors.map((error) => describeReadinessCause(error)).join('; ');
-  }
-  if (cause instanceof Error) {
-    return cause.message === '' ? cause.name : cause.message;
-  }
-  return String(cause);
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {
