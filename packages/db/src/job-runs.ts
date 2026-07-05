@@ -1,7 +1,8 @@
-import { sql } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
-import type { DatabaseError, DatabaseService } from './database.js';
+import type { DatabaseService } from './database.js';
+import { errorMessage } from './error-message.js';
 import { jobRuns } from './schema.js';
 import type { JobRun } from './schema.js';
 
@@ -26,7 +27,7 @@ export class JobRunError extends Data.TaggedError('JobRunError')<{
 export function recordJobRun(
   service: DatabaseService,
   input: RecordJobRunInput,
-): Effect.Effect<JobRun, DatabaseError | JobRunError> {
+): Effect.Effect<JobRun, JobRunError> {
   return Effect.tryPromise({
     try: () =>
       service.db.transaction(async (tx) => {
@@ -65,48 +66,16 @@ export function recordJobRun(
   });
 }
 
+// Deliberate substrate for a later doctor surface: the newest run per job, one
+// row each. selectDistinctOn keeps the first row per job_name under the matching
+// order, so lead the ordering with job_name then newest-first.
 export function listLatestJobRuns(service: DatabaseService): Effect.Effect<JobRun[], JobRunError> {
   return Effect.tryPromise({
-    try: async () => {
-      const rows = await service.sql<JobRunRow[]>`
-        select distinct on (job_name)
-          id,
-          job_name,
-          started_at,
-          finished_at,
-          outcome,
-          error
-        from job_runs
-        order by job_name, finished_at desc, id desc
-      `;
-      return rows.map(mapJobRunRow);
-    },
+    try: () =>
+      service.db
+        .selectDistinctOn([jobRuns.jobName])
+        .from(jobRuns)
+        .orderBy(jobRuns.jobName, desc(jobRuns.finishedAt), desc(jobRuns.id)),
     catch: (cause) => new JobRunError({ message: errorMessage(cause) }),
   });
-}
-
-type JobRunRow = {
-  error: string | null;
-  finished_at: Date | string;
-  id: string;
-  job_name: string;
-  outcome: string;
-  started_at: Date | string;
-};
-
-// postgres.js hands raw timestamptz columns back as strings; the JobRun contract
-// (Drizzle's $inferSelect) is Date, so coerce here to keep the boundary honest.
-function mapJobRunRow(row: JobRunRow): JobRun {
-  return {
-    error: row.error,
-    finishedAt: new Date(row.finished_at),
-    id: row.id,
-    jobName: row.job_name,
-    outcome: row.outcome,
-    startedAt: new Date(row.started_at),
-  };
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
