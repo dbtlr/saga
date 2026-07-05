@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 echo "== SGA-221 compiled-binary smoke =="
 echo "binary: $BIN"
-[ -x "$BIN" ] || fail "binary not found/executable at $BIN (build it first: bun build --compile apps/cli/src/main.ts --outfile $BIN)"
+[ -x "$BIN" ] || fail "binary not found/executable at $BIN (build it first: bun build --compile --no-compile-autoload-dotenv apps/cli/src/main.ts --outfile $BIN)"
 
 # 0. fresh DB + from-source migration -------------------------------------------------
 echo "[0] create fresh DB '$DBNAME' and migrate from source"
