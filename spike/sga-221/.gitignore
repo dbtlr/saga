@@ -1,0 +1,2 @@
+# Compiled binary + bun tooling artifacts are not committed (rebuild via build.sh).
+saga
