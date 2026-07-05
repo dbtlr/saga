@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,41 +47,31 @@ export class DatabaseError extends Data.TaggedError('DatabaseError')<{
 
 export const DatabaseTag = Context.GenericTag<DatabaseService>('@saga/db/Database');
 
-// In a from-source (Node/tsx) run the migrations live next to this module on disk.
-// In a compiled single-binary (Bun `--compile`) run there is no repo tree, so the
-// migration `.sql` files and journal are inlined via `embedded-migrations.ts` and
-// materialized to a temp dir on first use — keeping drizzle's folder-based
-// `migrate()` and the hash checks below unchanged. (SGA-221 spike.)
-function resolveMigrationsFolder(): string {
-  const onDisk = fileURLToPath(new URL('../drizzle', import.meta.url));
-  if (existsSync(join(onDisk, 'meta', '_journal.json'))) {
-    return onDisk;
-  }
-  return materializeEmbeddedMigrations();
-}
+// In a from-source (Node/tsx) run the migrations live next to this module on
+// disk and DEFAULT_MIGRATIONS_FOLDER points at them. In a compiled
+// single-binary (bun --compile) run there is no repo tree: expected migration
+// hashes are derived directly from the literals in `embedded-migrations.ts`
+// (the filesystem is never consulted, so nothing on disk can be preseeded or
+// trusted), and `runMigrations` materializes the literals into a fresh private
+// per-process temp dir only for the duration of drizzle's folder-based
+// `migrate()`. A drift-lock unit test keeps the literals byte-identical to
+// packages/db/drizzle. Importing this module performs no filesystem writes.
+export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL('../drizzle', import.meta.url));
 
-function materializeEmbeddedMigrations(): string {
-  const journalText = JSON.stringify(embeddedJournal);
-  const fingerprint = createHash('sha256')
-    .update(journalText)
-    .update(Object.values(embeddedSql).join(' '))
-    .digest('hex')
-    .slice(0, 16);
-  const dir = join(tmpdir(), `saga-migrations-${fingerprint}`);
-  const metaDir = join(dir, 'meta');
-  if (!existsSync(join(metaDir, '_journal.json'))) {
-    mkdirSync(metaDir, { recursive: true });
-    writeFileSync(join(metaDir, '_journal.json'), journalText);
-    for (const [tag, sql] of Object.entries(embeddedSql)) {
-      writeFileSync(join(dir, `${tag}.sql`), sql);
+export function expectedMigrationHashes(): { hash: string; tag: string }[] {
+  return embeddedJournal.entries.map((entry) => {
+    const sql = embeddedSql[entry.tag];
+    if (sql === undefined) {
+      throw new Error(`embedded migrations are missing sql for journal tag: ${entry.tag}`);
     }
-  }
-  return dir;
+    return {
+      hash: createHash('sha256').update(sql).digest('hex'),
+      tag: entry.tag,
+    };
+  });
 }
 
-export const DEFAULT_MIGRATIONS_FOLDER = resolveMigrationsFolder();
-export const EXPECTED_MIGRATION_COUNT =
-  readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).length;
+export const EXPECTED_MIGRATION_COUNT = expectedMigrationHashes().length;
 
 export type MakeDatabaseOptions = {
   postgres?: Options<Record<string, PostgresType>>;
@@ -124,10 +114,34 @@ export function DatabaseLive(
 
 export function runMigrations(
   service: DatabaseService,
-  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
+  migrationsFolder?: string,
 ): Effect.Effect<void, DatabaseError> {
   return Effect.tryPromise({
-    try: () => migrate(service.db, { migrationsFolder }),
+    try: async () => {
+      if (migrationsFolder !== undefined) {
+        await migrate(service.db, { migrationsFolder });
+        return;
+      }
+      if (existsSync(join(DEFAULT_MIGRATIONS_FOLDER, 'meta', '_journal.json'))) {
+        await migrate(service.db, { migrationsFolder: DEFAULT_MIGRATIONS_FOLDER });
+        return;
+      }
+      // Compiled binary: materialize the embedded literals into a fresh
+      // private per-process dir (mkdtemp: unpredictable name, mode 0700) for
+      // this call only — never shared, never reused, never read back for
+      // hashing, so there is no window for another process to race or preseed.
+      const dir = mkdtempSync(join(tmpdir(), 'saga-migrations-'));
+      try {
+        mkdirSync(join(dir, 'meta'), { recursive: true });
+        writeFileSync(join(dir, 'meta', '_journal.json'), JSON.stringify(embeddedJournal));
+        for (const [tag, sql] of Object.entries(embeddedSql)) {
+          writeFileSync(join(dir, `${tag}.sql`), sql);
+        }
+        await migrate(service.db, { migrationsFolder: dir });
+      } finally {
+        rmSync(dir, { force: true, recursive: true });
+      }
+    },
     catch: (cause) =>
       new DatabaseError({
         message: `failed to run database migrations: ${errorMessage(cause)}`,
@@ -138,7 +152,7 @@ export function runMigrations(
 
 export function runMigrationsSafely(
   service: DatabaseService,
-  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
+  migrationsFolder?: string,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) => {
@@ -160,11 +174,16 @@ export function runMigrationsSafely(
 
 export function getMigrationStatus(
   service: DatabaseService,
-  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
+  migrationsFolder?: string,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return Effect.tryPromise({
     try: async () => {
-      const expectedMigrations = readExpectedMigrationHashes(migrationsFolder);
+      // Default expectation comes from the embedded literals — no disk read,
+      // so the compiled binary and the from-source run agree by construction.
+      const expectedMigrations =
+        migrationsFolder === undefined
+          ? expectedMigrationHashes()
+          : readExpectedMigrationHashes(migrationsFolder);
       const table = await service.sql.unsafe(
         "select to_regclass('drizzle.__drizzle_migrations')::text as table_name",
       );
@@ -212,7 +231,7 @@ export function getMigrationStatus(
 
 export function assertMigrationsCurrent(
   service: DatabaseService,
-  migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
+  migrationsFolder?: string,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) => {
