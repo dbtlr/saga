@@ -128,7 +128,11 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
-  packages/contracts: {}
+  packages/contracts:
+    dependencies:
+      effect:
+        specifier: ^3.21.4
+        version: 3.21.4
 
   packages/db:
     dependencies:

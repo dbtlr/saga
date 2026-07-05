@@ -1,5 +1,7 @@
 export const packageName = '@saga/contracts';
 
+export * from './consolidation.js';
+
 export type TrustLevel = 'raw' | 'trusted';
 
 export type RawEventEnvelope = {
