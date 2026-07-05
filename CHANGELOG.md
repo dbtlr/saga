@@ -29,3 +29,13 @@ release. When a release is cut, this section is promoted to
   curl-pipe `install.sh` detects OS/arch, hard-verifies the checksum, and
   installs to the one stable path `~/.local/bin/saga`. The compiled binary
   reports its exact release tag via `saga --version`.
+- **`saga self-update`** (SGA-223, ADR-0045). Resolves the latest release
+  (`--next` for the prerelease channel, `--tag` to pin), hard-verifies the
+  checksum, atomically swaps `~/.local/bin/saga`, runs pending migrations,
+  restarts the supervised service, and doctor-verifies — one supervised
+  convergence sequence that also recovers a host left binary-ahead-of-DB.
+  Refuses to run from source. Migration skew is asymmetric: a database ahead of
+  the binary is tolerated, a database behind it refuses and names
+  `saga self-update` as the remedy; `saga doctor` reports current / behind /
+  ahead. `saga service install` now points launchd at the compiled stable-path
+  binary so an update's restart runs the swapped binary.
