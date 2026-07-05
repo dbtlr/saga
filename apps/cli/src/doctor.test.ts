@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   checkNodeVersion,
   doctorProject,
+  migrationDoctorCheck,
   renderDoctor,
   runDoctor,
   serviceDoctorStatus,
@@ -882,6 +883,49 @@ describe('engine checks', () => {
   it('evaluates caret engine ranges', () => {
     expect(satisfiesEngineRange('11.8.0', '^11.0.0')).toBe(true);
     expect(satisfiesEngineRange('12.0.0', '^11.0.0')).toBe(false);
+  });
+});
+
+describe('migrationDoctorCheck', () => {
+  it('reports current migrations as ok', () => {
+    expect(
+      migrationDoctorCheck({ applied: 5, compatible: true, expected: 5, mismatch: undefined }),
+    ).toStrictEqual({ detail: '5 applied', label: 'migrations', status: 'ok' });
+  });
+
+  it('fails when behind and names self-update as the remedy', () => {
+    const check = migrationDoctorCheck({
+      applied: 4,
+      compatible: true,
+      expected: 5,
+      mismatch: undefined,
+    });
+    expect(check.status).toBe('fail');
+    expect(check.detail).toContain('behind');
+    expect(check.detail).toContain('saga self-update');
+  });
+
+  it('warns when ahead — a newer saga exists', () => {
+    const check = migrationDoctorCheck({
+      applied: 6,
+      compatible: false,
+      expected: 5,
+      mismatch: undefined,
+    });
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain('ahead');
+    expect(check.detail).toContain('saga self-update');
+  });
+
+  it('fails on a hash mismatch in the shared prefix', () => {
+    const check = migrationDoctorCheck({
+      applied: 5,
+      compatible: false,
+      expected: 5,
+      mismatch: { appliedHash: 'a', expectedHash: 'b', index: 2, tag: '0002_thick_vision' },
+    });
+    expect(check.status).toBe('fail');
+    expect(check.detail).toContain('0002_thick_vision');
   });
 });
 
