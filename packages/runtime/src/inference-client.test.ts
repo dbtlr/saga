@@ -169,6 +169,24 @@ describe('makeOpenAiApiInferenceClient', () => {
     expect(format.format.strict).toBeUndefined();
   });
 
+  it('treats an empty/whitespace baseUrl as absent and uses the default OpenAI URL', async () => {
+    const calls: CapturedCall[] = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      calls.push({ init, url: requestUrl(url) });
+      return openAiResponse({ count: 1, title: 'x' });
+    };
+    const client = makeOpenAiApiInferenceClient({
+      apiKey: 'sk',
+      baseUrl: '   ',
+      fetch: fetchImpl,
+      model: 'm',
+    });
+
+    await runEither(client.generateStructured(request()));
+
+    expect(calls[0]?.url).toBe('https://api.openai.com/v1/responses');
+  });
+
   it('maps a timed-out request to InferenceTransportError', async () => {
     const client = makeOpenAiApiInferenceClient({
       apiKey: 'sk',

@@ -43,6 +43,10 @@ export function resolveCodexInferenceAuth(
   const candidates = codexAuthFileCandidates(options);
   let sawFile = false;
 
+  // First-readable-wins is deliberate and matches the Codex CLI: when CODEX_HOME is set, its
+  // auth.json is authoritative and the default ~/.codex is not consulted. So a non-ChatGPT
+  // CODEX_HOME auth file fails here even if ~/.codex holds a valid ChatGPT login — CODEX_HOME
+  // is exclusive, not a first tier of a fallback chain.
   for (const candidate of candidates) {
     let rawAuth: string;
     try {

@@ -55,6 +55,23 @@ describe('resolveInferenceApiKey', () => {
     expect(credential).toMatchObject({ apiKey: 'sk-file', status: 'available' });
   });
 
+  it('falls back to the Codex cached OPENAI_API_KEY when env and installation config have none', () => {
+    const home = tempHome();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(
+      join(home, '.codex', 'auth.json'),
+      JSON.stringify({ OPENAI_API_KEY: 'sk-codex' }),
+    );
+
+    const credential = resolveInferenceApiKey({ env: {}, homeDir: home });
+
+    expect(credential).toMatchObject({
+      apiKey: 'sk-codex',
+      source: 'codex-auth',
+      status: 'available',
+    });
+  });
+
   it('is unavailable when no source supplies a key', () => {
     const home = tempHome();
 

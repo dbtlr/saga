@@ -49,6 +49,18 @@ describe('resolveCodexInferenceAuth', () => {
     expect(auth).toMatchObject({ source: 'codex-home', status: 'available' });
   });
 
+  it('does not fall back to ~/.codex when CODEX_HOME auth is not a ChatGPT login', () => {
+    const home = tempHome();
+    const codexHome = join(home, 'custom-codex');
+    // CODEX_HOME is exclusive: a non-ChatGPT file there must fail even though ~/.codex is valid.
+    writeCodexAuth(codexHome, JSON.stringify({ auth_mode: 'apikey' }));
+    writeCodexAuth(join(home, '.codex'), chatgptAuth);
+
+    const auth = resolveCodexInferenceAuth({ env: { CODEX_HOME: codexHome }, homeDir: home });
+
+    expect(auth).toMatchObject({ reason: 'not-chatgpt-mode', status: 'unavailable' });
+  });
+
   it('rejects an api-key mode auth file', () => {
     const home = tempHome();
     writeCodexAuth(join(home, '.codex'), JSON.stringify({ OPENAI_API_KEY: 'sk-x' }));
