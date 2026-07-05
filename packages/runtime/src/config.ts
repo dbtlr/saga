@@ -219,9 +219,20 @@ function resolveDatabaseConfig(
   // dotenv is source-only (ADR-0044): a compiled/production build resolves the DB
   // from explicit env then installation config, skipping the project-env layers.
   const isProduction = options.isProduction ?? IS_PRODUCTION;
+  // The compiled binary runs on Bun, which auto-loads repo .env files into
+  // process.env *before* any app code runs — so in production the explicit-env
+  // layer would still carry a project .env's database value and silently select
+  // the wrong Postgres, the exact wrong-database risk ADR-0044 guards against.
+  // Neutralize that injection: re-read the .env files and drop a DB env value that
+  // merely echoes the .env entry, so only a genuine deployment export (a value that
+  // differs from, or has no, .env entry) counts as environment. The files are read
+  // solely to counteract Bun's injection, never to source config from them.
+  const environmentEnv = isProduction
+    ? withoutDotenvInjectedDatabaseKeys(explicitEnv, loadLocalEnv(options.cwd, options.envFiles))
+    : explicitEnv;
   const layers: readonly { env: NodeJS.ProcessEnv; source: 'environment' | 'project-env-file' }[] =
     [
-      { env: explicitEnv, source: 'environment' },
+      { env: environmentEnv, source: 'environment' },
       ...(isProduction
         ? []
         : loadLocalEnvLayers(options.cwd, options.envFiles).map((env) => ({
@@ -279,6 +290,23 @@ function loadLocalEnvLayers(
     layers.unshift(parseDotenv(readFileSync(path)));
   }
   return layers;
+}
+
+// Drop a database env key when its value merely echoes the repo .env entry — the
+// signature of Bun's auto-loaded .env in a production build (see resolveDatabaseConfig).
+// A key absent from .env, or holding a value that differs from the .env entry, is a
+// real deployment export and is preserved.
+function withoutDotenvInjectedDatabaseKeys(
+  env: NodeJS.ProcessEnv,
+  dotenvValues: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = { ...env };
+  for (const key of [DATABASE_URL_ENV, DATABASE_URL_FILE_ENV] as const) {
+    if (sanitized[key] !== undefined && sanitized[key] === dotenvValues[key]) {
+      delete sanitized[key];
+    }
+  }
+  return sanitized;
 }
 
 function readInstallationDatabaseUrl(
