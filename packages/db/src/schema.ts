@@ -1183,24 +1183,21 @@ export const consolidationRecordRelations = relations(consolidationRecords, ({ m
   }),
 }));
 
-export const consolidationFindingRelations = relations(
-  consolidationFindings,
-  ({ many, one }) => ({
-    evidencePointers: many(consolidationEvidencePointers),
-    record: one(consolidationRecords, {
-      fields: [consolidationFindings.recordId],
-      references: [consolidationRecords.id],
-    }),
-    session: one(sessions, {
-      fields: [consolidationFindings.sessionId],
-      references: [sessions.id],
-    }),
-    workspace: one(workspaces, {
-      fields: [consolidationFindings.workspaceId],
-      references: [workspaces.id],
-    }),
+export const consolidationFindingRelations = relations(consolidationFindings, ({ many, one }) => ({
+  evidencePointers: many(consolidationEvidencePointers),
+  record: one(consolidationRecords, {
+    fields: [consolidationFindings.recordId],
+    references: [consolidationRecords.id],
   }),
-);
+  session: one(sessions, {
+    fields: [consolidationFindings.sessionId],
+    references: [sessions.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [consolidationFindings.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
 
 export const consolidationEvidencePointerRelations = relations(
   consolidationEvidencePointers,
