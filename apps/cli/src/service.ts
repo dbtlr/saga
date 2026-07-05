@@ -8,6 +8,7 @@ import { loadRuntimeConfig } from '@saga/runtime';
 import { startSagaService } from '@saga/service';
 import { Effect } from 'effect';
 
+import { isCompiledBinary, stableBinPath } from './binary.js';
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
@@ -282,9 +283,13 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
         return unavailable('install');
       }
       ensureLaunchdDirectories(paths);
-      writeFileSync(paths.plistPath, renderLaunchdPlist({ paths, projectRoot }), {
-        mode: 0o600,
-      });
+      writeFileSync(
+        paths.plistPath,
+        renderLaunchdPlist({ binPath: stableBinPath(input.home), paths, projectRoot }),
+        {
+          mode: 0o600,
+        },
+      );
       // An already-bootstrapped agent makes a bare bootstrap fail before
       // kickstart runs, so reinstall boots the old agent out first. launchd
       // reports "5: Input/output error" both when nothing is loaded and on
@@ -404,9 +409,28 @@ function launchctlFailureMessage(error: unknown): string {
 }
 
 export function renderLaunchdPlist(input: {
+  binPath?: string;
+  compiled?: boolean;
   paths: ReturnType<typeof launchdPaths>;
   projectRoot: string;
 }): string {
+  // A compiled binary self-updates by swapping its own file (ADR-0045), so the
+  // plist must exec the stable-path binary directly (ADR-0044) — that is what
+  // launchd re-execs after a swap. A from-source/dev run keeps the tsx+source
+  // invocation so `service install` still works out of a checkout.
+  const programArguments =
+    (input.compiled ?? isCompiledBinary())
+      ? [input.binPath ?? stableBinPath(), 'service', 'run']
+      : [
+          process.execPath,
+          join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+          join(input.projectRoot, 'apps', 'cli', 'src', 'main.ts'),
+          'service',
+          'run',
+        ];
+  const programArgumentsXml = programArguments
+    .map((argument) => `    <string>${escapePlist(argument)}</string>`)
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -415,11 +439,7 @@ export function renderLaunchdPlist(input: {
   <string>${escapePlist(LAUNCHD_LABEL)}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapePlist(process.execPath)}</string>
-    <string>${escapePlist(join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'))}</string>
-    <string>${escapePlist(join(input.projectRoot, 'apps', 'cli', 'src', 'main.ts'))}</string>
-    <string>service</string>
-    <string>run</string>
+${programArgumentsXml}
   </array>
   <key>WorkingDirectory</key>
   <string>${escapePlist(input.projectRoot)}</string>
