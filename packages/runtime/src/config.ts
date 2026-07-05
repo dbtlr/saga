@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { parse as parseDotenv } from 'dotenv';
 import { Context, Data, Effect, Layer } from 'effect';
 
+import { IS_PRODUCTION } from './build-profile.js';
 import { installationConfigLocation } from './embedding-policy.js';
 
 // The single source of truth for the database environment variable name. The one
@@ -70,6 +71,10 @@ export type LoadRuntimeConfigOptions = {
   envFiles?: readonly string[];
   homeDir?: string;
   installationConfig?: false;
+  // Config-precedence build profile: when true, project .env files are not read
+  // (dotenv is source-only, ADR-0044). Defaults to the compiled-in IS_PRODUCTION;
+  // an explicit value lets tests exercise both modes without a compiled binary.
+  isProduction?: boolean;
   readInstallationFile?: (path: string) => string;
 };
 
@@ -110,7 +115,11 @@ export function loadRuntimeConfig(
 ): Effect.Effect<RuntimeConfig, ConfigError> {
   return Effect.sync(() => {
     const explicitEnv = options.env ?? process.env;
-    const env = mergeEnv(loadLocalEnv(options.cwd, options.envFiles), explicitEnv);
+    // dotenv is source-only: a compiled/production build never reads project .env
+    // files (ADR-0044). The gate lives here in the loader, not at call sites.
+    const isProduction = options.isProduction ?? IS_PRODUCTION;
+    const localEnv = isProduction ? {} : loadLocalEnv(options.cwd, options.envFiles);
+    const env = mergeEnv(localEnv, explicitEnv);
     // The database URL resolves per-layer below, so the merged env must not
     // contribute a cross-layer database value or duplicate secret-file issues.
     const {
@@ -207,13 +216,18 @@ function resolveDatabaseConfig(
   issues: ConfigIssue[],
   options: LoadRuntimeConfigOptions,
 ): RuntimeConfig {
+  // dotenv is source-only (ADR-0044): a compiled/production build resolves the DB
+  // from explicit env then installation config, skipping the project-env layers.
+  const isProduction = options.isProduction ?? IS_PRODUCTION;
   const layers: readonly { env: NodeJS.ProcessEnv; source: 'environment' | 'project-env-file' }[] =
     [
       { env: explicitEnv, source: 'environment' },
-      ...loadLocalEnvLayers(options.cwd, options.envFiles).map((env) => ({
-        env,
-        source: 'project-env-file' as const,
-      })),
+      ...(isProduction
+        ? []
+        : loadLocalEnvLayers(options.cwd, options.envFiles).map((env) => ({
+            env,
+            source: 'project-env-file' as const,
+          }))),
     ];
 
   const installation =
