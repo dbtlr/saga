@@ -250,19 +250,69 @@ describe('runSelfUpdateCommand', () => {
     expect(replaceBinary).not.toHaveBeenCalled();
   });
 
-  it('no-ops when already up to date', async () => {
+  it('skips download and swap when already up to date but still converges', async () => {
     const replaceBinary = vi.fn();
+    const migrate = vi.fn(async () => currentStatus);
+    const sup = fakeSupervisor('running');
     const { fetcher } = releaseFetcher({ tag: 'v1.0.0' });
     const lines: string[] = [];
     const code = await runSelfUpdateCommand(
       [],
       options,
       (text) => lines.push(text),
-      baseDeps({ fetcher, replaceBinary, version: '1.0.0' }),
+      baseDeps({ fetcher, migrate, replaceBinary, supervisor: sup.supervisor, version: '1.0.0' }),
     );
     expect(code).toBe(0);
     expect(replaceBinary).not.toHaveBeenCalled();
+    // Convergence still runs so a prior half-finished update recovers.
+    expect(migrate).toHaveBeenCalled();
     expect(lines.join('\n')).toContain('already up to date');
+  });
+
+  it('recovers a behind database on the already-current path (updated:false, exit 0)', async () => {
+    // The binary already matches the tag (a prior run swapped it) but the DB is
+    // behind — a failed earlier migrate. migrate applies and converges.
+    const migrate = vi.fn(async () => currentStatus);
+    const sup = fakeSupervisor('running');
+    const { fetcher } = releaseFetcher({ tag: 'v1.0.0' });
+    const lines: string[] = [];
+    const code = await runSelfUpdateCommand(
+      [],
+      options,
+      (text) => lines.push(text),
+      baseDeps({ fetcher, migrate, supervisor: sup.supervisor, version: '1.0.0' }),
+    );
+    expect(code).toBe(0);
+    expect(migrate).toHaveBeenCalled();
+    expect(sup.restarts).toBe(1);
+    const output = lines.join('\n');
+    expect(output).toContain('already up to date');
+    expect(output).toContain('5/5 applied (current)');
+  });
+
+  it('keeps the swap but reports failure and exits 1 when the post-swap migrate throws', async () => {
+    const { fetcher } = releaseFetcher({ tag: 'v1.2.3' });
+    const replaceBinary = vi.fn();
+    const migrate = vi.fn(async () => {
+      throw new Error('database is unreachable');
+    });
+    const sup = fakeSupervisor('running');
+    const lines: string[] = [];
+    const code = await runSelfUpdateCommand(
+      [],
+      options,
+      (text) => lines.push(text),
+      baseDeps({ fetcher, migrate, replaceBinary, supervisor: sup.supervisor }),
+    );
+    expect(code).toBe(1);
+    // The binary IS swapped — convergence never undoes the install.
+    expect(replaceBinary).toHaveBeenCalledWith('/Users/x/.local/bin/saga', expect.anything());
+    // A failed migrate skips the restart (a new binary would only refuse startup).
+    expect(sup.restarts).toBe(0);
+    const output = lines.join('\n');
+    expect(output).toContain('migration failed: database is unreachable');
+    expect(output).toContain('migrations fail');
+    expect(output).toContain('0/0 applied (unknown)');
   });
 
   it('downloads, verifies, swaps, migrates, and restarts on the happy path', async () => {
