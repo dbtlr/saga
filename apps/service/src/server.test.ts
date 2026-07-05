@@ -223,14 +223,14 @@ describe('deploy targets', () => {
 
     expect(unit).toContain('EnvironmentFile=/etc/saga/saga.env');
     expect(unit).not.toContain('ExecStartPre');
-    expect(unit).toContain('pnpm --dir /opt/saga --filter @saga/service start');
+    expect(unit).toContain('bun run --cwd /opt/saga --filter @saga/service start');
   });
 
   it('systemd docs make migrations an explicit deploy step', () => {
     const docs = readFileSync(join(workspaceRoot, 'docs', 'deployable-service.md'), 'utf8');
 
     expect(docs).toContain('Run migrations explicitly before first start');
-    expect(docs).toContain('sudo -u saga pnpm --dir /opt/saga --filter @saga/service migrate');
+    expect(docs).toContain('sudo -u saga bun run --cwd /opt/saga --filter @saga/service migrate');
   });
 
   it('hosted target documents file-backed secrets', () => {

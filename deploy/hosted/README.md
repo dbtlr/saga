@@ -3,7 +3,7 @@
 Run the Saga service as a long-lived container process:
 
 ```sh
-pnpm --filter @saga/service start
+bun run --filter '@saga/service' start
 ```
 
 Required runtime contract:
