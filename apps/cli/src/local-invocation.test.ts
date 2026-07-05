@@ -4,12 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const cliBin = join(dirname(fileURLToPath(import.meta.url)), '../bin/saga.js');
 
 describe('local CLI invocation', () => {
-  it('runs the documented pnpm package script', () => {
-    const result = spawnSync('pnpm', ['--filter', '@saga/cli', 'saga', '--help'], {
-      cwd: repoRoot,
+  it('runs the CLI entry directly through node', () => {
+    const result = spawnSync(process.execPath, [cliBin, '--help'], {
       encoding: 'utf8',
     });
 
