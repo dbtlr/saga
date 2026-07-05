@@ -753,6 +753,194 @@ export const jobRuns = pgTable(
   ],
 );
 
+export const consolidationRecords = pgTable(
+  'consolidation_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    activityIntervalId: uuid('activity_interval_id')
+      .notNull()
+      .references(() => activityIntervals.id, { onDelete: 'cascade' }),
+    narrative: text('narrative').notNull(),
+    modelId: text('model_id').notNull(),
+    authPath: text('auth_path').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index('consolidation_records_session_idx').on(table.sessionId),
+    index('consolidation_records_workspace_created_idx').on(table.workspaceId, table.createdAt),
+    uniqueIndex('consolidation_records_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('consolidation_records_id_session_unique').on(table.id, table.sessionId),
+    // One immutable record at most per settled activity interval.
+    uniqueIndex('consolidation_records_activity_interval_unique').on(table.activityIntervalId),
+    foreignKey({
+      columns: [table.sessionId, table.workspaceId],
+      foreignColumns: [sessions.id, sessions.workspaceId],
+      name: 'consolidation_records_session_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.activityIntervalId, table.workspaceId],
+      foreignColumns: [activityIntervals.id, activityIntervals.workspaceId],
+      name: 'consolidation_records_activity_interval_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.activityIntervalId, table.sessionId],
+      foreignColumns: [activityIntervals.id, activityIntervals.sessionId],
+      name: 'consolidation_records_activity_interval_session_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const consolidationFindings = pgTable(
+  'consolidation_findings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => consolidationRecords.id, { onDelete: 'cascade' }),
+    ordinal: integer('ordinal').notNull(),
+    findingType: text('finding_type').notNull(),
+    text: text('text').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index('consolidation_findings_record_idx').on(table.recordId),
+    uniqueIndex('consolidation_findings_id_workspace_unique').on(table.id, table.workspaceId),
+    uniqueIndex('consolidation_findings_id_session_unique').on(table.id, table.sessionId),
+    uniqueIndex('consolidation_findings_record_ordinal_unique').on(table.recordId, table.ordinal),
+    check('consolidation_findings_ordinal_check', sql`${table.ordinal} >= 0`),
+    check(
+      'consolidation_findings_type_check',
+      sql`${table.findingType} in ('decision', 'follow_up', 'deviation_or_correction', 'candidate_learning')`,
+    ),
+    foreignKey({
+      columns: [table.recordId, table.workspaceId],
+      foreignColumns: [consolidationRecords.id, consolidationRecords.workspaceId],
+      name: 'consolidation_findings_record_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.recordId, table.sessionId],
+      foreignColumns: [consolidationRecords.id, consolidationRecords.sessionId],
+      name: 'consolidation_findings_record_session_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.sessionId, table.workspaceId],
+      foreignColumns: [sessions.id, sessions.workspaceId],
+      name: 'consolidation_findings_session_workspace_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const consolidationEvidencePointers = pgTable(
+  'consolidation_evidence_pointers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    findingId: uuid('finding_id')
+      .notNull()
+      .references(() => consolidationFindings.id, { onDelete: 'cascade' }),
+    // Ordinal references (not row ids) so pointers survive re-import and redaction.
+    pointerSessionId: uuid('pointer_session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    activityIntervalOrdinal: integer('activity_interval_ordinal'),
+    turnOrdinal: integer('turn_ordinal'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index('consolidation_evidence_pointers_finding_idx').on(table.findingId),
+    index('consolidation_evidence_pointers_pointer_session_idx').on(table.pointerSessionId),
+    check(
+      'consolidation_evidence_pointers_interval_ordinal_check',
+      sql`${table.activityIntervalOrdinal} is null or ${table.activityIntervalOrdinal} >= 0`,
+    ),
+    check(
+      'consolidation_evidence_pointers_turn_ordinal_check',
+      sql`${table.turnOrdinal} is null or ${table.turnOrdinal} >= 0`,
+    ),
+    foreignKey({
+      columns: [table.findingId, table.workspaceId],
+      foreignColumns: [consolidationFindings.id, consolidationFindings.workspaceId],
+      name: 'consolidation_evidence_pointers_finding_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.pointerSessionId, table.workspaceId],
+      foreignColumns: [sessions.id, sessions.workspaceId],
+      name: 'consolidation_evidence_pointers_pointer_session_workspace_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const consolidationDispositions = pgTable(
+  'consolidation_dispositions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => consolidationRecords.id, { onDelete: 'cascade' }),
+    fromFindingId: uuid('from_finding_id')
+      .notNull()
+      .references(() => consolidationFindings.id, { onDelete: 'cascade' }),
+    toFindingId: uuid('to_finding_id')
+      .notNull()
+      .references(() => consolidationFindings.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    ...timestamps,
+  },
+  (table) => [
+    index('consolidation_dispositions_record_idx').on(table.recordId),
+    index('consolidation_dispositions_to_finding_idx').on(table.toFindingId),
+    uniqueIndex('consolidation_dispositions_edge_unique').on(
+      table.fromFindingId,
+      table.toFindingId,
+      table.kind,
+    ),
+    check('consolidation_dispositions_kind_check', sql`${table.kind} in ('builds_on', 'refutes')`),
+    check(
+      'consolidation_dispositions_no_self_loop_check',
+      sql`${table.fromFindingId} <> ${table.toFindingId}`,
+    ),
+    foreignKey({
+      columns: [table.recordId, table.workspaceId],
+      foreignColumns: [consolidationRecords.id, consolidationRecords.workspaceId],
+      name: 'consolidation_dispositions_record_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.fromFindingId, table.workspaceId],
+      foreignColumns: [consolidationFindings.id, consolidationFindings.workspaceId],
+      name: 'consolidation_dispositions_from_finding_workspace_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.toFindingId, table.workspaceId],
+      foreignColumns: [consolidationFindings.id, consolidationFindings.workspaceId],
+      name: 'consolidation_dispositions_to_finding_workspace_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const workspaceRelations = relations(workspaces, ({ many, one }) => ({
   activityIntervals: many(activityIntervals),
   claimEvents: many(claimEvents),
@@ -978,9 +1166,93 @@ export const sessionSegmentEmbeddingRelations = relations(sessionSegmentEmbeddin
   }),
 }));
 
+export const consolidationRecordRelations = relations(consolidationRecords, ({ many, one }) => ({
+  activityInterval: one(activityIntervals, {
+    fields: [consolidationRecords.activityIntervalId],
+    references: [activityIntervals.id],
+  }),
+  dispositions: many(consolidationDispositions),
+  findings: many(consolidationFindings),
+  session: one(sessions, {
+    fields: [consolidationRecords.sessionId],
+    references: [sessions.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [consolidationRecords.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
+
+export const consolidationFindingRelations = relations(
+  consolidationFindings,
+  ({ many, one }) => ({
+    evidencePointers: many(consolidationEvidencePointers),
+    record: one(consolidationRecords, {
+      fields: [consolidationFindings.recordId],
+      references: [consolidationRecords.id],
+    }),
+    session: one(sessions, {
+      fields: [consolidationFindings.sessionId],
+      references: [sessions.id],
+    }),
+    workspace: one(workspaces, {
+      fields: [consolidationFindings.workspaceId],
+      references: [workspaces.id],
+    }),
+  }),
+);
+
+export const consolidationEvidencePointerRelations = relations(
+  consolidationEvidencePointers,
+  ({ one }) => ({
+    finding: one(consolidationFindings, {
+      fields: [consolidationEvidencePointers.findingId],
+      references: [consolidationFindings.id],
+    }),
+    pointerSession: one(sessions, {
+      fields: [consolidationEvidencePointers.pointerSessionId],
+      references: [sessions.id],
+    }),
+    workspace: one(workspaces, {
+      fields: [consolidationEvidencePointers.workspaceId],
+      references: [workspaces.id],
+    }),
+  }),
+);
+
+export const consolidationDispositionRelations = relations(
+  consolidationDispositions,
+  ({ one }) => ({
+    fromFinding: one(consolidationFindings, {
+      fields: [consolidationDispositions.fromFindingId],
+      references: [consolidationFindings.id],
+    }),
+    record: one(consolidationRecords, {
+      fields: [consolidationDispositions.recordId],
+      references: [consolidationRecords.id],
+    }),
+    toFinding: one(consolidationFindings, {
+      fields: [consolidationDispositions.toFindingId],
+      references: [consolidationFindings.id],
+    }),
+    workspace: one(workspaces, {
+      fields: [consolidationDispositions.workspaceId],
+      references: [workspaces.id],
+    }),
+  }),
+);
+
 export const schema = {
   activityIntervalRelations,
   activityIntervals,
+  consolidationDispositionRelations,
+  consolidationDispositions,
+  consolidationEvidencePointerRelations,
+  consolidationEvidencePointers,
+  consolidationFindingRelations,
+  consolidationFindings,
+  consolidationRecordRelations,
+  consolidationRecords,
   claimEventRelations,
   claimEvents,
   contextIndexEntries,
@@ -1046,3 +1318,11 @@ export type SessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferSele
 export type NewSessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferInsert;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type NewJobRun = typeof jobRuns.$inferInsert;
+export type ConsolidationRecordRow = typeof consolidationRecords.$inferSelect;
+export type NewConsolidationRecordRow = typeof consolidationRecords.$inferInsert;
+export type ConsolidationFindingRow = typeof consolidationFindings.$inferSelect;
+export type NewConsolidationFindingRow = typeof consolidationFindings.$inferInsert;
+export type ConsolidationEvidencePointerRow = typeof consolidationEvidencePointers.$inferSelect;
+export type NewConsolidationEvidencePointerRow = typeof consolidationEvidencePointers.$inferInsert;
+export type ConsolidationDispositionRow = typeof consolidationDispositions.$inferSelect;
+export type NewConsolidationDispositionRow = typeof consolidationDispositions.$inferInsert;
