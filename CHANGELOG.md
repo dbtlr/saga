@@ -39,3 +39,27 @@ release. When a release is cut, this section is promoted to
   `saga self-update` as the remedy; `saga doctor` reports current / behind /
   ahead. `saga service install` now points launchd at the compiled stable-path
   binary so an update's restart runs the swapped binary.
+
+### Changed
+
+- **BREAKING: the database environment variable is now `SAGA_DATABASE_URL`**
+  (SGA-224, ADR-0044/0038). `DATABASE_URL` / `DATABASE_URL_FILE` are no longer
+  read; set `SAGA_DATABASE_URL` / `SAGA_DATABASE_URL_FILE` instead (deploy env
+  files, `docker-compose`, `.env`, CI, and any shell that exported it). The
+  `SAGA_` namespace stops an ambient `DATABASE_URL` in an operator's shell from
+  silently pointing installed Saga at the wrong shared Postgres.
+  `SAGA_TEST_DATABASE_URL` is unchanged. The variable keeps env-wins precedence
+  in every mode.
+- **Installed-binary config precedence** (SGA-224, ADR-0044/0038). A compiled
+  binary is a production build: it never reads repo `.env`/`.env.local` and
+  resolves its database from `SAGA_DATABASE_URL` then the installation config
+  (`~/.saga/config.json`). A from-source run keeps the dev precedence
+  (`SAGA_DATABASE_URL` → project env files → installation config). The
+  distinction is a build profile baked into the release binary.
+- **Integration references converge on the stable install path** (SGA-224). When
+  compiled, `saga start`'s service spawn re-execs the installed binary and
+  `saga harness install` writes the stable path (`~/.local/bin/saga`) into the
+  Claude hook shim and `.mcp.json`; `saga doctor` gains a convergence check that
+  flags any integration still pointing at a checkout and names the command that
+  fixes it. Removed the unused, config-unaware `db:migrate` script — the
+  sanctioned apply paths are `saga self-update` and `@saga/service migrate`.
