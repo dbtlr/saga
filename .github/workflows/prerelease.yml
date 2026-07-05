@@ -1,0 +1,76 @@
+name: Prerelease tagger
+
+# Every build-affecting push to main auto-tags a vX.Y.Z-next.N prerelease, which
+# release.yml then builds + publishes (it already flags `-` tags as prerelease).
+# This is the dogfood loop that replaces checkout-as-deploy (ADR-0044): merge →
+# CI cuts `-next` → `saga self-update --next`. The path filter is the changeset
+# analyzer: a docs/vault-only or control-plane-only merge doesn't match, so no
+# prerelease is produced (the control plane is not in the artifact).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/cli/**'
+      - 'apps/service/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/prerelease.yml'
+      - 'install.sh'
+
+# Serialize so two quick merges can't race on "highest + 1".
+concurrency:
+  group: prerelease-tagger
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the tag
+  actions: write # dispatch release.yml at the new tag
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute and push the prerelease tag
+        run: |
+          set -euo pipefail
+          # Annotated tags need a committer identity; the runner has none.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ver=$(grep '"version"' apps/cli/package.json | head -1 \
+                | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+          case "$ver" in
+            *-next)
+              # Counter = highest existing vX.Y.Z-next.N for this base, + 1.
+              # Only real prerelease builds create tags, so noop merges never
+              # advance it; robust to pruning (we keep the max) and history shape.
+              max=0
+              for t in $(git tag -l "v${ver}.*"); do
+                n="${t#v${ver}.}"
+                case "$n" in (*[!0-9]*) continue ;; esac
+                if [ "$n" -gt "$max" ]; then max="$n"; fi
+              done
+              n=$((max + 1))
+              tag="v${ver}.${n}"
+              echo "tagging $tag"
+              git tag -a "$tag" -m "Prerelease $tag"
+              git push origin "$tag"
+              # Dispatch the build/publish at the new tag — a GITHUB_TOKEN tag
+              # push won't trigger release.yml's `push: tags` (anti-recursion),
+              # but workflow_dispatch via GITHUB_TOKEN does start a run.
+              gh workflow run release.yml --ref "$tag"
+              echo "dispatched release.yml @ $tag"
+              ;;
+            *)
+              echo "apps/cli/package.json version $ver is not a -next dev version; no prerelease."
+              echo "(The version guard enforces the release/next-cycle invariant.)"
+              ;;
+          esac

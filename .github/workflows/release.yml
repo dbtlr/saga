@@ -1,0 +1,173 @@
+name: Release
+
+# Tag-driven releases. A `vX.Y.Z` tag builds standalone binaries (one per
+# platform, each on its native runner so there is no cross-compile) and
+# publishes a GitHub Release with notes pulled from CHANGELOG.md. The build
+# matrix also runs on pull requests (build-only, no publish) so the release
+# path is validated before a tag is ever cut. The control plane is excluded
+# from the artifact (ADR-0044) — the binary carries the cli/service/mcp
+# surfaces only.
+on:
+  push:
+    tags: ['v*']
+  # The prerelease tagger pushes vX.Y.Z-next.N tags with GITHUB_TOKEN, which
+  # GitHub's anti-recursion guard blocks from triggering the `push: tags` event
+  # above. It dispatches this workflow at the new tag instead (workflow_dispatch
+  # via GITHUB_TOKEN is the documented exception that DOES start a run). The
+  # build/publish steps read github.ref_name/ref_type, which resolve from the
+  # dispatched --ref exactly as they do for a pushed tag.
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/cli/**'
+      - 'apps/service/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/release.yml'
+      - 'install.sh'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, asset: saga-darwin-arm64 }
+          - { os: ubuntu-latest, asset: saga-linux-x64 }
+          - { os: ubuntu-24.04-arm, asset: saga-linux-arm64 }
+          # darwin-x64 (Intel mac) is deferred — the macOS x64 runner is scarce
+          # and bun's cross-compile is unreliable from an arm64 host. Intel-mac
+          # users install from source (ADR-0044).
+    steps:
+      - uses: actions/checkout@v7
+
+      # vitest stays on Node even under bun (ADR-0012 amendment), so the
+      # test step below needs a Node toolchain alongside Bun.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Test on the target platform before shipping its binary. This also runs
+      # the packages/db embedded-migrations drift lock, so a compile can never
+      # ship a binary whose inlined migrations diverge from packages/db/drizzle.
+      - name: Test
+        run: bun run test
+
+      - name: Compile
+        run: |
+          mkdir -p dist
+          # On a tag build, bake the tag (minus the leading v) in as the
+          # binary's version so `saga --version` reports the exact release
+          # (SGA-180). PR build-validation runs on a branch ref and falls back
+          # to apps/cli/package.json — fine, those binaries aren't published.
+          define=()
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            define+=(--define "SAGA_BUILD_VERSION=\"${GITHUB_REF_NAME#v}\"")
+          fi
+          bun build apps/cli/src/main.ts --compile "${define[@]}" \
+            --outfile "dist/${{ matrix.asset }}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum saga-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Extract changelog notes
+        run: |
+          ver="${GITHUB_REF_NAME}"
+          awk -v ver="$ver" '
+            $0 ~ "^## " ver " " { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "--- release notes ---"; cat release-notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: |
+            dist/saga-*
+            dist/SHA256SUMS
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+
+      # Prune stale prerelease tags + Releases at an official cut. Lag-by-one
+      # retention: delete prereleases from cycles OLDER than the previous
+      # official (so the just-shipped cycle's trail survives one more release).
+      # Gated to official tags and best-effort, so a pruning hiccup never fails
+      # a real release. Enumerates via `gh` because this job's checkout is
+      # shallow and tagless, and the binaries live on the Releases.
+      - name: Prune stale prereleases
+        if: ${{ !contains(github.ref_name, '-') }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cut="${GITHUB_REF_NAME#v}"   # X.Y.Z being cut (official)
+
+          # Previous official = highest non-prerelease version strictly < cut.
+          prev=""
+          while read -r v; do
+            [ "$v" = "$cut" ] && continue
+            [ "$(printf '%s\n%s\n' "$v" "$cut" | sort -V | tail -1)" = "$cut" ] && prev="$v"
+          done < <(gh release list --limit 500 --json tagName,isPrerelease \
+                     --jq '.[] | select(.isPrerelease == false) | .tagName' \
+                   | sed 's/^v//' | sort -V)
+
+          if [ -z "$prev" ]; then
+            echo "No previous official before $cut; nothing to prune."
+            exit 0
+          fi
+          echo "Cut $cut; previous official $prev — pruning prerelease cycles < $prev."
+
+          gh release list --limit 500 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' \
+          | while read -r tag; do
+              base="${tag#v}"; base="${base%%-next.*}"   # cycle A.B.C
+              lowest="$(printf '%s\n%s\n' "$base" "$prev" | sort -V | head -1)"
+              if [ "$base" != "$prev" ] && [ "$lowest" = "$base" ]; then
+                echo "deleting prerelease $tag (cycle $base < $prev)"
+                gh release delete "$tag" --yes --cleanup-tag
+              else
+                echo "keep $tag (cycle $base >= $prev)"
+              fi
+            done
