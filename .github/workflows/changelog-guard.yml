@@ -1,0 +1,76 @@
+name: Changelog guard
+
+# Fail any PR that changes build-affecting paths but adds no entry under
+# CHANGELOG.md's [Unreleased] section. This makes the changelog entry structural
+# rather than a discipline deferred to the release cut.
+#
+# Escape hatch: a behavior-preserving PR (internal refactor, test/build-meta only)
+# applies the `skip-changelog` label instead of an entry.
+#
+# Runs on every PR and self-determines applicability (like version-guard) so it is
+# always a runnable, requireable check — a `paths:`-filtered required check would
+# hang "pending" on PRs that don't match. `labeled`/`unlabeled` are listed so that
+# applying `skip-changelog` re-runs the gate (a label change does not fire
+# `synchronize`).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require a CHANGELOG entry for build-affecting changes
+        env:
+          # Visible PR escape hatch — kept here for the audit trail.
+          HAS_SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base="origin/${BASE_REF}"
+
+          # Build-affecting paths — keep in sync with prerelease.yml's path filter
+          # (GitHub Actions can't share a filter across workflows). A change outside
+          # these can't affect the shipped binary, so it needs no changelog entry.
+          # The control plane (apps/control-plane) is intentionally absent — it is
+          # excluded from the release artifact (ADR-0044).
+          changed=$(git diff --name-only "${base}...HEAD")
+          if ! echo "$changed" | grep -qE '^(apps/cli/|apps/service/|packages/|package\.json$|bun\.lock$|install\.sh$|\.github/workflows/(release|prerelease)\.yml$)'; then
+            echo "No build-affecting paths changed — changelog entry not required."
+            exit 0
+          fi
+
+          if [ "$HAS_SKIP_LABEL" = "true" ]; then
+            echo "skip-changelog label present — entry waived (visible at merge)."
+            exit 0
+          fi
+
+          # Did this PR ADD content under [Unreleased]? Slice the section (from the
+          # '## [Unreleased]' header to the next '## ' header) on both sides and
+          # require head's slice to hold an entry absent from base's. An "entry" is
+          # a Keep-a-Changelog bullet ('- ' / '* '), not just any non-blank line —
+          # so rewording the explanatory prose under [Unreleased] can't satisfy the
+          # gate. (Residual: editing an existing bullet reads as an added bullet and
+          # passes — rare, and it still means the author touched the entries.)
+          section() {
+            git show "$1:CHANGELOG.md" 2>/dev/null \
+              | awk '/^## \[Unreleased\]/{f=1;next} /^## /{f=0} f' \
+              | grep -E '^[[:space:]]*[-*]'
+          }
+          added=$(comm -13 <(section "$base" | sort) <(section HEAD | sort) || true)
+
+          if [ -n "$added" ]; then
+            echo "CHANGELOG [Unreleased] gained an entry:"
+            echo "$added"
+            exit 0
+          fi
+
+          echo "::error::Build-affecting change with no CHANGELOG entry. Add a line under [Unreleased] in CHANGELOG.md, or apply the 'skip-changelog' label if this is behavior-preserving."
+          exit 1
