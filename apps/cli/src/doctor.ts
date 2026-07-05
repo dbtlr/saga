@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { assertMigrationsCurrent, makeDatabase } from '@saga/db';
-import type { DatabaseService } from '@saga/db';
+import { getMigrationStatus, makeDatabase } from '@saga/db';
+import type { DatabaseService, MigrationStatus } from '@saga/db';
 import {
   inspectEmbeddingWorkflow,
   installationConfigLocation,
@@ -352,14 +352,46 @@ function checkDatabaseConfig(
   };
 }
 
+/**
+ * Three-state migration report (ADR-0045): current is ok, behind fails and
+ * names `saga self-update` as the remedy, ahead warns (a newer saga exists —
+ * each host's next doctor glance is the fleet's convergence nudge), and a hash
+ * mismatch in the shared prefix fails as a genuine incompatibility. Pure over
+ * an already-read status so self-update's doctor-verify can reuse it.
+ */
+export function migrationDoctorCheck(status: MigrationStatus): DoctorCheck {
+  if (status.mismatch !== undefined) {
+    return {
+      detail: `migration ${String(status.mismatch.index)} (${status.mismatch.tag}) does not match this Saga build — restore a compatible backup or run a matching Saga build`,
+      label: 'migrations',
+      status: 'fail',
+    };
+  }
+  if (status.applied < status.expected) {
+    return {
+      detail: `${String(status.applied)}/${String(status.expected)} applied — database is behind this binary; run \`saga self-update\``,
+      label: 'migrations',
+      status: 'fail',
+    };
+  }
+  if (status.applied > status.expected) {
+    return {
+      detail: `${String(status.applied)}/${String(status.expected)} applied — database is ahead of this binary; a newer saga exists, run \`saga self-update\``,
+      label: 'migrations',
+      status: 'warn',
+    };
+  }
+  return {
+    detail: `${String(status.applied)} applied`,
+    label: 'migrations',
+    status: 'ok',
+  };
+}
+
 async function checkMigrations(service: DatabaseService): Promise<DoctorCheck> {
   try {
-    const migrationStatus = await Effect.runPromise(assertMigrationsCurrent(service));
-    return {
-      detail: `${String(migrationStatus.applied)} applied`,
-      label: 'migrations',
-      status: 'ok',
-    };
+    const status = await Effect.runPromise(getMigrationStatus(service));
+    return migrationDoctorCheck(status);
   } catch (error) {
     return {
       detail: error instanceof Error ? error.message : String(error),
