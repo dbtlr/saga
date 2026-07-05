@@ -1,3 +1,5 @@
+import { DISPOSITION_KINDS, FINDING_TYPES } from '@saga/contracts';
+import type { DispositionKind, FindingType } from '@saga/contracts';
 import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
@@ -16,6 +18,11 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+
+// Build a SQL `in (...)` literal list from a contract-owned runtime array so the
+// database check constraints and the Effect Schema literal unions never drift.
+const sqlLiteralList = (values: readonly string[]) =>
+  sql.raw(values.map((value) => `'${value}'`).join(', '));
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -769,7 +776,8 @@ export const consolidationRecords = pgTable(
     narrative: text('narrative').notNull(),
     modelId: text('model_id').notNull(),
     authPath: text('auth_path').notNull(),
-    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    // No metadata jsonb column: unread blobs are the SGA-200/202 leak-attractor
+    // class. A reader-justified column can return when something actually reads it.
     ...timestamps,
   },
   (table) => [
@@ -811,9 +819,8 @@ export const consolidationFindings = pgTable(
       .notNull()
       .references(() => consolidationRecords.id, { onDelete: 'cascade' }),
     ordinal: integer('ordinal').notNull(),
-    findingType: text('finding_type').notNull(),
+    findingType: text('finding_type').$type<FindingType>().notNull(),
     text: text('text').notNull(),
-    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
     ...timestamps,
   },
   (table) => [
@@ -824,7 +831,7 @@ export const consolidationFindings = pgTable(
     check('consolidation_findings_ordinal_check', sql`${table.ordinal} >= 0`),
     check(
       'consolidation_findings_type_check',
-      sql`${table.findingType} in ('decision', 'follow_up', 'deviation_or_correction', 'candidate_learning')`,
+      sql`${table.findingType} in (${sqlLiteralList(FINDING_TYPES)})`,
     ),
     foreignKey({
       columns: [table.recordId, table.workspaceId],
@@ -858,14 +865,21 @@ export const consolidationEvidencePointers = pgTable(
     pointerSessionId: uuid('pointer_session_id')
       .notNull()
       .references(() => sessions.id, { onDelete: 'cascade' }),
+    // Deterministic input order within a finding, so evidence round-trips in the
+    // order the extractor emitted it (mirrors the finding ordinal rationale).
+    ordinal: integer('ordinal').notNull(),
     activityIntervalOrdinal: integer('activity_interval_ordinal'),
     turnOrdinal: integer('turn_ordinal'),
-    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
     ...timestamps,
   },
   (table) => [
     index('consolidation_evidence_pointers_finding_idx').on(table.findingId),
     index('consolidation_evidence_pointers_pointer_session_idx').on(table.pointerSessionId),
+    uniqueIndex('consolidation_evidence_pointers_finding_ordinal_unique').on(
+      table.findingId,
+      table.ordinal,
+    ),
+    check('consolidation_evidence_pointers_ordinal_check', sql`${table.ordinal} >= 0`),
     check(
       'consolidation_evidence_pointers_interval_ordinal_check',
       sql`${table.activityIntervalOrdinal} is null or ${table.activityIntervalOrdinal} >= 0`,
@@ -906,8 +920,9 @@ export const consolidationDispositions = pgTable(
     toFindingId: uuid('to_finding_id')
       .notNull()
       .references(() => consolidationFindings.id, { onDelete: 'cascade' }),
-    kind: text('kind').notNull(),
-    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default(emptyJson),
+    kind: text('kind').$type<DispositionKind>().notNull(),
+    // Deterministic read order within a record (mirrors the finding ordinal rationale).
+    ordinal: integer('ordinal').notNull(),
     ...timestamps,
   },
   (table) => [
@@ -918,7 +933,15 @@ export const consolidationDispositions = pgTable(
       table.toFindingId,
       table.kind,
     ),
-    check('consolidation_dispositions_kind_check', sql`${table.kind} in ('builds_on', 'refutes')`),
+    uniqueIndex('consolidation_dispositions_record_ordinal_unique').on(
+      table.recordId,
+      table.ordinal,
+    ),
+    check('consolidation_dispositions_ordinal_check', sql`${table.ordinal} >= 0`),
+    check(
+      'consolidation_dispositions_kind_check',
+      sql`${table.kind} in (${sqlLiteralList(DISPOSITION_KINDS)})`,
+    ),
     check(
       'consolidation_dispositions_no_self_loop_check',
       sql`${table.fromFindingId} <> ${table.toFindingId}`,

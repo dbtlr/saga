@@ -6,9 +6,10 @@ CREATE TABLE "consolidation_dispositions" (
 	"from_finding_id" uuid NOT NULL,
 	"to_finding_id" uuid NOT NULL,
 	"kind" text NOT NULL,
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"ordinal" integer NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "consolidation_dispositions_ordinal_check" CHECK ("consolidation_dispositions"."ordinal" >= 0),
 	CONSTRAINT "consolidation_dispositions_kind_check" CHECK ("consolidation_dispositions"."kind" in ('builds_on', 'refutes')),
 	CONSTRAINT "consolidation_dispositions_no_self_loop_check" CHECK ("consolidation_dispositions"."from_finding_id" <> "consolidation_dispositions"."to_finding_id")
 );
@@ -18,11 +19,12 @@ CREATE TABLE "consolidation_evidence_pointers" (
 	"workspace_id" uuid NOT NULL,
 	"finding_id" uuid NOT NULL,
 	"pointer_session_id" uuid NOT NULL,
+	"ordinal" integer NOT NULL,
 	"activity_interval_ordinal" integer,
 	"turn_ordinal" integer,
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "consolidation_evidence_pointers_ordinal_check" CHECK ("consolidation_evidence_pointers"."ordinal" >= 0),
 	CONSTRAINT "consolidation_evidence_pointers_interval_ordinal_check" CHECK ("consolidation_evidence_pointers"."activity_interval_ordinal" is null or "consolidation_evidence_pointers"."activity_interval_ordinal" >= 0),
 	CONSTRAINT "consolidation_evidence_pointers_turn_ordinal_check" CHECK ("consolidation_evidence_pointers"."turn_ordinal" is null or "consolidation_evidence_pointers"."turn_ordinal" >= 0)
 );
@@ -35,7 +37,6 @@ CREATE TABLE "consolidation_findings" (
 	"ordinal" integer NOT NULL,
 	"finding_type" text NOT NULL,
 	"text" text NOT NULL,
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "consolidation_findings_ordinal_check" CHECK ("consolidation_findings"."ordinal" >= 0),
@@ -50,7 +51,6 @@ CREATE TABLE "consolidation_records" (
 	"narrative" text NOT NULL,
 	"model_id" text NOT NULL,
 	"auth_path" text NOT NULL,
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -61,9 +61,13 @@ CREATE INDEX "consolidation_dispositions_to_finding_idx" ON "consolidation_dispo
 --> statement-breakpoint
 CREATE UNIQUE INDEX "consolidation_dispositions_edge_unique" ON "consolidation_dispositions" USING btree ("from_finding_id","to_finding_id","kind");
 --> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_dispositions_record_ordinal_unique" ON "consolidation_dispositions" USING btree ("record_id","ordinal");
+--> statement-breakpoint
 CREATE INDEX "consolidation_evidence_pointers_finding_idx" ON "consolidation_evidence_pointers" USING btree ("finding_id");
 --> statement-breakpoint
 CREATE INDEX "consolidation_evidence_pointers_pointer_session_idx" ON "consolidation_evidence_pointers" USING btree ("pointer_session_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_evidence_pointers_finding_ordinal_unique" ON "consolidation_evidence_pointers" USING btree ("finding_id","ordinal");
 --> statement-breakpoint
 CREATE INDEX "consolidation_findings_record_idx" ON "consolidation_findings" USING btree ("record_id");
 --> statement-breakpoint
