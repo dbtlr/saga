@@ -23,10 +23,18 @@ export type InferenceConfig = {
   source: InferencePolicySource;
 };
 
-// A cheap-tier default keeps structured extraction inexpensive by default; operators raise
-// it in the installation config when a task needs a stronger model.
-export const DEFAULT_INFERENCE_MODEL = 'gpt-4o-mini';
 export const DEFAULT_INFERENCE_PROVIDER: InferenceProvider = 'openai-api';
+// Per-provider current-generation defaults. Each is a single exported const so upgrading the
+// default stays a one-line edit. The codex default matches the proven Skald provider for the
+// same ChatGPT backend.
+export const DEFAULT_OPENAI_API_MODEL = 'gpt-5-mini';
+export const DEFAULT_CODEX_SUBSCRIPTION_MODEL = 'gpt-5.5';
+
+function defaultModelFor(provider: InferenceProvider): string {
+  return provider === 'codex-subscription'
+    ? DEFAULT_CODEX_SUBSCRIPTION_MODEL
+    : DEFAULT_OPENAI_API_MODEL;
+}
 
 export function resolveInferenceConfig(
   options: InferencePolicyResolutionOptions = {},
@@ -65,8 +73,22 @@ export function resolveInferenceConfig(
     );
   }
 
-  const provider = readProvider(inference.provider);
-  const model = readModel(inference.model);
+  // Fail closed on a present-but-invalid provider or model: a typo must not silently degrade
+  // to a default. Surface the offending KEY, never the raw value (it may sit next to secrets).
+  const providerResult = readProvider(inference.provider);
+  if (providerResult.status === 'invalid') {
+    return notConfigured(
+      `inference.provider in ${location.displayPath} is not a supported provider; remote inference not configured`,
+    );
+  }
+  const modelResult = readModel(inference.model);
+  if (modelResult.status === 'invalid') {
+    return notConfigured(
+      `inference.model in ${location.displayPath} must be a non-empty string; remote inference not configured`,
+    );
+  }
+  const provider = providerResult.provider;
+  const model = modelResult.model ?? defaultModelFor(provider);
 
   if (inference.remote === 'enabled') {
     return {
@@ -90,7 +112,7 @@ export function resolveInferenceConfig(
 function notConfigured(detail: string): InferenceConfig {
   return {
     detail,
-    model: DEFAULT_INFERENCE_MODEL,
+    model: defaultModelFor(DEFAULT_INFERENCE_PROVIDER),
     policy: 'not-configured',
     provider: DEFAULT_INFERENCE_PROVIDER,
     source: 'default',
@@ -118,16 +140,31 @@ function readInferenceSection(value: unknown): InferenceSection | undefined {
   return { model: inference.model, provider: inference.provider, remote };
 }
 
-function readProvider(value: unknown): InferenceProvider {
-  if (value === 'openai-api' || value === 'codex-subscription') {
-    return value;
+type ProviderResult = { provider: InferenceProvider; status: 'ok' } | { status: 'invalid' };
+type ModelResult = { model: string | undefined; status: 'ok' } | { status: 'invalid' };
+
+// Absent (undefined) falls through to the default; any present-but-unknown value is invalid.
+function readProvider(value: unknown): ProviderResult {
+  if (value === undefined) {
+    return { provider: DEFAULT_INFERENCE_PROVIDER, status: 'ok' };
   }
-  return DEFAULT_INFERENCE_PROVIDER;
+  if (value === 'openai-api' || value === 'codex-subscription') {
+    return { provider: value, status: 'ok' };
+  }
+  return { status: 'invalid' };
 }
 
-function readModel(value: unknown): string {
-  const model = typeof value === 'string' ? optionalString(value) : undefined;
-  return model ?? DEFAULT_INFERENCE_MODEL;
+// Absent (undefined) falls through to the per-provider default; a present non-string or
+// blank string is invalid rather than silently defaulted.
+function readModel(value: unknown): ModelResult {
+  if (value === undefined) {
+    return { model: undefined, status: 'ok' };
+  }
+  if (typeof value !== 'string') {
+    return { status: 'invalid' };
+  }
+  const model = optionalString(value);
+  return model === undefined ? { status: 'invalid' } : { model, status: 'ok' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

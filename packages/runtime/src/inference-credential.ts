@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 
+import { resolveCodexAuth } from './codex-auth.js';
 import { installationConfigLocation } from './embedding-policy.js';
 import type { EmbeddingPolicyResolutionOptions } from './embedding-policy.js';
 
 // Where the OpenAI inference API key was sourced from, highest precedence first: an explicit
-// environment variable, then the installation config's inference section. This mirrors the
-// embedding credential ladder but reads inference.openaiApiKey, keeping the two policies'
-// credentials independent.
-export type InferenceCredentialSource = 'environment' | 'installation-config';
+// environment variable, then the installation config's inference section, then the read-only
+// cached Codex OPENAI_API_KEY. This is the same three-tier ladder, in the same order and with
+// the same source labels, as the embedding credential twin — it only reads
+// inference.openaiApiKey for the installation tier, keeping the two policies' keys independent.
+export type InferenceCredentialSource = 'environment' | 'installation-config' | 'codex-auth';
 
 export type InferenceCredentialResolutionOptions = EmbeddingPolicyResolutionOptions;
 
@@ -66,11 +68,26 @@ export function resolveInferenceApiKey(
     issues.push(fromInstallation.issue);
   }
 
-  const detail =
-    issues.length > 0
-      ? issues.join('; ')
-      : 'no OpenAI inference API key found in the environment or installation config';
-  return { detail, status: 'unavailable' };
+  // Third tier: the cached Codex OPENAI_API_KEY, via the same shared reader the embedding
+  // credential uses. Reuse keeps the two ladders from drifting.
+  const codex = resolveCodexAuth({
+    env,
+    ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+    readFile,
+  });
+  if (codex.status === 'available') {
+    return {
+      apiKey: codex.openaiApiKey,
+      detail: `cached OPENAI_API_KEY present in ${codex.displayPath}`,
+      displayPath: codex.displayPath,
+      source: 'codex-auth',
+      status: 'available',
+    };
+  }
+
+  // No tier produced a key. Lead with any configured-but-broken higher tier so the operator
+  // sees their real problem rather than only the Codex fall-through message.
+  return { detail: [...issues, codex.detail].join('; '), status: 'unavailable' };
 }
 
 function readEnvApiKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string): TierResult {
