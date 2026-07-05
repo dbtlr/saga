@@ -3,11 +3,17 @@ import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+import { insertConsolidationRecord } from './consolidation-records.js';
 import { makeDatabase, runMigrations } from './database.js';
 import type { DatabaseService } from './database.js';
 import { insertRawEvent } from './raw-event.js';
 import { importRawSessionRecord } from './raw-session-import.js';
 import {
+  activityIntervals,
+  consolidationDispositions,
+  consolidationEvidencePointers,
+  consolidationFindings,
+  consolidationRecords,
   rawEvents,
   rawSessionRecords,
   sessionSegmentEmbeddings,
@@ -526,6 +532,76 @@ describePostgres('session safety', () => {
       }),
     );
     expect(recall.matchCount).toBe(0);
+  });
+
+  test('deleting a session cascades into and counts its consolidation records', async () => {
+    if (service === undefined) {
+      throw new Error('database service was not initialized');
+    }
+    const workspaceId = await createWorkspace(service, 'session-safety-consolidation');
+    const imported = await seedRawSession(service, {
+      harnessSessionId: 'safety-consolidation',
+      rawContent: '{"type":"user","text":"Consolidation cascade sentinel"}\n',
+      workspaceId,
+    });
+    const sessionId = imported.session.id;
+    const [interval] = await service.db
+      .insert(activityIntervals)
+      .values({ workspaceId, sessionId, ordinal: 99, status: 'active', startedAt: new Date() })
+      .returning();
+    if (interval === undefined) {
+      throw new Error('activity interval insert returned no row');
+    }
+    await Effect.runPromise(
+      insertConsolidationRecord(service, {
+        activityIntervalId: interval.id,
+        authPath: 'oauth',
+        modelId: 'test-model',
+        narrative: 'interval narrative',
+        sessionId,
+        workspaceId,
+        findings: [
+          { key: 'a', type: 'decision', text: 'a', evidence: [{ sessionId, turnOrdinal: 1 }] },
+          { key: 'b', type: 'follow_up', text: 'b', evidence: [] },
+        ],
+        dispositions: [{ kind: 'builds_on', fromKey: 'b', toKey: 'a' }],
+      }),
+    );
+
+    const deleted = await Effect.runPromise(
+      deleteSessionSafety(service, {
+        id: imported.rawSessionRecord.id,
+        origin: 'test',
+        workspaceId,
+      }),
+    );
+    expect(deleted.deleted).toMatchObject({
+      consolidationRecords: 1,
+      consolidationFindings: 2,
+      consolidationEvidencePointers: 1,
+      consolidationDispositions: 1,
+    });
+
+    const remainingRecords = await service.db
+      .select()
+      .from(consolidationRecords)
+      .where(eq(consolidationRecords.sessionId, sessionId));
+    const remainingFindings = await service.db
+      .select()
+      .from(consolidationFindings)
+      .where(eq(consolidationFindings.sessionId, sessionId));
+    const remainingDispositions = await service.db
+      .select()
+      .from(consolidationDispositions)
+      .where(eq(consolidationDispositions.sessionId, sessionId));
+    const remainingPointers = await service.db
+      .select()
+      .from(consolidationEvidencePointers)
+      .where(eq(consolidationEvidencePointers.workspaceId, workspaceId));
+    expect(remainingRecords).toHaveLength(0);
+    expect(remainingFindings).toHaveLength(0);
+    expect(remainingDispositions).toHaveLength(0);
+    expect(remainingPointers).toHaveLength(0);
   });
 
   test('rejects stale expected active raw record guards before replacing a newer snapshot', async () => {

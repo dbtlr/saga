@@ -809,6 +809,10 @@ function recentRecord(): RecentSessionRecord {
 function deleteResult(): DeleteSessionSafetyResult {
   return {
     deleted: {
+      consolidationDispositions: 0,
+      consolidationEvidencePointers: 0,
+      consolidationFindings: 0,
+      consolidationRecords: 0,
       embeddings: 0,
       rawEvents: 1,
       rawSessionRecords: 1,

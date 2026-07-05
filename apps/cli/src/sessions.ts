@@ -471,6 +471,7 @@ function renderDeleteResult(result: DeleteSessionSafetyResult, options: RenderOp
       { label: 'turns', value: String(result.deleted.turns) },
       { label: 'segments', value: String(result.deleted.segments) },
       { label: 'embeddings', value: String(result.deleted.embeddings) },
+      { label: 'consolidation records', value: String(result.deleted.consolidationRecords) },
     ],
     options,
   );

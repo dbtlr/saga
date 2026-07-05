@@ -4,6 +4,7 @@ import { sql as drizzleSql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
+import { isPlainRecord, rowsFromExecute } from './raw-rows.js';
 import { importRawSessionRecordInTransaction } from './raw-session-import.js';
 import type {
   RawSessionContentType,
@@ -39,6 +40,10 @@ export type DeleteSessionSafetyResult = {
   sessionId: string;
   workspaceId: string;
   deleted: {
+    consolidationDispositions: number;
+    consolidationEvidencePointers: number;
+    consolidationFindings: number;
+    consolidationRecords: number;
     embeddings: number;
     rawEvents: number;
     rawSessionRecords: number;
@@ -149,7 +154,15 @@ export function deleteSessionSafety(
           sessionId: identity.session_id,
           workspaceId,
         });
+        const consolidation = await countConsolidationRows(txSql, {
+          sessionId: identity.session_id,
+          workspaceId,
+        });
         const counts = {
+          consolidationDispositions: consolidation.dispositions,
+          consolidationEvidencePointers: consolidation.pointers,
+          consolidationFindings: consolidation.findings,
+          consolidationRecords: consolidation.records,
           embeddings:
             rawSessionRecordIds.length === 0
               ? 0
@@ -760,6 +773,56 @@ async function countRows(
   return Number(rows[0]?.count ?? 0);
 }
 
+async function countConsolidationRows(
+  sql: SqlTag,
+  input: { sessionId: string; workspaceId: string },
+): Promise<{ dispositions: number; findings: number; pointers: number; records: number }> {
+  const rows = await sql<
+    {
+      dispositions: number | string;
+      findings: number | string;
+      pointers: number | string;
+      records: number | string;
+    }[]
+  >`
+    select
+      (
+        select count(*)
+        from consolidation_records
+        where workspace_id = ${input.workspaceId}
+          and session_id = ${input.sessionId}
+      )::int as records,
+      (
+        select count(*)
+        from consolidation_findings
+        where workspace_id = ${input.workspaceId}
+          and session_id = ${input.sessionId}
+      )::int as findings,
+      (
+        select count(*)
+        from consolidation_dispositions
+        where workspace_id = ${input.workspaceId}
+          and session_id = ${input.sessionId}
+      )::int as dispositions,
+      (
+        select count(*)
+        from consolidation_evidence_pointers ep
+        inner join consolidation_findings f
+          on f.id = ep.finding_id
+          and f.workspace_id = ep.workspace_id
+        where f.workspace_id = ${input.workspaceId}
+          and f.session_id = ${input.sessionId}
+      )::int as pointers
+  `;
+  const row = rows[0];
+  return {
+    dispositions: Number(row?.dispositions ?? 0),
+    findings: Number(row?.findings ?? 0),
+    pointers: Number(row?.pointers ?? 0),
+    records: Number(row?.records ?? 0),
+  };
+}
+
 function normalizePatterns(
   patterns: readonly SessionRedactionPattern[],
 ): readonly NormalizedSessionRedactionPattern[] {
@@ -956,25 +1019,6 @@ function classifyOrigin(value: string): SessionSafetyOriginClassification {
 
 function asRecord(value: unknown): JsonRecord {
   return isPlainRecord(value) ? value : {};
-}
-
-function isPlainRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function rowsFromExecute<T>(value: unknown): T[] {
-  // Boundary: adapts the driver's untyped execute result (raw rows, or a
-  // wrapper with a `rows` array) into the row shape T the caller's SQL declares.
-  // The row type cannot be verified at runtime.
-  if (Array.isArray(value)) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
-    return value as T[];
-  }
-  if (isPlainRecord(value) && Array.isArray(value.rows)) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- raw driver rows; T is the caller-declared row shape
-    return value.rows as T[];
-  }
-  return [];
 }
 
 function uuidArraySql(values: readonly string[]) {
