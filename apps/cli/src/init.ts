@@ -7,8 +7,13 @@ import { pathToFileURL } from 'node:url';
 
 import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
 import type { RegisterWorkspaceResult } from '@saga/db';
-import { findProjectRoot, installationConfigLocation, loadRuntimeConfig } from '@saga/runtime';
-import type { LoadRuntimeConfigOptions } from '@saga/runtime';
+import {
+  DATABASE_URL_ENV,
+  findProjectRoot,
+  installationConfigLocation,
+  loadRuntimeConfig,
+} from '@saga/runtime';
+import type { DatabaseUrlSource, LoadRuntimeConfigOptions } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { formatCommandOutput } from './output.js';
@@ -55,7 +60,10 @@ export type WorkspaceBindingFile = {
   };
   schemaVersion: 1;
   service: {
-    databaseUrl: 'env:DATABASE_URL';
+    // The name-free provenance of where the workspace's database URL resolved
+    // from (config.databaseUrlSource), not the variable name. Pre-release local
+    // binding (ADR-0020), so recording the enum here is a free schema change.
+    databaseUrl: DatabaseUrlSource;
   };
   sourceBinding: {
     id: string;
@@ -115,7 +123,7 @@ export async function initProject(input: {
       ...(runtimeConfig.homeDir === undefined ? {} : { homeDir: runtimeConfig.homeDir }),
     });
     throw new Error(
-      `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`,
+      `${DATABASE_URL_ENV} is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`,
     );
   }
   const service = await Effect.runPromise(makeDatabase(config));
@@ -145,7 +153,7 @@ export async function initProject(input: {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: 'env:DATABASE_URL',
+        databaseUrl: config.databaseUrlSource,
       },
       sourceBinding: {
         id: registration.sourceBinding.id,

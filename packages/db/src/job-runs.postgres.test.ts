@@ -7,7 +7,7 @@ import type { DatabaseService } from './database.js';
 import { JOB_RUN_RETENTION, listLatestJobRuns, recordJobRun } from './job-runs.js';
 import { jobRuns } from './schema.js';
 
-const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.SAGA_DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres('job_runs persistence', () => {

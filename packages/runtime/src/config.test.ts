@@ -18,7 +18,7 @@ import {
 describe('parseRuntimeConfig', () => {
   it('applies defaults and reads known environment values', () => {
     const { config, issues } = parseRuntimeConfig({
-      DATABASE_URL: 'postgres://localhost/saga',
+      SAGA_DATABASE_URL: 'postgres://localhost/saga',
       OPENAI_API_KEY: 'sk-test',
       SAGA_ENV: 'test',
       SAGA_LOG_LEVEL: 'debug',
@@ -61,7 +61,7 @@ describe('parseRuntimeConfig', () => {
     writeFileSync(openAiKeyFile, 'sk-file\n');
 
     const { config, issues } = parseRuntimeConfig({
-      DATABASE_URL_FILE: databaseUrlFile,
+      SAGA_DATABASE_URL_FILE: databaseUrlFile,
       OPENAI_API_KEY_FILE: openAiKeyFile,
     });
 
@@ -76,8 +76,8 @@ describe('parseRuntimeConfig', () => {
     writeFileSync(databaseUrlFile, 'postgres://file/saga\n');
 
     const { config, issues } = parseRuntimeConfig({
-      DATABASE_URL: 'postgres://direct/saga',
-      DATABASE_URL_FILE: databaseUrlFile,
+      SAGA_DATABASE_URL: 'postgres://direct/saga',
+      SAGA_DATABASE_URL_FILE: databaseUrlFile,
     });
 
     expect(issues).toStrictEqual([]);
@@ -135,7 +135,7 @@ describe('parseRuntimeConfig', () => {
 describe('redactRuntimeConfig', () => {
   it('redacts secret-bearing values', () => {
     const { config } = parseRuntimeConfig({
-      DATABASE_URL: 'postgres://localhost/saga',
+      SAGA_DATABASE_URL: 'postgres://localhost/saga',
       OPENAI_API_KEY: 'sk-test',
     });
 
@@ -158,11 +158,11 @@ describe('redactRuntimeConfig', () => {
 describe('loadLocalEnv', () => {
   it('loads configured env files in order', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\nDATABASE_URL=postgres://env\n');
+    writeFileSync(join(cwd, '.env'), 'SAGA_LOG_LEVEL=debug\nSAGA_DATABASE_URL=postgres://env\n');
     writeFileSync(join(cwd, '.env.local'), 'SAGA_LOG_LEVEL=warn\nOPENAI_API_KEY=local\n');
 
     expect(loadLocalEnv(cwd)).toStrictEqual({
-      DATABASE_URL: 'postgres://env',
+      SAGA_DATABASE_URL: 'postgres://env',
       OPENAI_API_KEY: 'local',
       SAGA_LOG_LEVEL: 'warn',
     });
@@ -215,13 +215,13 @@ describe('loadRuntimeConfig installation config', () => {
 
   it('prefers explicit env over project env files and installation config', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://project/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
     const homeDir = makeInstallationHome(
       JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
     );
 
     const config = await Effect.runPromise(
-      loadRuntimeConfig({ cwd, env: { DATABASE_URL: 'postgres://env/saga' }, homeDir }),
+      loadRuntimeConfig({ cwd, env: { SAGA_DATABASE_URL: 'postgres://env/saga' }, homeDir }),
     );
 
     expect(config.databaseUrl).toBe('postgres://env/saga');
@@ -230,7 +230,7 @@ describe('loadRuntimeConfig installation config', () => {
 
   it('prefers project env files over installation config', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://project/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
     const homeDir = makeInstallationHome(
       JSON.stringify({ database: { url: 'postgres://installation/saga' } }),
     );
@@ -241,7 +241,7 @@ describe('loadRuntimeConfig installation config', () => {
     expect(config.databaseUrlSource).toBe('project-env-file');
   });
 
-  it('treats env-provided DATABASE_URL_FILE as an environment source', async () => {
+  it('treats env-provided SAGA_DATABASE_URL_FILE as an environment source', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const databaseUrlFile = join(cwd, 'database-url');
     writeFileSync(databaseUrlFile, 'postgres://file/saga\n');
@@ -250,23 +250,23 @@ describe('loadRuntimeConfig installation config', () => {
     );
 
     const config = await Effect.runPromise(
-      loadRuntimeConfig({ cwd, env: { DATABASE_URL_FILE: databaseUrlFile }, homeDir }),
+      loadRuntimeConfig({ cwd, env: { SAGA_DATABASE_URL_FILE: databaseUrlFile }, homeDir }),
     );
 
     expect(config.databaseUrl).toBe('postgres://file/saga');
     expect(config.databaseUrlSource).toBe('environment');
   });
 
-  it('lets an explicit env DATABASE_URL_FILE beat a project env file DATABASE_URL', async () => {
+  it('lets an explicit env SAGA_DATABASE_URL_FILE beat a project env file SAGA_DATABASE_URL', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const databaseUrlFile = join(cwd, 'database-url');
     writeFileSync(databaseUrlFile, 'postgres://env-file/saga\n');
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://project/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
 
     const config = await Effect.runPromise(
       loadRuntimeConfig({
         cwd,
-        env: { DATABASE_URL_FILE: databaseUrlFile },
+        env: { SAGA_DATABASE_URL_FILE: databaseUrlFile },
         installationConfig: false,
       }),
     );
@@ -275,24 +275,24 @@ describe('loadRuntimeConfig installation config', () => {
     expect(config.databaseUrlSource).toBe('environment');
   });
 
-  it('treats an empty explicit env DATABASE_URL as unset and falls through to project env', async () => {
+  it('treats an empty explicit env SAGA_DATABASE_URL as unset and falls through to project env', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://project/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
 
     const config = await Effect.runPromise(
-      loadRuntimeConfig({ cwd, env: { DATABASE_URL: '' }, installationConfig: false }),
+      loadRuntimeConfig({ cwd, env: { SAGA_DATABASE_URL: '' }, installationConfig: false }),
     );
 
     expect(config.databaseUrl).toBe('postgres://project/saga');
     expect(config.databaseUrlSource).toBe('project-env-file');
   });
 
-  it('lets .env.local DATABASE_URL_FILE beat .env DATABASE_URL', async () => {
+  it('lets .env.local SAGA_DATABASE_URL_FILE beat .env SAGA_DATABASE_URL', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
     const databaseUrlFile = join(cwd, 'database-url');
     writeFileSync(databaseUrlFile, 'postgres://local-file/saga\n');
-    writeFileSync(join(cwd, '.env.local'), `DATABASE_URL_FILE=${databaseUrlFile}\n`);
-    writeFileSync(join(cwd, '.env'), 'DATABASE_URL=postgres://dotenv/saga\n');
+    writeFileSync(join(cwd, '.env.local'), `SAGA_DATABASE_URL_FILE=${databaseUrlFile}\n`);
+    writeFileSync(join(cwd, '.env'), 'SAGA_DATABASE_URL=postgres://dotenv/saga\n');
 
     const config = await Effect.runPromise(
       loadRuntimeConfig({ cwd, env: {}, installationConfig: false }),
@@ -302,21 +302,21 @@ describe('loadRuntimeConfig installation config', () => {
     expect(config.databaseUrlSource).toBe('project-env-file');
   });
 
-  it('fails loudly when the winning layer names a broken DATABASE_URL_FILE instead of falling through', async () => {
+  it('fails loudly when the winning layer names a broken SAGA_DATABASE_URL_FILE instead of falling through', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-config-'));
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://project/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://project/saga\n');
 
     const failure = await Effect.runPromise(
       Effect.flip(
         loadRuntimeConfig({
           cwd,
-          env: { DATABASE_URL_FILE: join(cwd, 'missing-secret') },
+          env: { SAGA_DATABASE_URL_FILE: join(cwd, 'missing-secret') },
           installationConfig: false,
         }),
       ),
     );
 
-    expect(failure.issues.some((issue) => issue.key === 'DATABASE_URL_FILE')).toBe(true);
+    expect(failure.issues.some((issue) => issue.key === 'SAGA_DATABASE_URL_FILE')).toBe(true);
   });
 
   it('honors a SAGA_HOME override from the effective env', async () => {
@@ -437,7 +437,7 @@ describe('loadRuntimeConfig installation config', () => {
     const homeDir = makeInstallationHome('not json');
 
     const config = await Effect.runPromise(
-      loadRuntimeConfig({ cwd, env: { DATABASE_URL: 'postgres://env/saga' }, homeDir }),
+      loadRuntimeConfig({ cwd, env: { SAGA_DATABASE_URL: 'postgres://env/saga' }, homeDir }),
     );
 
     expect(config.databaseUrl).toBe('postgres://env/saga');

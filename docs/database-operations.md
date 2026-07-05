@@ -30,7 +30,7 @@ Create a local backup before risky migration or recovery work:
 
 ```sh
 mkdir -p backups
-pg_dump "$DATABASE_URL" --format=custom --file "backups/saga-$(date +%Y%m%d-%H%M%S).dump"
+pg_dump "$SAGA_DATABASE_URL" --format=custom --file "backups/saga-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
 Restore into a fresh local database:

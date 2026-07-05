@@ -520,7 +520,7 @@ function boundProject(): string {
     },
     schemaVersion: 1,
     service: {
-      databaseUrl: 'env:DATABASE_URL',
+      databaseUrl: 'environment',
     },
     sourceBinding: {
       id: 'source-id',
@@ -544,7 +544,7 @@ function boundProjectWithoutHost(): string {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',

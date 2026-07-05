@@ -24,7 +24,7 @@ import { makeDatabase, runMigrations } from './database.js';
 import type { DatabaseService } from './database.js';
 import { searchSessionRecall } from './session-recall.js';
 
-const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.SAGA_DATABASE_URL;
 const benchEnabled = process.env.SAGA_BENCH === '1' && databaseUrl !== undefined;
 const describeBench = benchEnabled ? describe : describe.skip;
 

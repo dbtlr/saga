@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DATABASE_URL_ENV } from '@saga/runtime';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -51,7 +52,7 @@ function boundProject(): string {
     },
     schemaVersion: 1,
     service: {
-      databaseUrl: 'env:DATABASE_URL',
+      databaseUrl: 'environment',
     },
     sourceBinding: {
       id: 'source-id',
@@ -1142,11 +1143,11 @@ describe('runHarnessCommand', () => {
       'session start   complete; SessionStart sources configured: startup, resume, clear, compact',
     );
     expect(output).toContain(
-      'activation      missing-database; DATABASE_URL is not set; activation verification cannot query raw_events',
+      `activation      missing-database; ${DATABASE_URL_ENV} is not set; activation verification cannot query raw_events`,
     );
     expect(output).toContain('hook trust      pending user trust');
     expect(output).toContain(
-      'next step       set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status codex again',
+      `next step       set ${DATABASE_URL_ENV} in this workspace, ensure migrations are current, then run saga harness status codex again`,
     );
   });
 
@@ -1453,15 +1454,15 @@ function withCwd<T>(cwd: string, run: () => T): T {
 }
 
 async function withoutDatabaseUrl<T>(run: () => Promise<T>): Promise<T> {
-  const previous = process.env.DATABASE_URL;
-  delete process.env.DATABASE_URL;
+  const previous = process.env[DATABASE_URL_ENV];
+  delete process.env[DATABASE_URL_ENV];
   try {
     return await run();
   } finally {
     if (previous === undefined) {
-      delete process.env.DATABASE_URL;
+      delete process.env[DATABASE_URL_ENV];
     } else {
-      process.env.DATABASE_URL = previous;
+      process.env[DATABASE_URL_ENV] = previous;
     }
   }
 }

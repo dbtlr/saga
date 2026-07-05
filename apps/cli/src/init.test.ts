@@ -26,7 +26,7 @@ describe('writeBindingFile', () => {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: 'env:DATABASE_URL',
+        databaseUrl: 'environment',
       },
       sourceBinding: {
         id: 'source-id',
@@ -50,7 +50,7 @@ describe('writeBindingFile', () => {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: 'env:DATABASE_URL',
+        databaseUrl: 'environment',
       },
       sourceBinding: {
         id: 'source-id',

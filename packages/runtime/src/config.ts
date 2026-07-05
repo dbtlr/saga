@@ -6,6 +6,16 @@ import { Context, Data, Effect, Layer } from 'effect';
 
 import { installationConfigLocation } from './embedding-policy.js';
 
+// The single source of truth for the database environment variable name. The one
+// reader below keys off it dynamically and every user-facing guidance/error
+// message builds the name from it, so the variable is named in exactly one place
+// (a future rename is one edit). The `SAGA_` namespace is deliberate: an ambient
+// `DATABASE_URL` in an operator's shell can no longer silently point installed
+// saga at the wrong shared Postgres. `SAGA_DATABASE_URL` keeps env-wins semantics
+// in every mode.
+export const DATABASE_URL_ENV = 'SAGA_DATABASE_URL';
+export const DATABASE_URL_FILE_ENV = `${DATABASE_URL_ENV}_FILE`;
+
 export type SagaEnvironment = 'development' | 'test' | 'production';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -104,8 +114,8 @@ export function loadRuntimeConfig(
     // The database URL resolves per-layer below, so the merged env must not
     // contribute a cross-layer database value or duplicate secret-file issues.
     const {
-      DATABASE_URL: _databaseUrl,
-      DATABASE_URL_FILE: _databaseUrlFile,
+      [DATABASE_URL_ENV]: _databaseUrl,
+      [DATABASE_URL_FILE_ENV]: _databaseUrlFile,
       ...envWithoutDatabase
     } = env;
     const result = parseRuntimeConfig(envWithoutDatabase);
@@ -141,7 +151,7 @@ export function parseRuntimeConfig(env: NodeJS.ProcessEnv): {
     issues,
   );
 
-  const databaseUrl = readSecretValue(env, 'DATABASE_URL', issues);
+  const databaseUrl = readSecretValue(env, DATABASE_URL_ENV, issues);
   const config: RuntimeConfig = {
     databaseUrl,
     databaseUrlSource: databaseUrl === undefined ? 'missing' : 'environment',
@@ -184,12 +194,13 @@ function mergeEnv(
 
 // Database resolution is layered, highest precedence first: explicit env, then each
 // project env file (.env.local before .env), then installation config. The first
-// layer that names DATABASE_URL or DATABASE_URL_FILE wins outright — a named but
-// broken value fails loudly rather than silently falling through to another
-// database. Empty-string values count as unset. Installation config is the lowest
-// layer so project env can pin a dev database; this inverts for the saga repo
-// itself once a production build exists (dev override becomes test-only) — see
-// ADR 0038.
+// layer that names SAGA_DATABASE_URL or SAGA_DATABASE_URL_FILE wins outright — a
+// named but broken value fails loudly rather than silently falling through to
+// another database. Empty-string values count as unset. Installation config is the
+// lowest layer so project env can pin a dev database. A compiled/production build
+// never reads project env files (dotenv is gated source-only, see loadRuntimeConfig
+// / resolveDatabaseConfig), so an installed binary resolves the DB from explicit
+// env then installation config only (ADR 0044/0038).
 function resolveDatabaseConfig(
   config: RuntimeConfig,
   explicitEnv: NodeJS.ProcessEnv,
@@ -216,12 +227,12 @@ function resolveDatabaseConfig(
 
   for (const layer of layers) {
     if (
-      optionalString(layer.env.DATABASE_URL) === undefined &&
-      optionalString(layer.env.DATABASE_URL_FILE) === undefined
+      optionalString(layer.env[DATABASE_URL_ENV]) === undefined &&
+      optionalString(layer.env[DATABASE_URL_FILE_ENV]) === undefined
     ) {
       continue;
     }
-    const url = readSecretValue(layer.env, 'DATABASE_URL', issues);
+    const url = readSecretValue(layer.env, DATABASE_URL_ENV, issues);
     return {
       ...withIssue,
       databaseUrl: url,
@@ -332,7 +343,7 @@ function optionalString(value: string | undefined): string | undefined {
 
 function readSecretValue(
   env: NodeJS.ProcessEnv,
-  key: 'DATABASE_URL' | 'OPENAI_API_KEY',
+  key: typeof DATABASE_URL_ENV | 'OPENAI_API_KEY',
   issues: ConfigIssue[],
 ): string | undefined {
   const directValue = optionalString(env[key]);

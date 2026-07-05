@@ -42,7 +42,7 @@ const fixtureChecks: DoctorCheck[] = [
     status: 'ok',
   },
   {
-    detail: 'DATABASE_URL is not set',
+    detail: 'SAGA_DATABASE_URL is not set',
     label: 'postgres',
     status: 'warn',
   },
@@ -62,7 +62,7 @@ describe('renderDoctor', () => {
         format: 'records',
         isTty: false,
       }),
-    ).toContain('postgres    ⚠ DATABASE_URL is not set');
+    ).toContain('postgres    ⚠ SAGA_DATABASE_URL is not set');
   });
 
   it('renders ascii status tokens', () => {
@@ -403,7 +403,7 @@ describe('doctorProject', () => {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',
@@ -469,7 +469,7 @@ describe('doctorProject', () => {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',
@@ -530,7 +530,7 @@ describe('doctorProject', () => {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',
@@ -596,7 +596,7 @@ describe('doctorProject', () => {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',
@@ -660,7 +660,7 @@ describe('doctorProject', () => {
         },
         schemaVersion: 1,
         service: {
-          databaseUrl: 'env:DATABASE_URL',
+          databaseUrl: 'environment',
         },
         sourceBinding: {
           id: 'source-id',
@@ -742,13 +742,13 @@ describe('doctorProject', () => {
     const checks = await doctorProject({
       cwd,
       runtimeConfig: {
-        env: { DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
+        env: { SAGA_DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
         installationConfig: false,
       },
     });
 
     expect(checks).toContainEqual({
-      detail: 'DATABASE_URL from environment',
+      detail: 'SAGA_DATABASE_URL from environment',
       label: 'database config',
       status: 'ok',
     });
@@ -756,7 +756,7 @@ describe('doctorProject', () => {
 
   it('reports a database config row sourced from a project env file', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    writeFileSync(join(cwd, '.env.local'), 'DATABASE_URL=postgres://127.0.0.1:9/saga\n');
+    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://127.0.0.1:9/saga\n');
 
     const checks = await doctorProject({
       cwd,
@@ -764,7 +764,7 @@ describe('doctorProject', () => {
     });
 
     expect(checks).toContainEqual({
-      detail: 'DATABASE_URL from project env file',
+      detail: 'SAGA_DATABASE_URL from project env file',
       label: 'database config',
       status: 'ok',
     });
@@ -784,7 +784,7 @@ describe('doctorProject', () => {
     });
 
     expect(checks).toContainEqual({
-      detail: 'DATABASE_URL from installation config',
+      detail: 'SAGA_DATABASE_URL from installation config',
       label: 'database config',
       status: 'ok',
     });
@@ -799,7 +799,7 @@ describe('doctorProject', () => {
     });
 
     expect(checks).toContainEqual({
-      detail: `DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json`,
+      detail: `SAGA_DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json`,
       label: 'database config',
       status: 'fail',
     });
@@ -811,14 +811,14 @@ describe('doctorProject', () => {
     const checks = await doctorProject({
       cwd,
       runtimeConfig: {
-        env: { DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
+        env: { SAGA_DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
         homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
         readInstallationFile: () => 'not json',
       },
     });
 
     expect(checks).toContainEqual({
-      detail: 'DATABASE_URL from environment; could not parse ~/.saga/config.json',
+      detail: 'SAGA_DATABASE_URL from environment; could not parse ~/.saga/config.json',
       label: 'database config',
       status: 'warn',
     });
@@ -837,7 +837,7 @@ describe('doctorProject', () => {
     });
 
     expect(checks).toContainEqual({
-      detail: `DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json; could not parse ~/.saga/config.json`,
+      detail: `SAGA_DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json; could not parse ~/.saga/config.json`,
       label: 'database config',
       status: 'fail',
     });
@@ -974,7 +974,7 @@ function installedClaudeHarnessProject(cwd: string): string {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: 'env:DATABASE_URL',
+        databaseUrl: 'environment',
       },
       sourceBinding: {
         id: 'source-id',

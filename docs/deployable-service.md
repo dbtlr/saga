@@ -71,7 +71,7 @@ The hosted target is a provider-neutral container contract documented in `deploy
 
 Required:
 
-- `DATABASE_URL`
+- `SAGA_DATABASE_URL`
 
 Common runtime settings:
 
@@ -88,7 +88,7 @@ The service package declares `tsx` as a runtime dependency while this repo remai
 
 Secret-bearing config supports standard file indirection:
 
-- `DATABASE_URL_FILE`
+- `SAGA_DATABASE_URL_FILE`
 - `OPENAI_API_KEY_FILE`
 
 When both direct and file-backed values are set, the direct environment variable wins. This keeps local `.env.local` usage simple while allowing container platforms, Docker/Kubernetes secrets, and hosted secret managers to inject file-backed values.
@@ -96,7 +96,7 @@ When both direct and file-backed values are set, the direct environment variable
 Example:
 
 ```sh
-DATABASE_URL_FILE=/run/secrets/saga_database_url
+SAGA_DATABASE_URL_FILE=/run/secrets/saga_database_url
 OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
 ```
 

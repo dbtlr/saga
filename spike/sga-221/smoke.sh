@@ -70,7 +70,7 @@ echo "  compiled median: $(median "${cs[@]}")s   tsx-wrapper median: $(median "$
 
 # 3. service run + /health + shutdown ------------------------------------------------
 echo "[3] service run -> /health -> shutdown (port $PORT)"
-DATABASE_URL="$DBURL" SAGA_SERVICE_HOST="$HOST" SAGA_SERVICE_PORT="$PORT" "$BIN" service run >/tmp/saga-smoke-svc.log 2>&1 &
+SAGA_DATABASE_URL="$DBURL" SAGA_SERVICE_HOST="$HOST" SAGA_SERVICE_PORT="$PORT" "$BIN" service run >/tmp/saga-smoke-svc.log 2>&1 &
 SVC_PID=$!
 HEALTH=""
 for i in $(seq 1 40); do
@@ -88,7 +88,7 @@ echo "[4] MCP stdio initialize + tools/list"
 MCP_OUT="$(printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  | DATABASE_URL="$DBURL" "$BIN" mcp 2>/dev/null)"
+  | SAGA_DATABASE_URL="$DBURL" "$BIN" mcp 2>/dev/null)"
 echo "$MCP_OUT" | grep -q '"protocolVersion"' && pass "initialize responded" || fail "no initialize response: $MCP_OUT"
 for t in list_recent_sessions search_sessions get_session_context; do
   echo "$MCP_OUT" | grep -q "\"$t\"" && pass "tools/list advertises $t" || fail "missing tool $t"

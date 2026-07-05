@@ -149,7 +149,7 @@ describe('startSagaService', () => {
           openaiApiKey: undefined,
         },
       }),
-    ).rejects.toThrow('DATABASE_URL is required');
+    ).rejects.toThrow('SAGA_DATABASE_URL is required');
   });
 });
 
@@ -242,7 +242,7 @@ describe('deploy targets', () => {
       'utf8',
     );
 
-    expect(env).toContain('DATABASE_URL_FILE=/run/secrets/saga_database_url');
+    expect(env).toContain('SAGA_DATABASE_URL_FILE=/run/secrets/saga_database_url');
     expect(env).toContain('SAGA_SERVICE_HOST=0.0.0.0');
   });
 

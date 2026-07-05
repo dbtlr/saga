@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { getMigrationStatus, makeDatabase } from '@saga/db';
 import type { DatabaseService, MigrationStatus } from '@saga/db';
 import {
+  DATABASE_URL_ENV,
   inspectEmbeddingWorkflow,
   installationConfigLocation,
   loadRuntimeConfig,
@@ -266,7 +267,7 @@ async function checkPostgres(
     return [
       ...checks,
       {
-        detail: 'DATABASE_URL is not set',
+        detail: `${DATABASE_URL_ENV} is not set`,
         label: 'postgres',
         status: 'warn',
       },
@@ -322,7 +323,7 @@ function checkDatabaseConfig(
       env: runtimeConfig.env ?? process.env,
       ...(runtimeConfig.homeDir === undefined ? {} : { homeDir: runtimeConfig.homeDir }),
     });
-    const guidance = `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`;
+    const guidance = `${DATABASE_URL_ENV} is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`;
     return {
       detail:
         config.installationConfigIssue === undefined
@@ -334,9 +335,9 @@ function checkDatabaseConfig(
   }
 
   const sourceDetail: Record<Exclude<RuntimeConfig['databaseUrlSource'], 'missing'>, string> = {
-    environment: 'DATABASE_URL from environment',
-    'installation-config': 'DATABASE_URL from installation config',
-    'project-env-file': 'DATABASE_URL from project env file',
+    environment: `${DATABASE_URL_ENV} from environment`,
+    'installation-config': `${DATABASE_URL_ENV} from installation config`,
+    'project-env-file': `${DATABASE_URL_ENV} from project env file`,
   };
   if (config.installationConfigIssue !== undefined) {
     return {

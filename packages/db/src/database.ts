@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { RuntimeConfigTag } from '@saga/runtime';
+import { DATABASE_URL_ENV, RuntimeConfigTag } from '@saga/runtime';
 import type { RuntimeConfig } from '@saga/runtime';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -84,7 +84,7 @@ export function makeDatabase(
   return Effect.try({
     try: () => {
       if (config.databaseUrl === undefined) {
-        throw new DatabaseError({ message: 'DATABASE_URL is required' });
+        throw new DatabaseError({ message: `${DATABASE_URL_ENV} is required` });
       }
 
       const sql = postgres(config.databaseUrl, options.postgres);

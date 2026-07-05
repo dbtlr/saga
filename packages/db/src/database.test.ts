@@ -48,7 +48,7 @@ function serviceWithMigrationCount(
 }
 
 describe('makeDatabase', () => {
-  it('requires DATABASE_URL', async () => {
+  it('requires SAGA_DATABASE_URL', async () => {
     const result = await Effect.runPromiseExit(
       makeDatabase({
         databaseUrl: undefined,
@@ -66,7 +66,7 @@ describe('makeDatabase', () => {
     );
 
     assert(Exit.isFailure(result));
-    expect(result.cause.toString()).toContain('DATABASE_URL is required');
+    expect(result.cause.toString()).toContain('SAGA_DATABASE_URL is required');
   });
 });
 
@@ -80,7 +80,7 @@ describe('databaseLive', () => {
       Effect.provide(DatabaseLive()),
       Effect.provide(
         RuntimeConfigLive({
-          env: { DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/saga_test' },
+          env: { SAGA_DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/saga_test' },
           envFiles: [],
         }),
       ),

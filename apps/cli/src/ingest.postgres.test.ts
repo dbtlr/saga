@@ -21,6 +21,7 @@ import { Effect } from 'effect';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+import { restoreDatabaseUrlEnv, setDatabaseUrlEnv } from './database-url-env.js';
 import { installHarness } from './harness.js';
 import { captureHook } from './ingest.js';
 import { initProject, readBindingFile } from './init.js';
@@ -38,8 +39,7 @@ describePostgres('ambient hook ingest postgres integration', () => {
     await adminSql.unsafe(`create database "${databaseName}"`);
     const url = new URL(databaseUrl ?? '');
     url.pathname = `/${databaseName}`;
-    previousDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = url.toString();
+    previousDatabaseUrl = setDatabaseUrlEnv(url.toString());
     service = await Effect.runPromise(
       makeDatabase(
         {
@@ -69,11 +69,7 @@ describePostgres('ambient hook ingest postgres integration', () => {
     if (service !== undefined) {
       await Effect.runPromise(service.close());
     }
-    if (previousDatabaseUrl === undefined) {
-      delete process.env.DATABASE_URL;
-    } else {
-      process.env.DATABASE_URL = previousDatabaseUrl;
-    }
+    restoreDatabaseUrlEnv(previousDatabaseUrl);
     await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
     await adminSql.end({ timeout: 5 });
   });

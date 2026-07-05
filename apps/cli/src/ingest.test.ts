@@ -42,7 +42,7 @@ describe('ingestCodexHook', () => {
         {
           capture: async () => ({
             accepted: true,
-            error: 'DATABASE_URL is required',
+            error: 'SAGA_DATABASE_URL is required',
             mode: 'skipped',
             source: 'codex',
           }),
@@ -52,7 +52,7 @@ describe('ingestCodexHook', () => {
     ).resolves.toBe(
       JSON.stringify({
         continue: true,
-        systemMessage: 'Saga Codex capture skipped: DATABASE_URL is required',
+        systemMessage: 'Saga Codex capture skipped: SAGA_DATABASE_URL is required',
       }),
     );
   });
@@ -163,7 +163,7 @@ describe('ingestHook', () => {
         {
           capture: async () => ({
             accepted: true,
-            error: 'DATABASE_URL is required',
+            error: 'SAGA_DATABASE_URL is required',
             mode: 'skipped',
             source: 'claude',
           }),
@@ -173,7 +173,7 @@ describe('ingestHook', () => {
     ).resolves.toBe(
       JSON.stringify({
         continue: true,
-        systemMessage: 'Saga Claude Code capture skipped: DATABASE_URL is required',
+        systemMessage: 'Saga Claude Code capture skipped: SAGA_DATABASE_URL is required',
       }),
     );
   });
@@ -217,7 +217,7 @@ describe('ingestHook', () => {
       },
       schemaVersion: 1,
       service: {
-        databaseUrl: 'env:DATABASE_URL',
+        databaseUrl: 'environment',
       },
       sourceBinding: {
         id: 'source-id',
