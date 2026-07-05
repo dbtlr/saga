@@ -285,7 +285,12 @@ export function createLaunchdSupervisor(input: LaunchdSupervisorOptions = {}): S
       ensureLaunchdDirectories(paths);
       writeFileSync(
         paths.plistPath,
-        renderLaunchdPlist({ binPath: stableBinPath(input.home), paths, projectRoot }),
+        renderLaunchdPlist({
+          binPath: stableBinPath(input.home),
+          ...(input.home === undefined ? {} : { home: input.home }),
+          paths,
+          projectRoot,
+        }),
         {
           mode: 0o600,
         },
@@ -411,6 +416,7 @@ function launchctlFailureMessage(error: unknown): string {
 export function renderLaunchdPlist(input: {
   binPath?: string;
   compiled?: boolean;
+  home?: string;
   paths: ReturnType<typeof launchdPaths>;
   projectRoot: string;
 }): string {
@@ -418,16 +424,23 @@ export function renderLaunchdPlist(input: {
   // plist must exec the stable-path binary directly (ADR-0044) — that is what
   // launchd re-execs after a swap. A from-source/dev run keeps the tsx+source
   // invocation so `service install` still works out of a checkout.
-  const programArguments =
-    (input.compiled ?? isCompiledBinary())
-      ? [input.binPath ?? stableBinPath(), 'service', 'run']
-      : [
-          process.execPath,
-          join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
-          join(input.projectRoot, 'apps', 'cli', 'src', 'main.ts'),
-          'service',
-          'run',
-        ];
+  const compiled = input.compiled ?? isCompiledBinary();
+  const programArguments = compiled
+    ? [input.binPath ?? stableBinPath(), 'service', 'run']
+    : [
+        process.execPath,
+        join(input.projectRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+        join(input.projectRoot, 'apps', 'cli', 'src', 'main.ts'),
+        'service',
+        'run',
+      ];
+  // The compiled binary is location-independent — it resolves everything from the
+  // installation config (~/.saga/config.json), never repo files — so it must NOT
+  // chdir into the project checkout. A launchd agent lacks Full-Disk-Access to
+  // non-boot volumes, so a checkout-on-/Volumes WorkingDirectory makes chdir fail
+  // and the process die silently before any output (SGA-230). Home is always
+  // accessible. Source mode still needs the checkout as cwd for tsx/node_modules.
+  const workingDirectory = compiled ? (input.home ?? homedir()) : input.projectRoot;
   const programArgumentsXml = programArguments
     .map((argument) => `    <string>${escapePlist(argument)}</string>`)
     .join('\n');
@@ -442,7 +455,7 @@ export function renderLaunchdPlist(input: {
 ${programArgumentsXml}
   </array>
   <key>WorkingDirectory</key>
-  <string>${escapePlist(input.projectRoot)}</string>
+  <string>${escapePlist(workingDirectory)}</string>
   <key>RunAtLoad</key>
   <false/>
   <key>KeepAlive</key>
