@@ -21,5 +21,7 @@ echo "[1/2] regenerate packages/db/src/embedded-migrations.ts"
 ( cd "$REPO" && bun run format >/dev/null 2>&1 || true )
 
 echo "[2/2] bun build --compile"
-( cd "$REPO" && bun build --compile apps/cli/src/main.ts --outfile "$HERE/saga" )
+# --no-compile-autoload-dotenv keeps the standalone binary from auto-loading repo
+# .env files into process.env (ADR-0044 config precedence, SGA-224).
+( cd "$REPO" && bun build --compile --no-compile-autoload-dotenv apps/cli/src/main.ts --outfile "$HERE/saga" )
 ls -lh "$HERE/saga" | awk '{print "  binary:", $5, $NF}'
