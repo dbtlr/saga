@@ -168,6 +168,25 @@ describe('renderLaunchdPlist', () => {
       existsSync(join(workspaceRoot, 'apps', 'cli', 'node_modules', 'tsx', 'dist', 'cli.mjs')),
     ).toBe(true);
   });
+
+  it('execs the compiled stable-path binary directly when compiled', () => {
+    const plist = renderLaunchdPlist({
+      binPath: '/Users/drew/.local/bin/saga',
+      compiled: true,
+      paths: {
+        plistPath: '/Users/drew/Library/LaunchAgents/com.saga.service.plist',
+        stderrPath: '/Users/drew/Library/Logs/saga/service.err.log',
+        stdoutPath: '/Users/drew/Library/Logs/saga/service.out.log',
+      },
+      projectRoot: '/Volumes/data/workspaces/saga',
+    });
+
+    expect(plist).toContain('<string>/Users/drew/.local/bin/saga</string>');
+    expect(plist).toContain('<string>service</string>');
+    expect(plist).toContain('<string>run</string>');
+    expect(plist).not.toContain('tsx/dist/cli.mjs');
+    expect(plist).not.toContain('apps/cli/src/main.ts');
+  });
 });
 
 describe('launchdPrintProcess', () => {
