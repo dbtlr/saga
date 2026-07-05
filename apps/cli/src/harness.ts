@@ -20,6 +20,7 @@ import type { RawEvent } from '@saga/db';
 import { DATABASE_URL_ENV, loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
+import { isCompiledBinary, stableBinPath } from './binary.js';
 import {
   ensureLocalHostBinding,
   findProjectRoot,
@@ -1051,7 +1052,7 @@ function hookShimCommand(projectRoot: string, adapter: HarnessAdapter): string {
 
 function installHookShim(projectRoot: string, adapter: HarnessAdapter): string {
   const shimPath = adapter.shimPath(projectRoot);
-  const cliPath = fileURLToPath(new URL('../bin/saga.js', import.meta.url));
+  const cliPath = sagaCliPath();
   mkdirSync(dirname(shimPath), { recursive: true });
   writeFileSync(
     shimPath,
@@ -1133,7 +1134,14 @@ function claudeMcpConfigPath(projectRoot: string): string {
 }
 
 function sagaCliPath(): string {
-  return fileURLToPath(new URL('../bin/saga.js', import.meta.url));
+  // The one saga executable every integration reference points at — the Claude
+  // hook shim and .mcp.json's mcpServers.saga.command. Compiled: the single stable
+  // install path (ADR-0044), so a self-update swap converges every integration at
+  // once. Source: the repo's bin/saga.js shim so a checkout keeps working. Reuses
+  // binary.ts; no re-derived detection.
+  return isCompiledBinary()
+    ? stableBinPath()
+    : fileURLToPath(new URL('../bin/saga.js', import.meta.url));
 }
 
 function sagaMcpServerEntry(): { args: string[]; command: string } {
