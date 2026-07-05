@@ -9,7 +9,7 @@
  * saga binary in a `bun --compile` build (ADR-0045, ADR-0044).
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
 import { makeDatabase, runMigrationsSafely } from '@saga/db';
 import type { MigrationStatus } from '@saga/db';
@@ -105,8 +105,15 @@ export function verifyChecksum(body: Uint8Array, sums: string, asset: string): v
 /** Write-beside + rename: the swap is atomic on the same filesystem. */
 export function replaceBinary(targetPath: string, body: Uint8Array): void {
   const staging = `${targetPath}.self-update`;
-  writeFileSync(staging, body);
-  chmodSync(staging, 0o755);
+  try {
+    writeFileSync(staging, body);
+    chmodSync(staging, 0o755);
+  } catch (error) {
+    // A failed stage must leave no litter beside the target; the rename (below)
+    // is what makes the swap atomic, so nothing partial ever lands on target.
+    rmSync(staging, { force: true });
+    throw error;
+  }
   renameSync(staging, targetPath);
 }
 

@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { MigrationStatus } from '@saga/db';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RenderOptions } from './render.js';
 import {
@@ -9,6 +12,7 @@ import {
   compareSemver,
   parseSelfUpdateArgs,
   RELEASE_BASE,
+  replaceBinary as replaceBinaryEngine,
   resolveLatestPrereleaseTag,
   resolveLatestTag,
   runSelfUpdateCommand,
@@ -146,6 +150,34 @@ describe('assetName', () => {
     expect(assetName('darwin', 'arm64')).toBe('saga-darwin-arm64');
     expect(assetName('linux', 'x64')).toBe('saga-linux-x64');
     expect(assetName('darwin', 'x64')).toBe('saga-darwin-x64');
+  });
+});
+
+describe('replaceBinary', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+  const tempDir = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'saga-replace-'));
+    dirs.push(dir);
+    return dir;
+  };
+
+  it('atomically swaps the target and leaves no staging file', () => {
+    const target = join(tempDir(), 'saga');
+    replaceBinaryEngine(target, new Uint8Array([1, 2, 3]));
+    expect(readFileSync(target)).toStrictEqual(Buffer.from([1, 2, 3]));
+    expect(existsSync(`${target}.self-update`)).toBe(false);
+  });
+
+  it('cleans up the staging file and rethrows when staging fails', () => {
+    // A target inside a nonexistent directory makes the staging write fail.
+    const target = join(tempDir(), 'missing', 'saga');
+    expect(() => replaceBinaryEngine(target, new Uint8Array([1]))).toThrow(/ENOENT/u);
+    expect(existsSync(`${target}.self-update`)).toBe(false);
   });
 });
 
