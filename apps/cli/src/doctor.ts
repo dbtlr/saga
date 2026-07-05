@@ -19,7 +19,8 @@ import type {
 } from '@saga/runtime';
 import { Effect } from 'effect';
 
-import { inspectHarnessesWithActivation } from './harness.js';
+import { isCompiledBinary, stableBinPath } from './binary.js';
+import { inspectHarnessesWithActivation, staleHarnessReferences } from './harness.js';
 import type {
   HarnessActivationState,
   HarnessActivationVerifier,
@@ -29,7 +30,7 @@ import { bindingPathFor, findProjectRoot, readBindingFile } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
 import type { RenderOptions } from './render.js';
-import { inspectServiceStatus } from './service.js';
+import { inspectServiceStatus, launchdPointsAtCheckout } from './service.js';
 
 export type DoctorStatus = 'ok' | 'warn' | 'fail';
 
@@ -53,6 +54,7 @@ export async function runDoctor(_args: readonly string[], options: RenderOptions
 
 export async function doctorProject(
   input: {
+    convergence?: { compiled?: boolean; home?: string };
     cwd?: string;
     embeddingAuth?: EmbeddingCredentialResolutionOptions;
     embeddingPolicy?: EmbeddingPolicyResolutionOptions;
@@ -77,7 +79,50 @@ export async function doctorProject(
   checks.push(checkEmbeddings(input.embeddingAuth, input.embeddingPolicy));
   checks.push(...(await checkHarnesses(projectRoot, input.verifyHarnessActivation)));
 
+  const convergence = checkConvergence(projectRoot, input.convergence);
+  if (convergence !== undefined) {
+    checks.push(convergence);
+  }
+
   return checks;
+}
+
+/**
+ * The convergence guide (ADR-0044): when running as the installed compiled binary,
+ * flag any integration reference (the Claude `.mcp.json` command, a hook shim, or
+ * the launchd service plist) that still resolves to a checkout path instead of the
+ * one stable install path, and name the command that fixes each. From source the
+ * integrations are expected to point at the checkout, so the check is skipped.
+ */
+export function checkConvergence(
+  projectRoot: string,
+  options: { compiled?: boolean; home?: string } = {},
+): DoctorCheck | undefined {
+  const compiled = options.compiled ?? isCompiledBinary();
+  if (!compiled) {
+    return undefined;
+  }
+
+  const stable = options.home === undefined ? stableBinPath() : stableBinPath(options.home);
+  const stale = staleHarnessReferences(projectRoot, options.home).map(
+    (ref) => `${ref.label} (run: ${ref.fix})`,
+  );
+  if (launchdPointsAtCheckout(options.home)) {
+    stale.push('launchd service (run: saga service install)');
+  }
+
+  if (stale.length === 0) {
+    return {
+      detail: `every integration reference resolves to ${stable}`,
+      label: 'convergence',
+      status: 'ok',
+    };
+  }
+  return {
+    detail: `checkout-pointing references: ${stale.join('; ')}`,
+    label: 'convergence',
+    status: 'warn',
+  };
 }
 
 export function renderDoctor(checks: readonly DoctorCheck[], options: RenderOptions): string {

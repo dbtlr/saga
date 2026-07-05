@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  checkConvergence,
   checkNodeVersion,
   doctorProject,
   migrationDoctorCheck,
@@ -1031,3 +1032,61 @@ function noEvidenceActivation(): HarnessActivationStatus {
     state: 'no-evidence',
   };
 }
+
+function stableBin(home: string): string {
+  return join(home, '.local', 'bin', 'saga');
+}
+
+function writeMcpSagaCommand(projectRoot: string, command: string): void {
+  writeFileSync(
+    join(projectRoot, '.mcp.json'),
+    `${JSON.stringify({ mcpServers: { saga: { args: ['mcp'], command } } }, null, 2)}\n`,
+  );
+}
+
+describe('checkConvergence', () => {
+  it('is skipped when running from source', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
+    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
+    writeMcpSagaCommand(projectRoot, join(projectRoot, 'apps', 'cli', 'bin', 'saga.js'));
+
+    expect(checkConvergence(projectRoot, { compiled: false, home })).toBeUndefined();
+  });
+
+  it('reports ok when the compiled binary finds no checkout-pointing references', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
+    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
+    writeMcpSagaCommand(projectRoot, stableBin(home));
+
+    const check = checkConvergence(projectRoot, { compiled: true, home });
+
+    expect(check?.status).toBe('ok');
+    expect(check?.detail).toContain(stableBin(home));
+  });
+
+  it('flags a .mcp.json command that still points at the checkout', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
+    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
+    writeMcpSagaCommand(projectRoot, join(projectRoot, 'apps', 'cli', 'bin', 'saga.js'));
+
+    const check = checkConvergence(projectRoot, { compiled: true, home });
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('.mcp.json saga command (run: saga harness install claude)');
+  });
+
+  it('flags a hook shim that does not exec the stable install path', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
+    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
+    mkdirSync(join(projectRoot, '.codex'), { recursive: true });
+    writeFileSync(
+      join(projectRoot, '.codex', 'saga-codex-hook.sh'),
+      `#!/bin/sh\nexec '${join(projectRoot, 'apps', 'cli', 'bin', 'saga.js')}' ingest codex-hook "$@"\n`,
+    );
+
+    const check = checkConvergence(projectRoot, { compiled: true, home });
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('codex hook shim (run: saga harness install codex)');
+  });
+});

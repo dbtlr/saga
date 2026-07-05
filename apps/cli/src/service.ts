@@ -469,6 +469,24 @@ function launchdUnavailableReport(
   };
 }
 
+/**
+ * Whether the installed launchd plist still execs a checkout (tsx+source) instead
+ * of the stable-path binary (ADR-0044) — the service input to doctor's convergence
+ * guide. False when no plist is installed or it already points at the stable path.
+ * Only meaningful for a compiled binary; the caller gates on that.
+ */
+export function launchdPointsAtCheckout(home = homedir()): boolean {
+  const plistPath = launchdPaths(home).plistPath;
+  if (!existsSync(plistPath)) {
+    return false;
+  }
+  try {
+    return !readFileSync(plistPath, 'utf8').includes(stableBinPath(home));
+  } catch {
+    return false;
+  }
+}
+
 function launchdPaths(home = homedir()) {
   return {
     plistPath: join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
