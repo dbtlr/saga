@@ -101,7 +101,7 @@ describe('runDoctor', () => {
 });
 
 describe('doctorProject', () => {
-  it('reports Node and pnpm engine requirements', async () => {
+  it('reports Node and bun engine requirements', async () => {
     const checks = await doctorProject({ cwd: workspaceRoot });
 
     expect(checks).toContainEqual(
@@ -113,8 +113,8 @@ describe('doctorProject', () => {
     );
     expect(checks).toContainEqual(
       expect.objectContaining({
-        detail: expect.stringContaining('requires ^11.0.0'),
-        label: 'pnpm',
+        detail: expect.stringContaining('requires >=1.3.14'),
+        label: 'bun',
         status: 'ok',
       }),
     );
