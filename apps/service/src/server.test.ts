@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Duration, Effect } from 'effect';
 import { describe, expect, it } from 'vitest';
 
 import { describeReadinessCause, startSagaService, validateDatabaseReady } from './server.js';
@@ -25,6 +26,7 @@ describe('startSagaService', () => {
         },
       },
       {
+        recordRun: () => Effect.void,
         validateDatabase: async () => undefined,
       },
     );
@@ -35,6 +37,56 @@ describe('startSagaService', () => {
         ok: true,
         service: 'saga',
       });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it('reports the job runner status on /health after a tick', async () => {
+    const service = await startSagaService(
+      {
+        databaseUrl: 'postgres://test/saga',
+        databaseUrlSource: 'environment',
+        environment: 'test',
+        logLevel: 'info',
+        service: {
+          host: '127.0.0.1',
+          port: 0,
+        },
+        secrets: {
+          openaiApiKey: undefined,
+        },
+      },
+      {
+        jobs: [{ interval: Duration.millis(5), name: 'heartbeat', run: Effect.void }],
+        recordRun: () => Effect.void,
+        validateDatabase: async () => undefined,
+      },
+    );
+
+    try {
+      const deadline = Date.now() + 2000;
+      let jobs: unknown[] = [];
+      // Poll /health until the heartbeat has ticked at least once.
+      while (Date.now() < deadline) {
+        const response = await fetch(`${service.url}/health`);
+        const payload = (await response.json()) as {
+          jobs: { lastOutcome: string | null; name: string }[];
+        };
+        jobs = payload.jobs;
+        if (payload.jobs.some((job) => job.name === 'heartbeat' && job.lastOutcome !== null)) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      expect(jobs).toContainEqual(
+        expect.objectContaining({
+          consecutiveFailures: 0,
+          lastOutcome: 'succeeded',
+          name: 'heartbeat',
+        }),
+      );
     } finally {
       await service.close();
     }
