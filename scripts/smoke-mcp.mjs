@@ -25,6 +25,7 @@ if (adminDatabaseUrl === undefined || adminDatabaseUrl === '') {
 const databaseName = `saga_mcp_smoke_${Date.now().toString(36)}_${process.pid.toString(36)}`;
 const adminSql = postgres(adminDatabaseUrl, { max: 1 });
 let workspacePath;
+let sagaHomePath;
 let failed = true;
 
 try {
@@ -35,12 +36,13 @@ try {
   workspacePath = realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-')));
   seedGitWorkspace(workspacePath);
 
+  // An empty installation config home keeps remote embeddings disabled by
+  // policy (ADR 0032): the search below stays lexical with no query egress.
+  sagaHomePath = realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-home-')));
   const env = {
     ...process.env,
     DATABASE_URL: databaseUrl.toString(),
-    // An empty installation config home keeps remote embeddings disabled by
-    // policy (ADR 0032): the search below stays lexical with no query egress.
-    SAGA_HOME: realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-home-'))),
+    SAGA_HOME: sagaHomePath,
   };
 
   run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
@@ -129,6 +131,9 @@ try {
   } else if (workspacePath !== undefined && failed) {
     console.error(`smoke workspace kept for inspection: ${workspacePath}`);
   }
+  if (sagaHomePath !== undefined) {
+    rmSync(sagaHomePath, { force: true, recursive: true });
+  }
 }
 
 function seedGitWorkspace(projectRoot) {
@@ -176,7 +181,8 @@ function runMcpRequests(cwd, env, requests) {
   });
   const responses = new Map();
   for (const line of stdout.split(/\r?\n/).filter((entry) => entry.trim() !== '')) {
-    responses.set(JSON.parse(line).id, JSON.parse(line));
+    const response = JSON.parse(line);
+    responses.set(response.id, response);
   }
   return responses;
 }

@@ -16,6 +16,8 @@ export const Route = createFileRoute('/')({
   loader: () => getControlPlaneSnapshot(),
 });
 
+const PHASE_2_CLAIMS_NOTE = 'Claims arrive with Phase 2 consolidation — nothing writes them yet.';
+
 function ControlPlaneHome() {
   const snapshot = Route.useLoaderData();
   return <ControlPlaneShell snapshot={snapshot} />;
@@ -60,8 +62,8 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
             <span>{formatTimestamp(snapshot.generatedAt)}</span>
           </div>
           <p className="phase-note">
-            Active Context compiles from claims. Claims arrive with Phase 2 consolidation — nothing
-            writes them yet, so this view stays empty for now.
+            {PHASE_2_CLAIMS_NOTE} Claim-derived sections stay empty until then; captured activity
+            and Context Index entries still appear here.
           </p>
           {snapshot.activeContext === undefined ? (
             <div className="context-preview">
@@ -78,9 +80,7 @@ function ControlPlaneShell({ snapshot }: { snapshot: ControlPlaneSnapshot }) {
           <SourceBindingsPanel snapshot={snapshot} />
           <section>
             <h2>Claims</h2>
-            <p className="phase-note">
-              Claims arrive with Phase 2 consolidation — nothing writes them yet.
-            </p>
+            <p className="phase-note">{PHASE_2_CLAIMS_NOTE}</p>
             {snapshot.claims.length === 0 ? (
               <EmptyState message="No current claims projected yet." />
             ) : (
