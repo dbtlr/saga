@@ -6,6 +6,7 @@ import { loadRuntimeConfig } from '@saga/runtime';
 import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
+import { isCompiledBinary } from './binary.js';
 import { findProjectRoot } from './init.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
@@ -159,6 +160,14 @@ export function controlPlaneCommand(env: NodeJS.ProcessEnv): { args: string[]; c
 }
 
 export function cliServiceCommand(): { args: string[]; command: string } {
+  // A compiled binary re-execs itself for the service (ADR-0044): process.execPath
+  // IS the running compiled binary, so spawn it with `service run` instead of the
+  // tsx+source path. A from-source run keeps the tsx invocation so `saga start`
+  // still spawns the service out of a checkout. The control-plane spawn stays
+  // source-only (excluded from the artifact) and is untouched.
+  if (isCompiledBinary()) {
+    return { args: ['service', 'run'], command: process.execPath };
+  }
   const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url));
   const main = fileURLToPath(new URL('main.ts', import.meta.url));
   return {
