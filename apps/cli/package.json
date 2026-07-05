@@ -1,6 +1,6 @@
 {
   "name": "@saga/cli",
-  "version": "0.0.0",
+  "version": "0.1.0-next",
   "private": true,
   "bin": {
     "saga": "./bin/saga.js"

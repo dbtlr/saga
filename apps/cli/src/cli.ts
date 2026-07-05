@@ -9,6 +9,7 @@ import { errorLine, renderOptionsFromGlobals } from './render.js';
 import { runServiceCommand } from './service.js';
 import { runSessionsCommand } from './sessions.js';
 import { runStartCommand } from './start.js';
+import { VERSION } from './version.js';
 
 export type OutputFormat = 'records' | 'json' | 'jsonl' | 'ids';
 export type ColorMode = 'auto' | 'always' | 'never';
@@ -87,8 +88,6 @@ export class UsageError extends Error {
     this.name = 'UsageError';
   }
 }
-
-export const VERSION = '0.0.0';
 
 export type CommandHandlers = {
   doctor: typeof runDoctor;
