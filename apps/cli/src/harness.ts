@@ -1133,6 +1133,44 @@ function claudeMcpConfigPath(projectRoot: string): string {
   return join(projectRoot, '.mcp.json');
 }
 
+/**
+ * Harness integration references (the Claude `.mcp.json` saga command and each
+ * installed hook shim's exec target) that still resolve to a checkout path instead
+ * of the stable install path — the harness inputs to doctor's convergence guide
+ * (ADR-0044). Only meaningful for a compiled binary; the caller gates on that. An
+ * absent integration contributes nothing. `home` overrides the stable-path base for
+ * tests.
+ */
+export function staleHarnessReferences(
+  projectRoot: string,
+  home?: string,
+): { fix: string; label: string }[] {
+  const stablePath = home === undefined ? stableBinPath() : stableBinPath(home);
+  const stale: { fix: string; label: string }[] = [];
+
+  const mcpResult = tryReadMcpConfigFile(claudeMcpConfigPath(projectRoot));
+  if (mcpResult.ok) {
+    const servers = isRecord(mcpResult.file.mcpServers) ? mcpResult.file.mcpServers : {};
+    const saga = servers.saga;
+    const command = isRecord(saga) && typeof saga.command === 'string' ? saga.command : undefined;
+    if (command !== undefined && command !== stablePath) {
+      stale.push({ fix: 'saga harness install claude', label: '.mcp.json saga command' });
+    }
+  }
+
+  for (const target of HARNESS_TARGET_ORDER) {
+    const shimPath = HARNESS_ADAPTERS[target].shimPath(projectRoot);
+    if (!existsSync(shimPath)) {
+      continue;
+    }
+    if (!readFileSync(shimPath, 'utf8').includes(stablePath)) {
+      stale.push({ fix: `saga harness install ${target}`, label: `${target} hook shim` });
+    }
+  }
+
+  return stale;
+}
+
 function sagaCliPath(): string {
   // The one saga executable every integration reference points at — the Claude
   // hook shim and .mcp.json's mcpServers.saga.command. Compiled: the single stable
