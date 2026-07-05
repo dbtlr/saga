@@ -2,6 +2,8 @@ import type { Duration } from 'effect';
 import { Cause, Effect, Exit, Fiber, Option, Schedule } from 'effect';
 import type { RuntimeFiber } from 'effect/Fiber';
 
+import { describeError } from '../errors.js';
+
 // A background job: a named unit of work run on a fixed interval. The runner
 // forks one supervised fiber per job and drives it with Schedule.spaced, which
 // gives sequential, non-overlapping runs by construction.
@@ -28,6 +30,9 @@ export type JobRunRecorder = (run: CompletedJobRun) => Effect.Effect<void, unkno
 // In-memory, honestly-null-before-first-tick view of each job's health.
 export type JobStatus = {
   consecutiveFailures: number;
+  // Consecutive times the recorder rejected while the job itself kept running;
+  // non-zero means the ledger is silently falling behind the in-memory status.
+  consecutiveRecordFailures: number;
   lastOutcome: JobOutcome | null;
   lastRunAt: Date | null;
   name: string;
@@ -46,8 +51,14 @@ export function startJobRunner(input: {
   // JS is single-threaded per fiber step, so status() reads a consistent snapshot.
   const statuses = new Map<string, JobStatus>();
   for (const job of input.jobs) {
+    if (statuses.has(job.name)) {
+      // Two jobs sharing a name would collide on one status entry and interleave
+      // their counters and retention window; reject the ambiguity at startup.
+      throw new Error(`duplicate job name: ${job.name}`);
+    }
     statuses.set(job.name, {
       consecutiveFailures: 0,
+      consecutiveRecordFailures: 0,
       lastOutcome: null,
       lastRunAt: null,
       name: job.name,
@@ -59,13 +70,7 @@ export function startJobRunner(input: {
   );
 
   return {
-    status: () =>
-      input.jobs.map((job) => {
-        const current = statuses.get(job.name);
-        return current === undefined
-          ? { consecutiveFailures: 0, lastOutcome: null, lastRunAt: null, name: job.name }
-          : { ...current };
-      }),
+    status: () => [...statuses.values()].map(copyStatus),
     stop: () => Effect.runPromise(Fiber.interruptAll(fibers)),
   };
 }
@@ -102,37 +107,47 @@ function makeJobLoop(
       });
     }
 
-    yield* recordRun({ error, finishedAt, jobName: job.name, outcome, startedAt }).pipe(
-      // A failure writing the run record must not kill the fiber: log and continue.
-      Effect.catchAllCause((cause) =>
-        Effect.sync(() => {
-          process.stderr.write(`job "${job.name}" run record failed: ${describeCause(cause)}\n`);
-        }),
-      ),
+    // A failure writing the run record must not kill the fiber; capture the exit
+    // so the loop continues, but track the failure so /health can see the ledger
+    // is falling behind while the job itself keeps succeeding.
+    const recordExit = yield* Effect.exit(
+      recordRun({ error, finishedAt, jobName: job.name, outcome, startedAt }),
     );
+    yield* Effect.sync(() => {
+      const current = statuses.get(job.name);
+      if (current === undefined) {
+        return;
+      }
+      if (Exit.isFailure(recordExit)) {
+        current.consecutiveRecordFailures += 1;
+        process.stderr.write(
+          `job "${job.name}" run record failed: ${describeCause(recordExit.cause)}\n`,
+        );
+      } else {
+        current.consecutiveRecordFailures = 0;
+      }
+    });
   });
 
   return Effect.repeat(runOnce, Schedule.spaced(job.interval)).pipe(Effect.asVoid);
 }
 
+// Hand callers a defensive copy so a status() snapshot can't mutate the live map.
+function copyStatus(status: JobStatus): JobStatus {
+  return { ...status };
+}
+
 function describeCause(cause: Cause.Cause<unknown>): string {
   const failure = Cause.failureOption(cause);
   if (Option.isSome(failure)) {
-    return describeValue(failure.value);
+    return describeError(failure.value);
   }
   const death = Cause.dieOption(cause);
   if (Option.isSome(death)) {
-    return describeValue(death.value);
+    return describeError(death.value);
   }
   if (Cause.isInterruptedOnly(cause)) {
     return 'interrupted';
   }
   return Cause.pretty(cause);
-}
-
-function describeValue(value: unknown): string {
-  if (value instanceof Error) {
-    return value.message === '' ? value.name : value.message;
-  }
-  return String(value);
 }
