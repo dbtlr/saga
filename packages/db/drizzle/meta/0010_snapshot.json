@@ -1,5 +1,5 @@
 {
-  "id": "c59ba326-3813-491f-b8d9-e9e27ee4b3ec",
+  "id": "08303010-f738-43de-9acf-547629fc7c07",
   "prevId": "82f1f695-7ceb-439c-a41b-5720b0ad5b05",
   "version": "7",
   "dialect": "postgresql",
@@ -503,12 +503,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -573,6 +572,27 @@
             },
             {
               "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consolidation_dispositions_record_ordinal_unique": {
+          "name": "consolidation_dispositions_record_ordinal_unique",
+          "columns": [
+            {
+              "expression": "record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ordinal",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -662,6 +682,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "consolidation_dispositions_ordinal_check": {
+          "name": "consolidation_dispositions_ordinal_check",
+          "value": "\"consolidation_dispositions\".\"ordinal\" >= 0"
+        },
         "consolidation_dispositions_kind_check": {
           "name": "consolidation_dispositions_kind_check",
           "value": "\"consolidation_dispositions\".\"kind\" in ('builds_on', 'refutes')"
@@ -702,6 +726,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "activity_interval_ordinal": {
           "name": "activity_interval_ordinal",
           "type": "integer",
@@ -713,13 +743,6 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -763,6 +786,27 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consolidation_evidence_pointers_finding_ordinal_unique": {
+          "name": "consolidation_evidence_pointers_finding_ordinal_unique",
+          "columns": [
+            {
+              "expression": "finding_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ordinal",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -819,6 +863,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "consolidation_evidence_pointers_ordinal_check": {
+          "name": "consolidation_evidence_pointers_ordinal_check",
+          "value": "\"consolidation_evidence_pointers\".\"ordinal\" >= 0"
+        },
         "consolidation_evidence_pointers_interval_ordinal_check": {
           "name": "consolidation_evidence_pointers_interval_ordinal_check",
           "value": "\"consolidation_evidence_pointers\".\"activity_interval_ordinal\" is null or \"consolidation_evidence_pointers\".\"activity_interval_ordinal\" >= 0"
@@ -876,13 +924,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -1096,13 +1137,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",

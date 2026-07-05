@@ -1,4 +1,7 @@
+import { DISPOSITION_KINDS, FINDING_TYPES } from '@saga/contracts';
 import { getTableName } from 'drizzle-orm';
+import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
+import type { AnyPgTable } from 'drizzle-orm/pg-core';
 import { getTableColumns } from 'drizzle-orm/utils';
 import { describe, expect, it } from 'vitest';
 
@@ -78,6 +81,39 @@ describe('schema', () => {
     expect(dispositionColumns.fromFindingId.notNull).toBe(true);
     expect(dispositionColumns.toFindingId.notNull).toBe(true);
     expect(dispositionColumns.kind.notNull).toBe(true);
+  });
+
+  it('derives consolidation check-constraint lists from the contract enums (drift lock)', () => {
+    const dialect = new PgDialect();
+    const checkLiterals = (table: AnyPgTable, name: string): string[] => {
+      const check = getTableConfig(table).checks.find((candidate) => candidate.name === name);
+      if (check === undefined) {
+        throw new Error(`check constraint ${name} not found`);
+      }
+      const rendered = dialect.sqlToQuery(check.value).sql;
+      return [...rendered.matchAll(/'([^']*)'/gu)].map((match) => match[1] ?? '');
+    };
+
+    expect(checkLiterals(consolidationFindings, 'consolidation_findings_type_check')).toStrictEqual(
+      [...FINDING_TYPES],
+    );
+    expect(
+      checkLiterals(consolidationDispositions, 'consolidation_dispositions_kind_check'),
+    ).toStrictEqual([...DISPOSITION_KINDS]);
+  });
+
+  it('orders consolidation evidence and dispositions deterministically', () => {
+    const pointerColumns = getTableColumns(consolidationEvidencePointers);
+    const dispositionColumns = getTableColumns(consolidationDispositions);
+    expect(pointerColumns.ordinal.notNull).toBe(true);
+    expect(dispositionColumns.ordinal.notNull).toBe(true);
+  });
+
+  it('carries no metadata jsonb column on the consolidation tables', () => {
+    expect('metadata' in getTableColumns(consolidationRecords)).toBe(false);
+    expect('metadata' in getTableColumns(consolidationFindings)).toBe(false);
+    expect('metadata' in getTableColumns(consolidationEvidencePointers)).toBe(false);
+    expect('metadata' in getTableColumns(consolidationDispositions)).toBe(false);
   });
 
   it('keeps workspace profile one-to-one with workspace', () => {
