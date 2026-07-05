@@ -1,9 +1,10 @@
 # Hosted Service Target
 
-Run the Saga service as a long-lived container process:
+Run the Saga service as a long-lived container process (direct exec from
+`apps/service`, so the service receives platform SIGTERM itself):
 
 ```sh
-bun run --filter '@saga/service' start
+node --import tsx src/main.ts
 ```
 
 Required runtime contract:

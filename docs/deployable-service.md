@@ -12,6 +12,8 @@ bun run --filter '@saga/service' start
 
 This runs `apps/service/src/main.ts`, loads typed runtime config, starts the HTTP service, and handles `SIGINT`/`SIGTERM` shutdown.
 
+Supervised deployments (the container CMD and the systemd unit) exec the process directly instead — `node --import tsx src/main.ts` from `apps/service` — so the service itself is the signal recipient: `bun run --filter` does not forward SIGTERM to the script child, which would break graceful shutdown under `docker stop` and `systemctl stop`.
+
 Startup validates database connectivity and migration compatibility before the health endpoint is exposed.
 
 Apply migrations before starting or upgrading the service:

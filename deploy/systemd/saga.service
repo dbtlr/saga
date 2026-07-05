@@ -5,9 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/saga
+WorkingDirectory=/opt/saga/apps/service
 EnvironmentFile=/etc/saga/saga.env
-ExecStart=/usr/bin/env bun run --cwd /opt/saga --filter @saga/service start
+# Direct exec so the service process receives systemd's SIGTERM itself;
+# `bun run --filter` supervision does not forward SIGTERM to the script child.
+ExecStart=/usr/bin/env node --import tsx src/main.ts
 Restart=on-failure
 RestartSec=5
 User=saga
