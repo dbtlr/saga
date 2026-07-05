@@ -165,6 +165,7 @@ export type SelfUpdateResult = {
 
 export type SelfUpdateDependencies = {
   arch?: NodeJS.Architecture | undefined;
+  argv1?: string | undefined;
   binPath?: string | undefined;
   fetcher?: Fetcher | undefined;
   migrate?: (() => Promise<MigrationStatus>) | undefined;
@@ -264,12 +265,14 @@ export async function runSelfUpdateCommand(
   dependencies: SelfUpdateDependencies = {},
 ): Promise<number> {
   const selection = parseSelfUpdateArgs(args);
-  const binPath = dependencies.binPath ?? process.execPath;
-  if (isRunningFromSource(binPath)) {
+  // Detect compiled-vs-source from argv[1] (fail-closed); the swap target below
+  // stays process.execPath — the running binary.
+  if (isRunningFromSource(dependencies.argv1)) {
     throw new Error(
       'self-update requires an installed saga binary; running from source — use git pull and `pnpm --filter @saga/service run migrate` instead',
     );
   }
+  const binPath = dependencies.binPath ?? process.execPath;
 
   const fetcher = dependencies.fetcher ?? manualFetch;
   const version = dependencies.version ?? VERSION;
