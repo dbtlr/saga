@@ -58,7 +58,7 @@ const config = {
         'new-cap': [
           'warn',
           {
-            capIsNewExceptions: ['Data.TaggedError', 'Context.GenericTag'],
+            capIsNewExceptions: ['Data.TaggedError', 'Context.GenericTag', 'Schema.Struct'],
             capIsNewExceptionPattern: 'Live$',
           },
         ],
