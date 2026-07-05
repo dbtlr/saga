@@ -7,7 +7,7 @@ The first deployable target is a containerized Saga service process. It keeps th
 The service package owns its deployable entrypoint:
 
 ```sh
-pnpm --filter @saga/service start
+bun run --filter '@saga/service' start
 ```
 
 This runs `apps/service/src/main.ts`, loads typed runtime config, starts the HTTP service, and handles `SIGINT`/`SIGTERM` shutdown.
@@ -17,7 +17,7 @@ Startup validates database connectivity and migration compatibility before the h
 Apply migrations before starting or upgrading the service:
 
 ```sh
-pnpm --filter @saga/service migrate
+bun run --filter '@saga/service' migrate
 ```
 
 ## Container
@@ -55,7 +55,7 @@ Run migrations explicitly before first start and before each upgrade. The unit o
 Install shape:
 
 ```sh
-sudo -u saga pnpm --dir /opt/saga --filter @saga/service migrate
+sudo -u saga bun run --cwd /opt/saga --filter @saga/service migrate
 sudo install -D -m 0644 deploy/systemd/saga.service /etc/systemd/system/saga.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now saga.service
