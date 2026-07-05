@@ -91,6 +91,13 @@ jobs:
           bun build apps/cli/src/main.ts --compile --no-compile-autoload-dotenv "${define[@]}" \
             --outfile "dist/${{ matrix.asset }}"
 
+      # Guard the installed-binary config-precedence property against a future
+      # compile that drops --no-compile-autoload-dotenv: assert the actual native
+      # artifact ignores a repo .env for the database and still honours a real
+      # export (SGA-224, ADR-0044). Runs per matrix platform on its own binary.
+      - name: Smoke compiled config precedence
+        run: node scripts/smoke-compiled-config.mjs "dist/${{ matrix.asset }}"
+
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:

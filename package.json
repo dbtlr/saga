@@ -19,6 +19,7 @@
     "format": "vp format",
     "lint": "vp lint",
     "smoke:codex-loop": "node scripts/smoke-codex-loop.mjs",
+    "smoke:compiled-config": "BIN=\"$(mktemp -d)/saga\"; bun build apps/cli/src/main.ts --compile --no-compile-autoload-dotenv --define 'SAGA_BUILD_PROFILE=\"production\"' --outfile \"$BIN\" && node scripts/smoke-compiled-config.mjs \"$BIN\"",
     "smoke:install": "node scripts/smoke-install.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "smoke:service-compose": "node scripts/smoke-service-compose.mjs",
