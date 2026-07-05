@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,7 @@ import { Context, Data, Effect, Layer } from 'effect';
 import postgres from 'postgres';
 import type { Options, PostgresType, Sql } from 'postgres';
 
+import { embeddedJournal, embeddedSql } from './embedded-migrations.js';
 import { schema } from './schema.js';
 import type { SagaSchema } from './schema.js';
 
@@ -45,7 +47,39 @@ export class DatabaseError extends Data.TaggedError('DatabaseError')<{
 
 export const DatabaseTag = Context.GenericTag<DatabaseService>('@saga/db/Database');
 
-export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL('../drizzle', import.meta.url));
+// In a from-source (Node/tsx) run the migrations live next to this module on disk.
+// In a compiled single-binary (Bun `--compile`) run there is no repo tree, so the
+// migration `.sql` files and journal are inlined via `embedded-migrations.ts` and
+// materialized to a temp dir on first use — keeping drizzle's folder-based
+// `migrate()` and the hash checks below unchanged. (SGA-221 spike.)
+function resolveMigrationsFolder(): string {
+  const onDisk = fileURLToPath(new URL('../drizzle', import.meta.url));
+  if (existsSync(join(onDisk, 'meta', '_journal.json'))) {
+    return onDisk;
+  }
+  return materializeEmbeddedMigrations();
+}
+
+function materializeEmbeddedMigrations(): string {
+  const journalText = JSON.stringify(embeddedJournal);
+  const fingerprint = createHash('sha256')
+    .update(journalText)
+    .update(Object.values(embeddedSql).join(' '))
+    .digest('hex')
+    .slice(0, 16);
+  const dir = join(tmpdir(), `saga-migrations-${fingerprint}`);
+  const metaDir = join(dir, 'meta');
+  if (!existsSync(join(metaDir, '_journal.json'))) {
+    mkdirSync(metaDir, { recursive: true });
+    writeFileSync(join(metaDir, '_journal.json'), journalText);
+    for (const [tag, sql] of Object.entries(embeddedSql)) {
+      writeFileSync(join(dir, `${tag}.sql`), sql);
+    }
+  }
+  return dir;
+}
+
+export const DEFAULT_MIGRATIONS_FOLDER = resolveMigrationsFolder();
 export const EXPECTED_MIGRATION_COUNT =
   readExpectedMigrationHashes(DEFAULT_MIGRATIONS_FOLDER).length;
 
