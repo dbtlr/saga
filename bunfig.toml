@@ -8,7 +8,9 @@
 # - minimumReleaseAgeExcludes matches package NAMES only; version-qualified
 #   entries (name@version) are silently ignored.
 [install]
-# New upstream releases must be at least 24 hours old before they resolve.
-minimumReleaseAge = 86400
-# First-party tooling releases are consumed immediately after publish.
+# New upstream releases must be at least 7 days old before they resolve —
+# this repo ships a distributable binary, so it takes the longer window.
+minimumReleaseAge = 604800
+# First-party self-published package: the publisher trust is the same npm
+# account either way, so aging it only blocks the author.
 minimumReleaseAgeExcludes = ["@dbtlr/tooling"]
