@@ -45,7 +45,7 @@ try {
     SAGA_HOME: sagaHomePath,
   };
 
-  run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
+  run('bun', ['run', '--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
   run(process.execPath, [cliBin, '--ascii', 'init', 'MCP Smoke'], { cwd: workspacePath, env });
   run(process.execPath, [cliBin, '--ascii', 'harness', 'install', 'codex'], {
     cwd: workspacePath,

@@ -37,7 +37,7 @@ try {
     DATABASE_URL: databaseUrl.toString(),
   };
 
-  run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
+  run('bun', ['run', '--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
   run(process.execPath, [cliBin, '--ascii', 'init', 'Codex Loop Smoke'], {
     cwd: workspacePath,
     env,

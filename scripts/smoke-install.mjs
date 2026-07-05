@@ -37,7 +37,7 @@ try {
     DATABASE_URL: databaseUrl.toString(),
   };
 
-  run('pnpm', ['--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
+  run('bun', ['run', '--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
   run(process.execPath, [cliBin, '--ascii', 'init', 'Install Smoke'], { cwd: workspacePath, env });
   const doctor = JSON.parse(
     run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'doctor'], {

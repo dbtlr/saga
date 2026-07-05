@@ -20,7 +20,7 @@ pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; exit 1; }
 
 TSX_CLI="$REPO/apps/cli/node_modules/tsx/dist/cli.mjs"
-# `postgres` resolves from packages/db (pnpm workspace); run as inline ESM with that cwd.
+# `postgres` resolves from packages/db (bun workspace); run as inline ESM with that cwd.
 DBADMIN() { (cd "$REPO/packages/db" && node --input-type=module -e "
 import postgres from 'postgres';
 const sql = postgres('$TEST_ADMIN_URL', { max: 1 });
