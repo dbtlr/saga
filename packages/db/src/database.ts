@@ -156,13 +156,16 @@ export function runMigrationsSafely(
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) => {
-      if (status.applied > status.expected) {
-        return Effect.fail(newerMigrationError(status));
-      }
-      if (!status.compatible) {
+      // A hash mismatch in the shared prefix is a genuine incompatibility — the
+      // applied history diverges from what this build understands. Refuse.
+      if (status.mismatch !== undefined) {
         return Effect.fail(incompatibleMigrationError(status));
       }
-      if (status.applied === status.expected) {
+      // Current or ahead: tolerate. A database ahead of this binary is benign —
+      // the migration norm is additive, so an older binary simply doesn't touch
+      // newer surface (ADR-0045, asymmetric skew). Never re-run when nothing is
+      // pending; return the observed status.
+      if (status.applied >= status.expected) {
         return Effect.succeed(status);
       }
       return runMigrations(service, migrationsFolder).pipe(
@@ -229,34 +232,33 @@ export function getMigrationStatus(
   });
 }
 
+/**
+ * At-least-current gate (ADR-0045). Version skew is tolerated asymmetrically:
+ * a database *behind* this binary refuses (self-update is the remedy), a hash
+ * *mismatch* in the shared prefix refuses (genuine incompatibility), and a
+ * database *current or ahead* succeeds — an older binary running against a
+ * newer additive schema is benign. Self-update is the one sanctioned moment
+ * DDL runs; everywhere else keeps this refuse-posture.
+ */
 export function assertMigrationsCurrent(
   service: DatabaseService,
   migrationsFolder?: string,
 ): Effect.Effect<MigrationStatus, DatabaseError> {
   return getMigrationStatus(service, migrationsFolder).pipe(
     Effect.flatMap((status) => {
-      if (status.applied > status.expected) {
-        return Effect.fail(newerMigrationError(status));
-      }
-      if (!status.compatible) {
+      if (status.mismatch !== undefined) {
         return Effect.fail(incompatibleMigrationError(status));
       }
       if (status.applied < status.expected) {
         return Effect.fail(
           new DatabaseError({
-            message: `database migrations are not current: ${String(status.applied)} applied; expected ${String(status.expected)}. Apply migrations before starting Saga.`,
+            message: `database migrations are behind this Saga build: ${String(status.applied)} applied; expected ${String(status.expected)}. Run \`saga self-update\` to converge the binary, schema, and service.`,
           }),
         );
       }
       return Effect.succeed(status);
     }),
   );
-}
-
-function newerMigrationError(status: MigrationStatus): DatabaseError {
-  return new DatabaseError({
-    message: `database has newer migrations than this Saga build understands: ${String(status.applied)} applied; expected ${String(status.expected)}. Upgrade Saga or restore a compatible backup before continuing.`,
-  });
 }
 
 function incompatibleMigrationError(status: MigrationStatus): DatabaseError {
