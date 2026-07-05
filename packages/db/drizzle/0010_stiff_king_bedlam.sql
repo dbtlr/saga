@@ -55,42 +55,80 @@ CREATE TABLE "consolidation_records" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_record_id_consolidation_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "public"."consolidation_records"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_from_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("from_finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_to_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("to_finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_record_workspace_fk" FOREIGN KEY ("record_id","workspace_id") REFERENCES "public"."consolidation_records"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_from_finding_workspace_fk" FOREIGN KEY ("from_finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_to_finding_workspace_fk" FOREIGN KEY ("to_finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_pointer_session_id_sessions_id_fk" FOREIGN KEY ("pointer_session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_finding_workspace_fk" FOREIGN KEY ("finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_pointer_session_workspace_fk" FOREIGN KEY ("pointer_session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_id_consolidation_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "public"."consolidation_records"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_workspace_fk" FOREIGN KEY ("record_id","workspace_id") REFERENCES "public"."consolidation_records"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_session_fk" FOREIGN KEY ("record_id","session_id") REFERENCES "public"."consolidation_records"("id","session_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_session_workspace_fk" FOREIGN KEY ("session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_id_activity_intervals_id_fk" FOREIGN KEY ("activity_interval_id") REFERENCES "public"."activity_intervals"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_session_workspace_fk" FOREIGN KEY ("session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_workspace_fk" FOREIGN KEY ("activity_interval_id","workspace_id") REFERENCES "public"."activity_intervals"("id","workspace_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_session_fk" FOREIGN KEY ("activity_interval_id","session_id") REFERENCES "public"."activity_intervals"("id","session_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "consolidation_dispositions_record_idx" ON "consolidation_dispositions" USING btree ("record_id");--> statement-breakpoint
-CREATE INDEX "consolidation_dispositions_to_finding_idx" ON "consolidation_dispositions" USING btree ("to_finding_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_dispositions_edge_unique" ON "consolidation_dispositions" USING btree ("from_finding_id","to_finding_id","kind");--> statement-breakpoint
-CREATE INDEX "consolidation_evidence_pointers_finding_idx" ON "consolidation_evidence_pointers" USING btree ("finding_id");--> statement-breakpoint
-CREATE INDEX "consolidation_evidence_pointers_pointer_session_idx" ON "consolidation_evidence_pointers" USING btree ("pointer_session_id");--> statement-breakpoint
-CREATE INDEX "consolidation_findings_record_idx" ON "consolidation_findings" USING btree ("record_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_findings_id_workspace_unique" ON "consolidation_findings" USING btree ("id","workspace_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_findings_id_session_unique" ON "consolidation_findings" USING btree ("id","session_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_findings_record_ordinal_unique" ON "consolidation_findings" USING btree ("record_id","ordinal");--> statement-breakpoint
-CREATE INDEX "consolidation_records_session_idx" ON "consolidation_records" USING btree ("session_id");--> statement-breakpoint
-CREATE INDEX "consolidation_records_workspace_created_idx" ON "consolidation_records" USING btree ("workspace_id","created_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_records_id_workspace_unique" ON "consolidation_records" USING btree ("id","workspace_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "consolidation_records_id_session_unique" ON "consolidation_records" USING btree ("id","session_id");--> statement-breakpoint
+CREATE INDEX "consolidation_dispositions_record_idx" ON "consolidation_dispositions" USING btree ("record_id");
+--> statement-breakpoint
+CREATE INDEX "consolidation_dispositions_to_finding_idx" ON "consolidation_dispositions" USING btree ("to_finding_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_dispositions_edge_unique" ON "consolidation_dispositions" USING btree ("from_finding_id","to_finding_id","kind");
+--> statement-breakpoint
+CREATE INDEX "consolidation_evidence_pointers_finding_idx" ON "consolidation_evidence_pointers" USING btree ("finding_id");
+--> statement-breakpoint
+CREATE INDEX "consolidation_evidence_pointers_pointer_session_idx" ON "consolidation_evidence_pointers" USING btree ("pointer_session_id");
+--> statement-breakpoint
+CREATE INDEX "consolidation_findings_record_idx" ON "consolidation_findings" USING btree ("record_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_findings_id_workspace_unique" ON "consolidation_findings" USING btree ("id","workspace_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_findings_id_session_unique" ON "consolidation_findings" USING btree ("id","session_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_findings_record_ordinal_unique" ON "consolidation_findings" USING btree ("record_id","ordinal");
+--> statement-breakpoint
+CREATE INDEX "consolidation_records_session_idx" ON "consolidation_records" USING btree ("session_id");
+--> statement-breakpoint
+CREATE INDEX "consolidation_records_workspace_created_idx" ON "consolidation_records" USING btree ("workspace_id","created_at");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_records_id_workspace_unique" ON "consolidation_records" USING btree ("id","workspace_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "consolidation_records_id_session_unique" ON "consolidation_records" USING btree ("id","session_id");
+--> statement-breakpoint
 CREATE UNIQUE INDEX "consolidation_records_activity_interval_unique" ON "consolidation_records" USING btree ("activity_interval_id");
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_record_id_consolidation_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "public"."consolidation_records"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_from_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("from_finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_to_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("to_finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_record_workspace_fk" FOREIGN KEY ("record_id","workspace_id") REFERENCES "public"."consolidation_records"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_from_finding_workspace_fk" FOREIGN KEY ("from_finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_dispositions" ADD CONSTRAINT "consolidation_dispositions_to_finding_workspace_fk" FOREIGN KEY ("to_finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_finding_id_consolidation_findings_id_fk" FOREIGN KEY ("finding_id") REFERENCES "public"."consolidation_findings"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_pointer_session_id_sessions_id_fk" FOREIGN KEY ("pointer_session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_finding_workspace_fk" FOREIGN KEY ("finding_id","workspace_id") REFERENCES "public"."consolidation_findings"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_evidence_pointers" ADD CONSTRAINT "consolidation_evidence_pointers_pointer_session_workspace_fk" FOREIGN KEY ("pointer_session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_id_consolidation_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "public"."consolidation_records"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_workspace_fk" FOREIGN KEY ("record_id","workspace_id") REFERENCES "public"."consolidation_records"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_record_session_fk" FOREIGN KEY ("record_id","session_id") REFERENCES "public"."consolidation_records"("id","session_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_findings" ADD CONSTRAINT "consolidation_findings_session_workspace_fk" FOREIGN KEY ("session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."sessions"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_id_activity_intervals_id_fk" FOREIGN KEY ("activity_interval_id") REFERENCES "public"."activity_intervals"("id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_session_workspace_fk" FOREIGN KEY ("session_id","workspace_id") REFERENCES "public"."sessions"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_workspace_fk" FOREIGN KEY ("activity_interval_id","workspace_id") REFERENCES "public"."activity_intervals"("id","workspace_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "consolidation_records" ADD CONSTRAINT "consolidation_records_activity_interval_session_fk" FOREIGN KEY ("activity_interval_id","session_id") REFERENCES "public"."activity_intervals"("id","session_id") ON DELETE cascade ON UPDATE no action;
