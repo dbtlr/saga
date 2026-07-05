@@ -15,9 +15,12 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
-const bin = process.argv[2];
+// Resolve to an absolute path before spawning: the smoke overrides cwd to a
+// temp dir, so a repo-relative bin path (as CI passes, `dist/saga-...`) would
+// otherwise resolve against the temp dir and ENOENT.
+const bin = process.argv[2] === undefined ? undefined : resolve(process.argv[2]);
 if (bin === undefined || bin === '') {
   console.error('usage: node scripts/smoke-compiled-config.mjs <path-to-compiled-saga>');
   process.exit(1);

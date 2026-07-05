@@ -34,7 +34,7 @@ try {
 
   const env = {
     ...process.env,
-    DATABASE_URL: databaseUrl.toString(),
+    SAGA_DATABASE_URL: databaseUrl.toString(),
   };
 
   run('bun', ['run', '--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
@@ -147,7 +147,7 @@ function assertBinding(value) {
     throw new Error('binding is missing sourceBinding.id');
   }
 
-  if (value?.service?.databaseUrl !== 'env:DATABASE_URL') {
+  if (value?.service?.databaseUrl !== 'environment') {
     throw new Error(`unexpected binding service config: ${JSON.stringify(value.service)}`);
   }
 }
