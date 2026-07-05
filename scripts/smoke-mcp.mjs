@@ -41,7 +41,7 @@ try {
   sagaHomePath = realpathSync(mkdtempSync(join(tmpdir(), 'saga-mcp-smoke-home-')));
   const env = {
     ...process.env,
-    DATABASE_URL: databaseUrl.toString(),
+    SAGA_DATABASE_URL: databaseUrl.toString(),
     SAGA_HOME: sagaHomePath,
   };
 

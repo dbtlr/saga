@@ -34,7 +34,7 @@ try {
 
   const env = {
     ...process.env,
-    DATABASE_URL: databaseUrl.toString(),
+    SAGA_DATABASE_URL: databaseUrl.toString(),
   };
 
   run('bun', ['run', '--filter', '@saga/service', 'migrate'], { cwd: repoRoot, env });
