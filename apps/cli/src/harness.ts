@@ -17,7 +17,7 @@ import {
   registerSourceBinding,
 } from '@saga/db';
 import type { RawEvent } from '@saga/db';
-import { loadRuntimeConfig } from '@saga/runtime';
+import { DATABASE_URL_ENV, loadRuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import {
@@ -620,8 +620,8 @@ async function verifyHarnessActivation(input: {
     if (config.databaseUrl === undefined) {
       return {
         checkedAt: checkedAt.toISOString(),
-        detail: 'DATABASE_URL is not set; activation verification cannot query raw_events',
-        nextStep: `set DATABASE_URL in this workspace, ensure migrations are current, then run saga harness status ${input.status.target} again`,
+        detail: `${DATABASE_URL_ENV} is not set; activation verification cannot query raw_events`,
+        nextStep: `set ${DATABASE_URL_ENV} in this workspace, ensure migrations are current, then run saga harness status ${input.status.target} again`,
         recentWithinHours: ACTIVATION_RECENT_WINDOW_HOURS,
         sessionStartSources: {
           observed: [],

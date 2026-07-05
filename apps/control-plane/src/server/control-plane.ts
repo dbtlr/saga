@@ -16,7 +16,7 @@ import {
   workspaces,
 } from '@saga/db';
 import type { CurrentClaim, DatabaseService, RawEvent, SourceBinding } from '@saga/db';
-import { findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
+import { DATABASE_URL_ENV, findProjectRoot, loadRuntimeConfig } from '@saga/runtime';
 import type { SagaEnvironment } from '@saga/runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
@@ -173,7 +173,10 @@ export async function readControlPlaneSnapshot(input: { cwd?: string } = {}) {
       generatedAt,
       issues: [
         ...configIssues,
-        { key: 'DATABASE_URL', message: 'Set DATABASE_URL before reading workspace memory.' },
+        {
+          key: DATABASE_URL_ENV,
+          message: `Set ${DATABASE_URL_ENV} before reading workspace memory.`,
+        },
       ],
       profile: undefined,
       projectRoot,

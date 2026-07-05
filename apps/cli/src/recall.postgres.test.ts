@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+import { restoreDatabaseUrlEnv, setDatabaseUrlEnv } from './database-url-env.js';
 import { initProject } from './init.js';
 import { runRecallCommand } from './recall.js';
 import { runSessionsCommand } from './sessions.js';
@@ -28,18 +29,13 @@ describePostgres('recall CLI postgres integration', () => {
     await adminSql.unsafe(`create database "${databaseName}"`);
     const url = new URL(databaseUrl ?? '');
     url.pathname = `/${databaseName}`;
-    previousDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = url.toString();
+    previousDatabaseUrl = setDatabaseUrlEnv(url.toString());
     projectRoot = mkdtempSync(join(tmpdir(), 'saga-recall-cli-'));
     await initProject({ cwd: projectRoot, handle: 'Recall CLI' });
   });
 
   afterAll(async () => {
-    if (previousDatabaseUrl === undefined) {
-      delete process.env.DATABASE_URL;
-    } else {
-      process.env.DATABASE_URL = previousDatabaseUrl;
-    }
+    restoreDatabaseUrlEnv(previousDatabaseUrl);
     await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
     await adminSql.end({ timeout: 5 });
   });

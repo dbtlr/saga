@@ -9,7 +9,7 @@ node --import tsx src/main.ts
 
 Required runtime contract:
 
-- Inject `DATABASE_URL` or `DATABASE_URL_FILE`.
+- Inject `SAGA_DATABASE_URL` or `SAGA_DATABASE_URL_FILE`.
 - Bind `SAGA_SERVICE_HOST=0.0.0.0`.
 - Expose `SAGA_SERVICE_PORT`, default `4766`.
 - Inject optional provider/API secrets through direct environment variables or `_FILE` indirection.

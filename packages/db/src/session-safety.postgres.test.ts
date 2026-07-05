@@ -26,7 +26,7 @@ import { expandRecallContext, searchSessionRecall } from './session-recall.js';
 import { getSessionDetail, listRecentSessionRecords } from './session-records.js';
 import { deleteSessionSafety, redactSessionSafety } from './session-safety.js';
 
-const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.SAGA_DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres('session safety', () => {

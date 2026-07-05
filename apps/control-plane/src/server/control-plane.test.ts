@@ -67,7 +67,7 @@ describe('readControlPlaneSnapshot', () => {
     expect(snapshot.issues).toStrictEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          key: 'DATABASE_URL',
+          key: 'SAGA_DATABASE_URL',
         }),
       ]),
     );

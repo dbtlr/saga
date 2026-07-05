@@ -28,4 +28,4 @@ The local test URL is:
 postgres://saga:saga@localhost:55432/saga_test
 ```
 
-`test:postgres` still accepts `SAGA_TEST_DATABASE_URL` or `DATABASE_URL` for other Postgres providers.
+`test:postgres` still accepts `SAGA_TEST_DATABASE_URL` or `SAGA_DATABASE_URL` for other Postgres providers.

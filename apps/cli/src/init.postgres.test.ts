@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+import { restoreDatabaseUrlEnv, setDatabaseUrlEnv } from './database-url-env.js';
 import { BINDING_FILE_NAME, initProject } from './init.js';
 
 const databaseUrl = process.env.SAGA_TEST_DATABASE_URL;
@@ -22,16 +23,11 @@ describePostgres('initProject postgres integration', () => {
     const url = new URL(databaseUrl ?? '');
     url.pathname = `/${databaseName}`;
     testDatabaseUrl = url.toString();
-    previousDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = testDatabaseUrl;
+    previousDatabaseUrl = setDatabaseUrlEnv(testDatabaseUrl);
   });
 
   afterAll(async () => {
-    if (previousDatabaseUrl === undefined) {
-      delete process.env.DATABASE_URL;
-    } else {
-      process.env.DATABASE_URL = previousDatabaseUrl;
-    }
+    restoreDatabaseUrlEnv(previousDatabaseUrl);
     await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
     await adminSql.end({ timeout: 5 });
   });
@@ -110,7 +106,7 @@ describePostgres('initProject postgres integration', () => {
     }
   });
 
-  test('binds via the installation config when the env provides no DATABASE_URL', async () => {
+  test('binds via the installation config when the env provides no SAGA_DATABASE_URL', async () => {
     if (testDatabaseUrl === undefined) {
       throw new Error('test database URL was not initialized');
     }
@@ -151,7 +147,7 @@ describePostgres('initProject postgres integration', () => {
     await expect(
       initProject({ cwd: projectRoot, runtimeConfig: { env: {}, homeDir } }),
     ).rejects.toThrow(
-      `DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ~/.saga/config.json`,
+      `SAGA_DATABASE_URL is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ~/.saga/config.json`,
     );
   });
 });
