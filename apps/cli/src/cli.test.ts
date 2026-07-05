@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CommandHandlers } from './cli.js';
 import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from './cli.js';
+import { VERSION } from './version.js';
 
 function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandlers {
   return {
@@ -96,7 +97,7 @@ describe('run', () => {
   it('prints version', async () => {
     const output: string[] = [];
     await expect(run(['--version'], (text) => output.push(text))).resolves.toBe(0);
-    expect(output).toStrictEqual(['saga 0.0.0']);
+    expect(output).toStrictEqual([`saga ${VERSION}`]);
   });
 
   it('reports unknown commands as usage errors', async () => {
