@@ -6,6 +6,7 @@ import { runInit } from './init.js';
 import { runMcpCommand } from './mcp.js';
 import { runRecallCommand } from './recall.js';
 import { errorLine, renderOptionsFromGlobals } from './render.js';
+import { runSelfUpdateCommand } from './self-update.js';
 import { runServiceCommand } from './service.js';
 import { runSessionsCommand } from './sessions.js';
 import { runStartCommand } from './start.js';
@@ -59,6 +60,7 @@ export const COMMANDS = {
     description: 'import and inspect raw session records',
     subcommands: ['delete', 'import', 'recent', 'redact', 'show'],
   },
+  'self-update': { description: 'download, verify, and install the latest saga binary' },
 } as const satisfies Record<string, CommandDefinition>;
 
 export type CommandName = keyof typeof COMMANDS;
@@ -97,6 +99,7 @@ export type CommandHandlers = {
   init: typeof runInit;
   mcp: typeof runMcpCommand;
   recall: typeof runRecallCommand;
+  selfUpdate: typeof runSelfUpdateCommand;
   service: typeof runServiceCommand;
   sessions: typeof runSessionsCommand;
   start: typeof runStartCommand;
@@ -110,6 +113,7 @@ export const DEFAULT_HANDLERS: CommandHandlers = {
   init: runInit,
   mcp: runMcpCommand,
   recall: runRecallCommand,
+  selfUpdate: runSelfUpdateCommand,
   service: runServiceCommand,
   sessions: runSessionsCommand,
   start: runStartCommand,
@@ -132,6 +136,10 @@ options:
       --ascii          disable color/icons
   -h, --help           show help
       --version        show version
+
+self-update options:
+      --next           track the prerelease channel
+      --tag <tag>      pin a specific release tag
 `;
 
 export function getCommand(name: string): CommandDefinition | undefined {
@@ -296,6 +304,12 @@ export async function run(
     }
     if (parsed.command === 'start') {
       return handlers.start(parsed.args, renderOptions, write);
+    }
+    if (parsed.command === 'self-update') {
+      // Await so a rejection (refuse-from-source, download failure) is caught by
+      // this function's try/catch and rendered as a clean error line rather than
+      // escaping as an unhandled rejection.
+      return await handlers.selfUpdate(parsed.args, renderOptions, write);
     }
 
     write(`${parsed.command} is not implemented yet`);
