@@ -137,4 +137,34 @@ describe('startJobRunner', () => {
       await runner.stop();
     }
   });
+
+  it('surfaces a rising record-failure counter while lastOutcome stays succeeded', async () => {
+    const runner = startJobRunner({
+      jobs: [{ interval: TICK, name: 'counter', run: Effect.void }],
+      recordRun: () => Effect.fail(new Error('recorder down')),
+    });
+
+    try {
+      // The job keeps succeeding, but the ledger never fills: the record-failure
+      // counter must climb so /health can see the recorder is broken.
+      await waitUntil(() => (runner.status()[0]?.consecutiveRecordFailures ?? 0) >= 3);
+      const status = runner.status()[0];
+      expect(status?.lastOutcome).toBe('succeeded');
+      expect(status?.consecutiveRecordFailures).toBeGreaterThanOrEqual(3);
+    } finally {
+      await runner.stop();
+    }
+  });
+
+  it('throws when two jobs share a name', () => {
+    expect(() =>
+      startJobRunner({
+        jobs: [
+          { interval: TICK, name: 'dupe', run: Effect.void },
+          { interval: TICK, name: 'dupe', run: Effect.void },
+        ],
+        recordRun: recordInto([]),
+      }),
+    ).toThrow(/duplicate job name: dupe/);
+  });
 });
