@@ -11,8 +11,8 @@
 //     indexes can exist — the shipping column is a dimensionless `vector`).
 //
 // This is the replayable indexing/recall-validation harness SGA-153 reuses.
-// Run: SAGA_BENCH=1 SAGA_TEST_DATABASE_URL=postgres://saga:saga@localhost:55432/saga_test \
-//        pnpm --filter @saga/db exec vitest run src/session-recall-bench.postgres.test.ts
+// Run: cd packages/db && SAGA_BENCH=1 SAGA_TEST_DATABASE_URL=postgres://saga:saga@localhost:55432/saga_test \
+//        bunx vitest run src/session-recall-bench.postgres.test.ts
 
 import { writeFileSync } from 'node:fs';
 

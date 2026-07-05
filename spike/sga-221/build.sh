@@ -45,7 +45,7 @@ TS
 # process.argv[2] is resolved relative to the temp file's URL; pass a path back to REPO.
 ( cd "$REPO" && bun run "$GEN" "file://$REPO/" )
 rm -f "$GEN"
-( cd "$REPO" && pnpm run format >/dev/null 2>&1 || true )
+( cd "$REPO" && bun run format >/dev/null 2>&1 || true )
 
 echo "[2/2] bun build --compile"
 ( cd "$REPO" && bun build --compile apps/cli/src/main.ts --outfile "$HERE/saga" )
