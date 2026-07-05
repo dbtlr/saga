@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolveCodexAuth } from './codex-auth.js';
 import { installationConfigLocation } from './embedding-policy.js';
 import type { EmbeddingPolicyResolutionOptions } from './embedding-policy.js';
+import {
+  isRecord,
+  optionalString,
+  readInstallationConfig,
+  readOpenAiApiKeyFromEnv,
+} from './internal/credential-io.js';
 
 // Where the OpenAI inference API key was sourced from, highest precedence first: an explicit
 // environment variable, then the installation config's inference section, then the read-only
@@ -40,7 +46,7 @@ export function resolveInferenceApiKey(
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
   const issues: string[] = [];
 
-  const fromEnv = readEnvApiKey(env, readFile);
+  const fromEnv = readOpenAiApiKeyFromEnv(env, readFile);
   if (fromEnv.status === 'found') {
     return {
       apiKey: fromEnv.apiKey,
@@ -90,42 +96,6 @@ export function resolveInferenceApiKey(
   return { detail: [...issues, codex.detail].join('; '), status: 'unavailable' };
 }
 
-function readEnvApiKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string): TierResult {
-  const direct = optionalString(env.OPENAI_API_KEY);
-  if (direct !== undefined) {
-    return {
-      apiKey: direct,
-      detail: 'OPENAI_API_KEY present in the environment',
-      displayPath: 'OPENAI_API_KEY',
-      status: 'found',
-    };
-  }
-
-  const filePath = optionalString(env.OPENAI_API_KEY_FILE);
-  if (filePath === undefined) {
-    return { status: 'absent' };
-  }
-  let contents: string;
-  try {
-    contents = readFile(filePath);
-  } catch (error) {
-    return {
-      issue: `OPENAI_API_KEY_FILE could not be read: ${errorMessage(error)}`,
-      status: 'issue',
-    };
-  }
-  const value = optionalString(contents);
-  if (value === undefined) {
-    return { issue: `OPENAI_API_KEY_FILE points at an empty file (${filePath})`, status: 'issue' };
-  }
-  return {
-    apiKey: value,
-    detail: `OPENAI_API_KEY read from ${filePath} (OPENAI_API_KEY_FILE)`,
-    displayPath: 'OPENAI_API_KEY_FILE',
-    status: 'found',
-  };
-}
-
 function readInstallationApiKey(
   env: NodeJS.ProcessEnv,
   options: InferenceCredentialResolutionOptions,
@@ -136,25 +106,15 @@ function readInstallationApiKey(
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
   });
 
-  let rawConfig: string;
-  try {
-    rawConfig = readFile(location.path);
-  } catch (error) {
-    return isMissingFileError(error)
-      ? { status: 'absent' }
-      : {
-          issue: `could not read ${location.displayPath}: ${errorMessage(error)}`,
-          status: 'issue',
-        };
+  const read = readInstallationConfig(location, readFile);
+  if (read.status === 'missing') {
+    return { status: 'absent' };
+  }
+  if (read.status === 'unreadable' || read.status === 'malformed') {
+    return { issue: read.message, status: 'issue' };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawConfig) as unknown;
-  } catch {
-    return { issue: `could not parse ${location.displayPath}`, status: 'issue' };
-  }
-
+  const parsed = read.value;
   if (!isRecord(parsed) || !isRecord(parsed.inference)) {
     return { status: 'absent' };
   }
@@ -175,21 +135,4 @@ function readInstallationApiKey(
     displayPath: location.displayPath,
     status: 'found',
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function optionalString(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed === '' ? undefined : trimmed;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
