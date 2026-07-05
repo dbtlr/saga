@@ -62,7 +62,7 @@ export async function doctorProject(
   const projectRoot = findProjectRoot(input.cwd ?? process.cwd());
   const checks: DoctorCheck[] = [
     checkNodeVersion(projectRoot),
-    checkPnpm(projectRoot),
+    checkBun(projectRoot),
     checkBinding(projectRoot),
   ];
 
@@ -110,10 +110,10 @@ export function checkNodeVersion(
   };
 }
 
-function checkPnpm(projectRoot: string): DoctorCheck {
-  const engine = readPackageEngines(projectRoot).pnpm;
+function checkBun(projectRoot: string): DoctorCheck {
+  const engine = readPackageEngines(projectRoot).bun;
   try {
-    const version = execFileSync('pnpm', ['--version'], {
+    const version = execFileSync('bun', ['--version'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
@@ -122,21 +122,21 @@ function checkPnpm(projectRoot: string): DoctorCheck {
         engine === undefined
           ? `${version}; no package.json engine declared`
           : `${version}; requires ${engine}`,
-      label: 'pnpm',
+      label: 'bun',
       status: engine === undefined || satisfiesEngineRange(version, engine) ? 'ok' : 'fail',
     };
   } catch {
     return {
-      detail: 'pnpm was not found on PATH',
-      label: 'pnpm',
+      detail: 'bun was not found on PATH',
+      label: 'bun',
       status: 'fail',
     };
   }
 }
 
 function readPackageEngines(projectRoot: string): {
+  bun?: string | undefined;
   node?: string | undefined;
-  pnpm?: string | undefined;
 } {
   try {
     // Boundary: package.json is external JSON; assert only a maximally-loose
@@ -144,13 +144,13 @@ function readPackageEngines(projectRoot: string): {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- external JSON; leaves are unknown and type-checked below
     const packageJson = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')) as {
       engines?: {
+        bun?: unknown;
         node?: unknown;
-        pnpm?: unknown;
       };
     };
     return {
+      bun: typeof packageJson.engines?.bun === 'string' ? packageJson.engines.bun : undefined,
       node: typeof packageJson.engines?.node === 'string' ? packageJson.engines.node : undefined,
-      pnpm: typeof packageJson.engines?.pnpm === 'string' ? packageJson.engines.pnpm : undefined,
     };
   } catch {
     return {};
