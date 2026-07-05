@@ -13,6 +13,7 @@ function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandl
     init: async () => 'init',
     mcp: async () => 'mcp',
     recall: async () => 'recall',
+    selfUpdate: async () => 0,
     service: async () => 'service',
     sessions: async () => 'sessions',
     start: async () => 0,
@@ -85,6 +86,7 @@ describe('run', () => {
       'index',
       'recall',
       'sessions',
+      'self-update',
     ]);
   });
 
