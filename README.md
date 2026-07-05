@@ -12,7 +12,7 @@ context, and exposes memory through MCP, CLI, hooks, and a web UI.
 Start the local Postgres dependency:
 
 ```sh
-pnpm deps:up
+bun run deps:up
 ```
 
 Create a local environment file from the example:
@@ -24,15 +24,15 @@ cp .env.example .env.local
 Then initialize or inspect the workspace:
 
 ```sh
-pnpm --filter @saga/cli saga init
-pnpm --filter @saga/cli saga doctor
+bun run --filter '@saga/cli' saga init
+bun run --filter '@saga/cli' saga doctor
 ```
 
 Search captured session memory and expand a segment hit:
 
 ```sh
-pnpm --filter @saga/cli saga recall search "what changed in recall"
-pnpm --filter @saga/cli saga recall show <segment-id> --window 2
+bun run --filter '@saga/cli' saga recall search "what changed in recall"
+bun run --filter '@saga/cli' saga recall show <segment-id> --window 2
 ```
 
 `recall show` expands context by **Turn** window: `--window N` returns up to N normalized Turns
@@ -44,7 +44,7 @@ listed under a `Warnings` block rather than being replaced with indexed text.
 Stop dependencies when finished:
 
 ```sh
-pnpm deps:down
+bun run deps:down
 ```
 
 Build the deployable service container target:

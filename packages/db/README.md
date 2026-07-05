@@ -7,19 +7,19 @@ Database schema, migrations, and Postgres-backed persistence services for Saga.
 Start a local test database:
 
 ```sh
-pnpm --filter @saga/db run db:test:up
+bun run --filter '@saga/db' db:test:up
 ```
 
 Run the real Postgres integration test:
 
 ```sh
-pnpm --filter @saga/db run test:postgres:local
+bun run --filter '@saga/db' test:postgres:local
 ```
 
 Stop the database and remove its volume:
 
 ```sh
-pnpm --filter @saga/db run db:test:down
+bun run --filter '@saga/db' db:test:down
 ```
 
 The local test URL is:
