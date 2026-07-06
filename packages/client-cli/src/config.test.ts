@@ -29,7 +29,7 @@ describe('loadClientConfig', () => {
   it('resolves the new client keys from a config file', () => {
     const home = tempHome();
     writeConfig(home, {
-      auth_token: 'secret-token',
+      authToken: 'secret-token',
       hostname: 'laptop.local',
       service: { url: 'https://saga.example.com' },
       spool: { dir: '/var/spool/saga' },
@@ -113,6 +113,25 @@ describe('resolveWorkspaceBinding', () => {
       binding: { workspaceId: 'ws-1' },
       source: 'client-config',
     });
+  });
+
+  it('matches a workspaces-map key regardless of trailing-slash normalization', () => {
+    const home = tempHome();
+    writeConfig(home, {
+      workspaces: { '/checkout': { workspaceId: 'ws-1' } },
+    });
+    expect(resolveWorkspaceBinding('/checkout/', { homeDir: home })).toStrictEqual({
+      binding: { workspaceId: 'ws-1' },
+      source: 'client-config',
+    });
+  });
+
+  it('treats a malformed .saga.local.json as no binding rather than throwing', () => {
+    const home = tempHome();
+    writeConfig(home, { workspaces: {} });
+    const checkout = mkdtempSync(join(tmpdir(), 'saga-client-checkout-'));
+    writeFileSync(join(checkout, '.saga.local.json'), '{ not json');
+    expect(resolveWorkspaceBinding(checkout, { homeDir: home })).toStrictEqual({ source: 'none' });
   });
 
   it('falls back to .saga.local.json on a workspaces-map miss', () => {

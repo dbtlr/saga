@@ -75,7 +75,7 @@ export function loadClientConfig(options: ClientConfigResolutionOptions = {}): C
   if (service !== undefined) {
     config.service = service;
   }
-  const authToken = optionalString(parsed.auth_token);
+  const authToken = optionalString(parsed.authToken);
   if (authToken !== undefined) {
     config.authToken = authToken;
   }
@@ -114,11 +114,20 @@ export function resolveWorkspaceBinding(
   options: ClientConfigResolutionOptions & { config?: ClientConfig } = {},
 ): ResolvedWorkspaceBinding {
   const config = options.config ?? loadClientConfig(options);
-  const hit = config.workspaces[checkoutPath];
+  const hit = config.workspaces[resolve(checkoutPath)];
   if (hit !== undefined) {
     return { binding: hit, source: 'client-config' };
   }
-  const binding = readBindingFile(checkoutPath);
+  // readBindingFile throws on a malformed .saga.local.json (the established
+  // semantic for apps/cli callers); the client resolver treats a malformed file
+  // as a miss rather than propagating, so a broken per-repo file never crashes
+  // a lookup.
+  let binding: WorkspaceBindingFile | undefined;
+  try {
+    binding = readBindingFile(checkoutPath);
+  } catch {
+    return { source: 'none' };
+  }
   if (binding !== undefined) {
     return { binding, source: 'binding-file' };
   }
@@ -149,7 +158,10 @@ function readWorkspaces(value: unknown): Record<string, ClientWorkspaceBinding> 
   for (const [path, entry] of Object.entries(value)) {
     const binding = readWorkspaceBinding(entry);
     if (binding !== undefined) {
-      workspaces[path] = binding;
+      // Normalize keys with path.resolve so lookups (also resolve()-normalized in
+      // resolveWorkspaceBinding) are symmetric — a trailing slash or `.`/`..`
+      // segment on either side must not cause a miss.
+      workspaces[resolve(path)] = binding;
     }
   }
   return workspaces;
