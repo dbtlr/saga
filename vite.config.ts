@@ -109,6 +109,34 @@ const config = {
           uiPackages,
           'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',
         ),
+        // Client boundary (ADR-0048): client-cli ships as a bare binary and must
+        // never reach the db tier. no-restricted-imports does not merge across
+        // overlapping overrides — the last matching override for a file wins and
+        // replaces — so this must sit after the packages/** UI-isolation entry to
+        // take effect, and it re-states the UI ban (its own patterns entry) so
+        // client-cli keeps that restriction rather than losing it to this replace.
+        {
+          files: ['packages/client-cli/**'],
+          rules: {
+            'no-restricted-imports': [
+              'error',
+              {
+                patterns: [
+                  {
+                    group: [...sagaPackage('db'), ...relativeLayer('db')],
+                    message:
+                      'Client boundary (ADR-0048): client-cli ships as a bare binary and must never reach the db tier.',
+                  },
+                  {
+                    group: uiPackages,
+                    message:
+                      'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
         {
           files: ['**/*.test.ts', '**/*.test.tsx'],
           rules: {
