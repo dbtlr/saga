@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { BINDING_FILE_NAME } from '@saga/client-cli';
+import type { WorkspaceBindingFile } from '@saga/client-cli';
 import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
 import type { RegisterWorkspaceResult } from '@saga/db';
 import {
@@ -13,7 +15,7 @@ import {
   installationConfigLocation,
   loadRuntimeConfig,
 } from '@saga/runtime';
-import type { DatabaseUrlSource, LoadRuntimeConfigOptions } from '@saga/runtime';
+import type { LoadRuntimeConfigOptions } from '@saga/runtime';
 import { Effect } from 'effect';
 
 import { formatCommandOutput } from './output.js';
@@ -21,57 +23,16 @@ import { recordBlock } from './render.js';
 import type { RenderOptions } from './render.js';
 
 export { findProjectRoot } from '@saga/runtime';
-
-export const BINDING_FILE_NAME = '.saga.local.json';
+// The .saga.local.json read path now lives in @saga/client-cli (the client tier
+// owns binding reads); re-exported here so existing importers of ./init.js are
+// unaffected. Write logic (writeBindingFile, host identity) stays below.
+export { BINDING_FILE_NAME, bindingPathFor, readBindingFile } from '@saga/client-cli';
+export type { WorkspaceBindingFile } from '@saga/client-cli';
 
 export type InitResult = {
   bindingPath: string;
   projectRoot: string;
   registration: RegisterWorkspaceResult;
-};
-
-type WorkspaceHarnessTarget = 'codex' | 'claude';
-type WorkspaceHarnessSourceUri =
-  | 'claude://local'
-  | 'codex://local'
-  | `claude://host/${string}`
-  | `codex://host/${string}`;
-
-type WorkspaceHarnessBinding = {
-  hookCommand: string;
-  hookTrust: 'requires-review';
-  hooksPath: string;
-  installedAt: string;
-  sourceBindingId: string;
-  sourceUri: WorkspaceHarnessSourceUri;
-  target: WorkspaceHarnessTarget;
-};
-
-export type WorkspaceBindingFile = {
-  harnesses?: Partial<Record<WorkspaceHarnessTarget, WorkspaceHarnessBinding>>;
-  host?: {
-    generatedAt: string;
-    id: string;
-    label: string;
-  };
-  project: {
-    gitRemote: string | undefined;
-    root: string;
-  };
-  schemaVersion: 1;
-  service: {
-    // The name-free provenance of where the workspace's database URL resolved
-    // from (config.databaseUrlSource), not the variable name. Pre-release local
-    // binding (ADR-0020), so recording the enum here is a free schema change.
-    databaseUrl: DatabaseUrlSource;
-  };
-  sourceBinding: {
-    id: string;
-  };
-  workspace: {
-    handle: string;
-    id: string;
-  };
 };
 
 export type WorkspaceBindingFileWithHost = WorkspaceBindingFile & {
@@ -225,21 +186,4 @@ export function writeBindingFile(projectRoot: string, binding: WorkspaceBindingF
   const bindingPath = join(projectRoot, BINDING_FILE_NAME);
   writeFileSync(bindingPath, `${JSON.stringify(ensureLocalHostBinding(binding), null, 2)}\n`);
   return bindingPath;
-}
-
-export function bindingPathFor(projectRoot: string): string {
-  return join(projectRoot, BINDING_FILE_NAME);
-}
-
-export function readBindingFile(projectRoot: string): WorkspaceBindingFile | undefined {
-  const bindingPath = bindingPathFor(projectRoot);
-  if (!existsSync(bindingPath)) {
-    return undefined;
-  }
-  // Boundary: the binding file is written and owned by saga (writeBindingFile);
-  // JSON.parse yields `any`, and callers defensively re-check fields (host,
-  // harnesses, sourceBindingId) before use, so trusting the on-disk shape here is
-  // the correct seam.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- trusted on-disk binding shape; callers re-validate fields
-  return JSON.parse(readFileSync(bindingPath, 'utf8')) as WorkspaceBindingFile;
 }
