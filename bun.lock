@@ -16,11 +16,12 @@
     },
     "apps/cli": {
       "name": "@saga/cli",
-      "version": "0.0.0",
+      "version": "0.1.0-next",
       "bin": {
         "saga": "./bin/saga.js",
       },
       "dependencies": {
+        "@saga/client-cli": "workspace:*",
         "@saga/collectors": "workspace:*",
         "@saga/db": "workspace:*",
         "@saga/mcp": "workspace:*",
@@ -70,6 +71,13 @@
     "packages/claims": {
       "name": "@saga/claims",
       "version": "0.0.0",
+    },
+    "packages/client-cli": {
+      "name": "@saga/client-cli",
+      "version": "0.0.0",
+      "dependencies": {
+        "@saga/runtime": "workspace:*",
+      },
     },
     "packages/collectors": {
       "name": "@saga/collectors",
@@ -369,6 +377,8 @@
     "@saga/claims": ["@saga/claims@workspace:packages/claims"],
 
     "@saga/cli": ["@saga/cli@workspace:apps/cli"],
+
+    "@saga/client-cli": ["@saga/client-cli@workspace:packages/client-cli"],
 
     "@saga/collectors": ["@saga/collectors@workspace:packages/collectors"],
 
