@@ -3,14 +3,20 @@
 // SGA-237 boundary guard (ADR-0048). The client tier runs from a bare binary and
 // must never pull in the database tier: @saga/client-cli may not depend on
 // @saga/db — directly, through the transitive workspace-dep closure, or via a
-// source import (bare specifier or a relative path into packages/db). This guard
-// makes that install-shape invariant a CI-checked property instead of a review
-// convention. It fails loud (non-zero exit, named offenders) so a future edit
-// that reaches for @saga/db is caught here rather than bloating the client binary.
+// source import (bare specifier or a relative path into packages/db).
+//
+// The static-import ban is ALSO enforced structurally by the vite.config.ts
+// forbid() override for packages/client-cli/**. This script covers the two things
+// lint cannot express: the package.json dependency closure (an install-shape
+// property, not a source property), and quoted-specifier import forms lint's
+// no-restricted-imports does not flag (dynamic import(...), side-effect
+// import '...', require(...), export ... from). It fails loud (non-zero exit,
+// named offenders) so a future edit that reaches for @saga/db is caught here
+// rather than bloating the client binary.
 //
 // Usage: node scripts/check-client-boundary.mjs
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,9 +53,13 @@ if (clientEntry === undefined) {
 
 // --- 1. Transitive workspace-dep closure must not include @saga/db. ---
 function workspaceDeps(manifest) {
-  return Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }).filter(
-    (name) => workspacePackages.has(name),
-  );
+  // dependencies + optionalDependencies + peerDependencies all ship with the
+  // package; devDependencies do not, so they are deliberately excluded.
+  return Object.keys({
+    ...manifest.dependencies,
+    ...manifest.optionalDependencies,
+    ...manifest.peerDependencies,
+  }).filter((name) => workspacePackages.has(name));
 }
 
 const visited = new Set();
@@ -80,23 +90,30 @@ if (closure.has(FORBIDDEN)) {
   }
 }
 
-// --- 2. No source file under packages/client-cli/src may import @saga/db, ---
-// ---    nor a relative path into packages/db.                             ---
-const dbDir = join(repoRoot, 'packages', 'db');
+// --- 2. No source file under packages/client-cli/src may reference @saga/db, ---
+// ---    nor a relative path into packages/db, in ANY import form.           ---
+// A quoted-prefix substring match catches every form (static, dynamic import(),
+// side-effect import '...', require, export ... from) with no per-form regex to
+// maintain. The static-import subset is also caught structurally by lint; this
+// covers the dynamic/side-effect/require forms lint's no-restricted-imports
+// leaves unflagged, plus quoted relative specifiers into packages/db.
 const srcDir = join(clientEntry.dir, 'src');
-const importPattern =
-  /(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)/g;
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+// A quoted specifier of the db package: '@saga/db, "@saga/db, or `@saga/db.
+const forbiddenPackageSpecifier = /['"`]@saga\/db/;
+// A quoted relative specifier that walks up into packages/db: '../db/, '../../db/, …
+const forbiddenRelativeSpecifier = /['"`]\.\.\/(?:\.\.\/)*db\//;
 
 function sourceFiles(dir) {
   const files = [];
   if (!existsSync(dir)) {
     return files;
   }
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
       files.push(...sourceFiles(full));
-    } else if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.mts')) {
+    } else if (SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
       files.push(full);
     }
   }
@@ -105,20 +122,12 @@ function sourceFiles(dir) {
 
 for (const file of sourceFiles(srcDir)) {
   const source = readFileSync(file, 'utf8');
-  for (const match of source.matchAll(importPattern)) {
-    const specifier = match[1] ?? match[2];
-    if (specifier === undefined) {
-      continue;
-    }
-    const rel = relative(repoRoot, file);
-    if (specifier === FORBIDDEN || specifier.startsWith(`${FORBIDDEN}/`)) {
-      failures.push(`${rel} imports ${FORBIDDEN}`);
-    } else if (specifier.startsWith('.')) {
-      const resolved = resolve(dirname(file), specifier);
-      if (resolved === dbDir || resolved.startsWith(`${dbDir}/`)) {
-        failures.push(`${rel} imports a relative path into packages/db: ${specifier}`);
-      }
-    }
+  const rel = relative(repoRoot, file);
+  if (forbiddenPackageSpecifier.test(source)) {
+    failures.push(`${rel} references ${FORBIDDEN} in a quoted specifier`);
+  }
+  if (forbiddenRelativeSpecifier.test(source)) {
+    failures.push(`${rel} references a relative path into packages/db in a quoted specifier`);
   }
 }
 
