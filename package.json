@@ -16,6 +16,7 @@
     "deps:reset": "docker compose -f docker-compose.local.yml down -v && docker compose -f docker-compose.local.yml up -d --wait",
     "deps:up": "docker compose -f docker-compose.local.yml up -d --wait",
     "check": "vp check",
+    "check:client-boundary": "node scripts/check-client-boundary.mjs",
     "format": "vp format",
     "lint": "vp lint",
     "smoke:codex-loop": "node scripts/smoke-codex-loop.mjs",
@@ -29,7 +30,7 @@
     "test:unit": "vp test run --passWithNoTests --exclude apps/cli/src/index-command.postgres.test.ts --exclude apps/cli/src/init.postgres.test.ts --exclude apps/cli/src/ingest.postgres.test.ts --exclude apps/cli/src/mcp.postgres.test.ts --exclude apps/cli/src/recall.postgres.test.ts --exclude packages/db/src/consolidation-records.postgres.test.ts --exclude packages/db/src/database.postgres.test.ts --exclude packages/db/src/job-runs.postgres.test.ts --exclude packages/db/src/raw-session-import.postgres.test.ts --exclude packages/db/src/session-embeddings.postgres.test.ts --exclude packages/db/src/session-recall.postgres.test.ts --exclude packages/db/src/session-safety.postgres.test.ts --exclude packages/db/src/session-recall-bench.postgres.test.ts",
     "verify": "bun run verify:unit",
     "verify:integration": "bun run check && bun run test:integration",
-    "verify:unit": "bun run check && bun run test:unit"
+    "verify:unit": "bun run check:client-boundary && bun run check && bun run test:unit"
   },
   "devDependencies": {
     "@dbtlr/tooling": "0.3.0",

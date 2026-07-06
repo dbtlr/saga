@@ -16,6 +16,18 @@ release. When a release is cut, this section is promoted to
 
 ### Added
 
+- **`@saga/client-cli` package + client-tier boundary guard** (SGA-237,
+  ADR-0048/0050). Structural groundwork for the client/service split, no behavior
+  change. A new leaf package `@saga/client-cli` (depends only on `@saga/runtime`)
+  now owns the `.saga.local.json` binding read path (`readBindingFile`,
+  `bindingPathFor`, `WorkspaceBindingFile`), re-exported from `@saga/cli`'s
+  `init.ts` so callers are unaffected. It also adds the client-side view of
+  `~/.saga/config.json` (`service.url`, `auth_token`, `hostname`, `spool.dir`, and
+  a `workspaces` checkout-path map) with a tolerant read-only loader that leaves
+  the runtime's `{database:{url}}` reader untouched, plus a binding resolver that
+  prefers the `workspaces` map and falls back to `.saga.local.json`. A CI-checked
+  `check-client-boundary` guard (wired into `verify`) fails if `@saga/client-cli`
+  ever reaches `@saga/db` by dependency closure or source import.
 - **Release + install pipeline** (SGA-180, ADR-0044). Saga now ships as a single
   Bun-compiled binary carrying the `cli`, `service`, and `mcp` surfaces (the
   control plane is excluded from the artifact). A tag-driven `release.yml` builds
