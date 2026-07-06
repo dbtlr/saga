@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BINDING_FILE_NAME } from '@saga/client-cli';
+import { bindingPathFor } from '@saga/client-cli';
 import type { WorkspaceBindingFile } from '@saga/client-cli';
 import { makeDatabase, registerWorkspace, runMigrationsSafely } from '@saga/db';
 import type { RegisterWorkspaceResult } from '@saga/db';
@@ -183,7 +183,7 @@ export function ensureLocalHostBinding(
 
 export function writeBindingFile(projectRoot: string, binding: WorkspaceBindingFile): string {
   mkdirSync(projectRoot, { recursive: true });
-  const bindingPath = join(projectRoot, BINDING_FILE_NAME);
+  const bindingPath = bindingPathFor(projectRoot);
   writeFileSync(bindingPath, `${JSON.stringify(ensureLocalHostBinding(binding), null, 2)}\n`);
   return bindingPath;
 }
