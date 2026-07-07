@@ -100,9 +100,7 @@ export function listRecentRawEvents(
         .from(rawEvents)
         .where(and(eq(rawEvents.workspaceId, input.workspaceId)))
         .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
-        .limit(
-          Math.min(input.limit ?? DEFAULT_RECENT_RAW_EVENT_LIMIT, MAX_RECENT_RAW_EVENT_LIMIT),
-        ),
+        .limit(Math.min(input.limit ?? DEFAULT_RECENT_RAW_EVENT_LIMIT, MAX_RECENT_RAW_EVENT_LIMIT)),
     catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
   });
 }

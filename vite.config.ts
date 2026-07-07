@@ -155,6 +155,18 @@ const config = {
                       'Client boundary (ADR-0048): api-client is a client-tier package and must never reach the db tier.',
                   },
                   {
+                    // oxlint replaces (not merges) across overlapping overrides, so
+                    // the packages/** app-tree ban above is lost here and must be
+                    // restated or api-client could import an app tree unflagged.
+                    group: [
+                      ...sagaPackage('cli'),
+                      ...sagaPackage('service'),
+                      ...sagaPackage('control-plane'),
+                      ...relativeLayer('apps'),
+                    ],
+                    message: 'Package boundary: shared packages must not import app trees.',
+                  },
+                  {
                     group: uiPackages,
                     message:
                       'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',

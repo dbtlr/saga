@@ -820,7 +820,10 @@ export function searchSessionRecall(
 export function expandRecallContext(
   service: DatabaseService,
   input: RecallContextExpansionInput,
-): Effect.Effect<RecallContextExpansion, DatabaseError | RecallSearchError | RecallSegmentNotFoundError> {
+): Effect.Effect<
+  RecallContextExpansion,
+  DatabaseError | RecallSearchError | RecallSegmentNotFoundError
+> {
   return Effect.tryPromise({
     try: async () => {
       const contextWindow = normalizeContextWindow(input);

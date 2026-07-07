@@ -5,6 +5,8 @@
 // of the shared shapes into @saga/contracts can come when ingest lands; until
 // then the parity tests pin these against the live db read functions.
 
+import type { TrustLevel } from '@saga/contracts';
+
 export type JsonRecord = Record<string, unknown>;
 
 // --- /v1/info ---
@@ -210,22 +212,8 @@ export type RecallRequest = {
   workspaceId: string;
 };
 
-export type RecallSessionMetadata = {
+export type RecallSessionMetadata = SessionMetadata & {
   authorUser: HostUserMetadata;
-  endedAt: string | null;
-  harness: string;
-  harnessSessionId: string | null;
-  id: string;
-  lastActivityAt: string | null;
-  metadata: JsonRecord;
-  model: string | null;
-  provenance: JsonRecord;
-  sourceBindingId: string;
-  sourceLocator: string | null;
-  startedAt: string | null;
-  status: string;
-  title: string | null;
-  workspaceId: string;
 };
 
 export type RecallRawSessionRecordMetadata = {
@@ -300,6 +288,7 @@ export type RecallExpansionWarning = {
 };
 
 export type RecallExpandedSegment = SegmentMetadata & {
+  metadata: JsonRecord;
   searchText: string;
 };
 
@@ -310,6 +299,7 @@ export type RecallExpandedTurn = {
   endedAt: string | null;
   harnessTurnId: string | null;
   id: string;
+  metadata: JsonRecord;
   model: string | null;
   ordinal: number;
   rawEventIds: string[];
@@ -360,14 +350,12 @@ export type RawEvent = {
   sourceId: string;
   sourceType: string;
   traceId: string | null;
-  trustLevel: string;
+  trustLevel: TrustLevel;
   updatedAt: string;
   workspaceId: string;
 };
 
 // --- Errors ---
-
-export type ApiErrorCode = 'bad_request' | 'not_found' | 'unavailable' | 'internal';
 
 export type ApiErrorBody = {
   error: {

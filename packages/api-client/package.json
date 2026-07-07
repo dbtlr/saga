@@ -11,5 +11,8 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@saga/contracts": "workspace:*"
   }
 }
