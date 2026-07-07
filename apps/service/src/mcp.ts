@@ -10,7 +10,12 @@
 // fixed SERVICE_LEXICAL_POSTURE rather than the CLI's env/policy-resolved stance.
 // The parity test (mcp.postgres.test.ts) pins this output to the stdio server's.
 
-import { expandRecallContext, listRecentSessionRecords, searchSessionRecall } from '@saga/db';
+import {
+  expandRecallContext,
+  listRecentSessionRecords,
+  RecallSegmentNotFoundError,
+  searchSessionRecall,
+} from '@saga/db';
 import type { DatabaseService, RecallSearchInput } from '@saga/db';
 import { createSagaMcpServer } from '@saga/mcp';
 import type {
@@ -18,7 +23,7 @@ import type {
   ListRecentSessionsInput,
   SearchSessionsInput,
 } from '@saga/mcp';
-import { Effect } from 'effect';
+import { Cause, Effect, Exit, Option } from 'effect';
 
 import {
   compactRecallContextExpansion,
@@ -53,7 +58,7 @@ async function listServiceRecentSessions(
   input: ListRecentSessionsInput,
 ) {
   const workspaceId = requireWorkspace(dependencies.workspaceId);
-  const sessions = await Effect.runPromise(
+  const sessions = await runMcpRead(() =>
     listRecentSessionRecords(dependencies.database, {
       activeOnly: input.activeOnly,
       harness: input.harness,
@@ -87,7 +92,7 @@ async function searchServiceSessions(
     sessionId: input.sessionId,
     workspaceId,
   };
-  const recall = await Effect.runPromise(searchSessionRecall(dependencies.database, searchInput));
+  const recall = await runMcpRead(() => searchSessionRecall(dependencies.database, searchInput));
   return {
     markdown: renderSessionSearchMarkdown(recall, posture),
     recall: redactMcpStructuredOutput({
@@ -102,7 +107,7 @@ async function getServiceSessionContext(
   input: GetSessionContextInput,
 ) {
   const workspaceId = requireWorkspace(dependencies.workspaceId);
-  const context = await Effect.runPromise(
+  const context = await runMcpRead(() =>
     expandRecallContext(dependencies.database, {
       afterTurns: input.afterTurns,
       beforeTurns: input.beforeTurns,
@@ -117,12 +122,60 @@ async function getServiceSessionContext(
   };
 }
 
-// A tools/call is workspace-scoped; without a workspace id the request cannot be
-// answered. Throwing surfaces as a JSON-RPC error (code -32000) from the @saga/mcp
-// core, matching how the stdio server reports a missing project binding.
+// The canonical 8-4-4-4-12 UUID form postgres' `uuid` type accepts. Validating the
+// workspace id at the boundary keeps a malformed value out of the pg cast, whose
+// failure ("invalid input syntax for type uuid: …") would otherwise be wrapped into
+// a typed db-error message and forwarded to the client (see runMcpRead).
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+// A tools/call is workspace-scoped; without a valid workspace id the request cannot
+// be answered. Throwing surfaces as a JSON-RPC error (code -32000) from the
+// @saga/mcp core with a clean, static message — no query text reaches the database.
 function requireWorkspace(workspaceId: string | undefined): string {
   if (workspaceId === undefined || workspaceId.trim() === '') {
     throw new Error('workspaceId query parameter is required for a Saga MCP tool call');
   }
+  if (!UUID_PATTERN.test(workspaceId)) {
+    throw new Error('workspaceId query parameter must be a valid UUID');
+  }
   return workspaceId;
 }
+
+// The defect-hardened runner the MCP handlers use, mirroring the /v1 routes'
+// runEffect: a DEFECT (no typed failure) carries a stack / raw driver text we must
+// never forward, so it is logged server-side and re-thrown as a static message that
+// the @saga/mcp core surfaces as a clean -32000. Typed db failures are also
+// sanitized by default — @saga/db wraps arbitrary causes (including raw pg text like
+// an invalid-uuid cast) into RecallSearchError/SessionRecordQueryError MESSAGES, so
+// forwarding those verbatim would leak driver text too. Only the not-found error,
+// whose message is a hand-authored constant, is forwarded (it is meaningful and
+// carries no driver text). The whole run is wrapped so a synchronous throw during
+// Effect construction is sanitized as well.
+async function runMcpRead<A, E>(makeEffect: () => Effect.Effect<A, E>): Promise<A> {
+  let exit;
+  try {
+    exit = await Effect.runPromiseExit(makeEffect());
+  } catch (cause) {
+    console.error(cause);
+    // The cause rides on `.cause` (never serialized into the JSON-RPC message,
+    // which uses only `.message`), so no driver text reaches the client.
+    throw new Error('internal error', { cause });
+  }
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+  const failure = Cause.failureOption(exit.cause);
+  if (Option.isSome(failure)) {
+    const error = failure.value;
+    if (error instanceof RecallSegmentNotFoundError) {
+      throw new Error(error.message);
+    }
+    console.error(error);
+    throw new Error('internal error');
+  }
+  console.error(Cause.pretty(exit.cause));
+  throw new Error('internal error');
+}
+
+// Exported for the hardening unit test (mcp.test.ts); not part of the MCP surface.
+export { runMcpRead };
