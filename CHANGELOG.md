@@ -16,27 +16,40 @@ release. When a release is cut, this section is promoted to
 
 ### Added
 
-- **`@saga/client-cli` INGEST commands over `@saga/api-client`** (SGA-239,
-  ADR-0047/0048). The standalone client now captures ambient harness hooks and
-  inspects raw events through the service instead of the local database:
-  `saga-client ingest claude-hook` / `ingest codex-hook` read the hook payload
-  from stdin, build a `RawEventEnvelope` (via `@saga/collectors`) plus — when a
-  transcript is present — a `@saga/contracts` `IngestSnapshot` (author/host/harness/
-  content-type/rawContent/model/status/activity/harnessSessionId/locator/metadata/
-  provenance computed client-side, mirroring the CLI's ambient import input minus
-  the `capturedAt` and settlement-trigger the service derives server-side), and
-  POST them to `/v1/ingest`; a transcript-less lifecycle event is POSTed with no
-  snapshot and settled server-side. `ingest recent` lists raw events over `GET
-  /v1/events`. The hook JSON contract is unchanged — the command still returns
-  `{ continue: true }` (and `{ continue: true, systemMessage: … }` on a capture
-  failure) so harnesses are unaffected. Per ADR-0047 the capture output now
-  reflects the service's `stored`/`duplicate`/`error` ack (STORED, not derived —
-  the extraction job derives asynchronously) rather than the db path's
-  inserted/unchanged import line. `@saga/client-cli` still never depends on
-  `@saga/db` (the `check-client-boundary` guard and oxlint rule enforce it). A
-  Postgres-backed parity test proves a Claude and a Codex hook captured through the
-  client, once derived by the extraction job, produce the same turns/segments the
-  synchronous `@saga/cli` `captureHook` produces for the same hook input.
+- **`@saga/client-cli` client command surface over `@saga/api-client`** (SGA-239,
+  ADR-0047/0048). The standalone `saga-client` binary now performs every
+  client-role command through the service HTTP API instead of the local database,
+  with `@saga/client-cli` as the single source of truth for client command
+  behaviour and help — a preparatory step before `@saga/cli` swaps onto it
+  (SGA-249). `@saga/client-cli` never depends on `@saga/db` (the
+  `check-client-boundary` guard and an oxlint rule enforce it structurally).
+  - **Reads** — `recall search` / `recall show` (over `POST /v1/recall` and `GET
+    /v1/sessions/:id/context`) and `sessions recent` / `sessions show` (over `GET
+    /v1/sessions[/:id]`), rendering byte-identical `records`/`json` output to the
+    db-backed `@saga/cli` commands (proven by Postgres parity tests). Recall is
+    lexical-only for now — the query-embedding egress arrives with SGA-253; vector
+    flags are accepted-and-ignored so help text is preserved.
+  - **Ingest** — `ingest claude-hook` / `ingest codex-hook` read the hook payload
+    from stdin, build a `RawEventEnvelope` (via `@saga/collectors`) plus — when a
+    transcript is present — a `@saga/contracts` `IngestSnapshot` computed
+    client-side (minus the `capturedAt` and settlement-trigger the service derives
+    server-side), and POST them to `/v1/ingest`; a transcript-less lifecycle event
+    is POSTed with no snapshot and settled server-side. The harness hook JSON
+    contract is unchanged (`{ continue: true }`, and `{ continue: true,
+    systemMessage: … }` on a capture failure). Per ADR-0047 the capture output
+    reflects the service's `stored`/`duplicate`/`error` ack (STORED, not derived —
+    the extraction job derives asynchronously). `ingest recent` lists raw events
+    over `GET /v1/events`. A Postgres parity test proves a Claude and a Codex hook
+    captured through the client, once derived, produce the same turns/segments the
+    synchronous `@saga/cli` `captureHook` produces for the same input.
+  - **Doctor** — a client-role `doctor` reframed around service reachability: it
+    reports node/bun/workspace-binding health plus a `service` check over
+    `GET /v1/info` (mapping `migrations {applied,expected,compatible}` to
+    ok/behind/incompatible) and filesystem harness state. The db-only
+    Postgres/activation-evidence/embedding/launchd checks are dropped as host and
+    service concerns.
+  - A thin `saga-client` bin drives every command; a Postgres-backed end-to-end
+    test exercises the real binary as a subprocess against a live service.
 - **Service write path: `POST /v1/ingest` + asynchronous extraction job**
   (SGA-238, ADR-0030/0039). The service now accepts writes through a dumb raw
   store: `POST /v1/ingest` takes a batch of items, each a `RawEventEnvelope` plus
