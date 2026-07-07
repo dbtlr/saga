@@ -442,7 +442,9 @@ describePostgres('service ingest → extraction parity', () => {
     await client.ingest({ items: [snapshotItem('updated-session', 'updated-snap-1')] });
     await runExtractionOnce();
     const session = await findSession('updated-session');
-    expect((await activeIntervalFor(session.id)).some((i) => i.status === 'active')).toBe(true);
+    const intervalsBefore = await activeIntervalFor(session.id);
+    const activeBefore = intervalsBefore.find((i) => i.status === 'active');
+    expect(activeBefore).toBeDefined();
 
     // A plain SessionStart (source 'startup', not clear/compact) within the idle
     // window → 'updated' outcome: NO interval reference is written, which is
@@ -474,6 +476,21 @@ describePostgres('service ingest → extraction parity', () => {
     const rawEventId = startResponse.results[0]?.rawEventId ?? '';
 
     await runExtractionOnce();
+
+    // The outcome is genuinely reference-less ('updated'/'unchanged'): no new
+    // interval opened, the same interval stays active, and NO interval references
+    // this event — precisely the class the old absence scan looped on.
+    const intervalsAfter = await activeIntervalFor(session.id);
+    expect(intervalsAfter).toHaveLength(intervalsBefore.length);
+    const activeAfter = intervalsAfter.find((i) => i.status === 'active');
+    expect(activeAfter?.id).toBe(activeBefore?.id);
+    expect(
+      intervalsAfter.some(
+        (i) =>
+          i.settlementTriggerRawEventId === rawEventId ||
+          i.metadata.triggerRawEventId === rawEventId,
+      ),
+    ).toBe(false);
 
     // The queue row is terminal ('settled'), so it can never re-match.
     const [queued] = await svc()
@@ -658,5 +675,154 @@ describePostgres('service ingest → extraction parity', () => {
     expect(response.results[0]?.externalEventId).toBe('idx-a');
     expect(response.results[1]?.status).toBe('error');
     expect(response.results[2]?.externalEventId).toBe('idx-c');
+  });
+
+  // --- crux regressions ---
+
+  test('the job derives only the active snapshot, never a superseded one', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    // Two snapshots for one session, WITHOUT a derive between: the second
+    // supersedes the first (marks it is_active=false), so both sit at 'captured'
+    // — the older one inactive. If discovery ignored is_active it would derive the
+    // superseded record and re-home the session's turns to it, clobbering the active.
+    const olderContent = [
+      JSON.stringify({ text: 'older superseded content', type: 'user' }),
+      '',
+    ].join('\n');
+    const olderItem = snapshotItem('super-session', 'super-old-1');
+    const olderSnapshot: IngestItem['snapshot'] =
+      olderItem.snapshot === undefined
+        ? undefined
+        : { ...olderItem.snapshot, rawContent: olderContent };
+    const older = await client.ingest({
+      items: [{ envelope: olderItem.envelope, snapshot: olderSnapshot }],
+    });
+    const newer = await client.ingest({ items: [snapshotItem('super-session', 'super-new-1')] });
+    const olderRecordId = older.results[0]?.rawSessionRecordId ?? '';
+    const newerRecordId = newer.results[0]?.rawSessionRecordId ?? '';
+    expect(olderRecordId).not.toBe(newerRecordId);
+
+    // Both captured; the older one is now inactive.
+    const [olderBefore] = await svc()
+      .db.select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, olderRecordId));
+    expect(olderBefore?.isActive).toBe(false);
+    expect(olderBefore?.status).toBe('captured');
+
+    // Discovery yields ONLY the active record.
+    const pending = await Effect.runPromise(
+      listRawSessionRecordsAwaitingDerivation(svc(), { limit: 1000 }),
+    );
+    expect(pending).toContain(newerRecordId);
+    expect(pending).not.toContain(olderRecordId);
+
+    await runExtractionOnce();
+    await runExtractionOnce();
+
+    // Every derived turn homes to the ACTIVE record; the superseded one was never
+    // derived and never clobbered the active snapshot's rows.
+    const session = await findSession('super-session');
+    const turns = await loadTurns(session.id);
+    expect(turns.length).toBeGreaterThan(0);
+    expect(turns.every((t) => t.rawSessionRecordId === newerRecordId)).toBe(true);
+    const [olderAfter] = await svc()
+      .db.select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, olderRecordId));
+    expect(olderAfter?.status).toBe('captured');
+    expect(olderAfter?.isActive).toBe(false);
+  });
+
+  test('a snapshot-less non-boundary event is stored but never enqueued or opens an interval', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const response = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.PreToolUse',
+            externalEventId: 'nonboundary-evt-1',
+            occurredAt: CAPTURED_AT,
+            payload: { session_id: 'nonboundary-session' },
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+        },
+      ],
+    });
+    expect(response.results[0]?.status).toBe('stored');
+    const rawEventId = response.results[0]?.rawEventId ?? '';
+
+    // Not enqueued for settlement.
+    const [queued] = await svc()
+      .db.select()
+      .from(lifecycleSettlementQueue)
+      .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    expect(queued).toBeUndefined();
+
+    // The job must not open a spurious interval — no session is created for it.
+    await runExtractionOnce();
+    const [session] = await svc()
+      .db.select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, workspaceId),
+          eq(sessions.harnessSessionId, 'nonboundary-session'),
+        ),
+      );
+    expect(session).toBeUndefined();
+  });
+
+  test('a snapshot missing both harnessSessionId and locator is a 400 with no raw event stored', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const response = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.UserPromptSubmit',
+            externalEventId: 'no-identity-evt-1',
+            occurredAt: CAPTURED_AT,
+            payload: {},
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+          // Valid otherwise, but neither harnessSessionId nor locator → 400 before write.
+          snapshot: {
+            author: { handle: 'drew' },
+            contentType: 'jsonl',
+            harness: 'codex',
+            host: { id: 'host-1' },
+            rawContent: RAW_CONTENT,
+          },
+        },
+      ],
+    });
+    const ack = response.results[0];
+    expect(ack?.status).toBe('error');
+    expect(ack?.code).toBe('bad_request');
+    expect(ack?.rawEventId).toBeUndefined();
+    // No raw event was stored: the identity check runs before any write.
+    const events = await svc()
+      .db.select()
+      .from(rawEvents)
+      .where(eq(rawEvents.externalEventId, 'no-identity-evt-1'));
+    expect(events).toHaveLength(0);
   });
 });

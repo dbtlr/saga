@@ -1,12 +1,13 @@
 import type { IngestItemResult, IngestSnapshot, RawEventEnvelope } from '@saga/contracts';
 import {
-  enqueueLifecycleSettlement,
   expandRecallContext,
   findRawEventByEnvelopeKey,
   getExtractionBacklog,
   getMigrationStatus,
   getSessionDetail,
+  insertLifecycleBoundaryEvent,
   insertRawEvent,
+  isLifecycleBoundaryEventType,
   listRecentRawEvents,
   listRecentSessionRecords,
   RawEventInsertError,
@@ -64,6 +65,10 @@ const MAX_RECALL_BODY_BYTES = 1024 * 1024;
 // cap is larger than recall's — still bounded so an oversized batch is a 413
 // before it is buffered and parsed.
 const MAX_INGEST_BODY_BYTES = 8 * 1024 * 1024;
+
+// The batch is processed serially per item; cap the count so an unbounded batch
+// can never fan into a serial-query storm.
+const MAX_INGEST_ITEMS = 1000;
 
 // A response error carrying the HTTP status and the machine code echoed in the
 // `{ error: { code, message } }` body. Handlers throw it for validation misses;
@@ -194,6 +199,15 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       const body = await readJsonBody(c);
       if (!Array.isArray(body.items)) {
         throw new HttpError(400, 'bad_request', 'items must be an array');
+      }
+      // Bound the batch before the serial per-item loop so an oversized batch is a
+      // 400, not a serial-query DoS on the loopback surface.
+      if (body.items.length > MAX_INGEST_ITEMS) {
+        throw new HttpError(
+          400,
+          'bad_request',
+          `items exceeds the ${String(MAX_INGEST_ITEMS)} cap`,
+        );
       }
       const results: IngestItemResult[] = [];
       for (const [index, item] of body.items.entries()) {
@@ -379,34 +393,42 @@ async function ingestOneItem(
   // reports its id (a future spool's flush-delete keys on rawEventId).
   let rawEventRow: RawEvent | undefined;
   try {
-    const existing = await runIngestEffect(
-      findRawEventByEnvelopeKey(database, {
-        externalEventId: envelope.externalEventId,
-        sourceId: envelope.sourceId,
-        sourceType: envelope.sourceType,
-        workspaceId: envelope.workspaceId,
-      }),
-    );
-    const alreadyStored = existing !== undefined;
-    rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
-
     if (snapshot === undefined) {
-      // A lifecycle-boundary event (no snapshot): enqueue it for the extraction
-      // job to settle. Idempotent on the raw event id.
-      await runIngestEffect(
-        enqueueLifecycleSettlement(database, {
-          rawEventId: rawEventRow.id,
-          workspaceId: envelope.workspaceId,
-        }),
+      if (isLifecycleBoundaryEventType(envelope.eventType)) {
+        // A lifecycle boundary: store the raw event AND enqueue its settlement in
+        // one transaction so a crash can never strand it (the queue is the only
+        // settlement-discovery path).
+        const { rawEvent, inserted } = await runIngestEffect(
+          insertLifecycleBoundaryEvent(database, envelope),
+        );
+        rawEventRow = rawEvent;
+        return {
+          externalEventId,
+          index,
+          rawEventId: rawEvent.id,
+          status: inserted ? 'stored' : 'duplicate',
+        };
+      }
+      // A snapshot-less NON-boundary event (PreToolUse, Notification, ...): store
+      // the raw event only — no settlement, so the job never opens a spurious
+      // activity interval for it.
+      const existing = await runIngestEffect(
+        findRawEventByEnvelopeKey(database, envelopeKey(envelope)),
       );
+      rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
       return {
         externalEventId,
         index,
         rawEventId: rawEventRow.id,
-        status: alreadyStored ? 'duplicate' : 'stored',
+        status: existing === undefined ? 'stored' : 'duplicate',
       };
     }
 
+    const existing = await runIngestEffect(
+      findRawEventByEnvelopeKey(database, envelopeKey(envelope)),
+    );
+    const alreadyStored = existing !== undefined;
+    rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
     const stored = await runIngestEffect(
       storeRawSessionRecord(database, buildStoreInput(envelope, snapshot, rawEventRow)),
     );
@@ -467,6 +489,22 @@ function readEnvelopeExternalEventId(rawEnvelope: unknown): string {
   const envelope = asObject(rawEnvelope);
   const value = envelope?.externalEventId;
   return typeof value === 'string' ? value : '';
+}
+
+// The raw event's idempotency key, for the pre-insert existence probe that
+// distinguishes a 'stored' ack from a 'duplicate'.
+function envelopeKey(envelope: RawEventEnvelope): {
+  externalEventId: string;
+  sourceId: string;
+  sourceType: string;
+  workspaceId: string;
+} {
+  return {
+    externalEventId: envelope.externalEventId,
+    sourceId: envelope.sourceId,
+    sourceType: envelope.sourceType,
+    workspaceId: envelope.workspaceId,
+  };
 }
 
 // The service re-derives capturedAt (from the raw event's occurredAt) and the
@@ -546,6 +584,19 @@ function coerceSnapshot(raw: unknown): IngestSnapshot {
     throw new HttpError(400, 'bad_request', 'snapshot.host must be an object');
   }
   const activity = asObject(s.activity);
+  const harnessSessionId = optionalString(s.harnessSessionId, 'snapshot.harnessSessionId');
+  const locator = optionalString(s.locator, 'snapshot.locator');
+  // storeRawSessionRecord → normalizeInput rejects a snapshot lacking BOTH of these
+  // ("harnessSessionId or locator is required") only AFTER the raw event is
+  // inserted; hoist the check here so a snapshot without an identity fails 400
+  // BEFORE any write, keeping validate-before-write complete.
+  if (harnessSessionId === undefined && locator === undefined) {
+    throw new HttpError(
+      400,
+      'bad_request',
+      'snapshot.harnessSessionId or snapshot.locator is required',
+    );
+  }
   return {
     activity:
       activity === undefined
@@ -572,13 +623,13 @@ function coerceSnapshot(raw: unknown): IngestSnapshot {
     ),
     harness: coerceEnum(s.harness, ['claude', 'codex'] as const, 'snapshot.harness'),
     harnessMetadata: optionalRecord(s.harnessMetadata, 'snapshot.harnessMetadata'),
-    harnessSessionId: optionalString(s.harnessSessionId, 'snapshot.harnessSessionId'),
+    harnessSessionId,
     host: {
       id: requireString(host.id, 'snapshot.host.id'),
       label: optionalString(host.label, 'snapshot.host.label'),
       projectRoot: optionalString(host.projectRoot, 'snapshot.host.projectRoot'),
     },
-    locator: optionalString(s.locator, 'snapshot.locator'),
+    locator,
     metadata: optionalRecord(s.metadata, 'snapshot.metadata'),
     model: optionalString(s.model, 'snapshot.model'),
     provenance: optionalRecord(s.provenance, 'snapshot.provenance'),
