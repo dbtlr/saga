@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { and, asc, desc, eq, inArray, isNull, notExists, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import {
@@ -14,6 +14,7 @@ import {
 import type { DatabaseError, DatabaseService } from './database.js';
 import {
   activityIntervals,
+  lifecycleSettlementQueue,
   rawEvents,
   rawSessionRecords,
   sessionSegmentEmbeddings,
@@ -48,6 +49,11 @@ const SESSION_RELATIONSHIP_IMPORT_DERIVATION = 'session-relationship-import-v1';
 type ActivityIntervalSettlementReason = 'clear_context' | 'idle_timeout' | 'manual' | 'stop_event';
 
 const ACTIVITY_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+// SGA-238: after this many failed derivation/settlement attempts the row is
+// dead-lettered (status 'failed') so a poison item can never livelock the job.
+export const MAX_DERIVATION_ATTEMPTS = 5;
+export const MAX_SETTLEMENT_ATTEMPTS = 5;
 
 export type RawSessionImportInput = {
   activity?: RawSessionImportActivityInput | undefined;
@@ -241,6 +247,10 @@ export function storeRawSessionRecord(
 // refreshes the session+interval, and reconciles relationships. Idempotent
 // (regenerateDerivedSessionRecords deletes-then-reinserts), so the extraction
 // job may re-run it under at-least-once delivery without producing duplicates.
+// Terminal state is a WRITTEN FACT: on success the record's status advances to
+// 'derived' inside the transaction (so a zero-turn snapshot still leaves the
+// queue); on failure the attempt is recorded in a separate transaction and the
+// record is dead-lettered ('failed') once the cap is reached.
 export function deriveStoredSessionRecord(
   service: DatabaseService,
   rawSessionRecordId: string,
@@ -257,7 +267,37 @@ export function deriveStoredSessionRecord(
       cause instanceof RawSessionImportError
         ? cause
         : new RawSessionImportError({ message: errorMessage(cause) }),
-  });
+  }).pipe(Effect.tapError((cause) => recordDerivationFailure(service, rawSessionRecordId, cause)));
+}
+
+// Best-effort dead-letter bookkeeping, run in its own transaction because the
+// derive transaction has already rolled back. Never fails the caller (its own
+// errors are swallowed): the original derivation error is what the job logs.
+function recordDerivationFailure(
+  service: DatabaseService,
+  rawSessionRecordId: string,
+  cause: unknown,
+): Effect.Effect<void> {
+  const nextAttempts = sql`coalesce((${rawSessionRecords.metadata} ->> 'derivationAttempts')::int, 0) + 1`;
+  return Effect.tryPromise({
+    try: async () => {
+      await service.db
+        .update(rawSessionRecords)
+        .set({
+          // Attempt count + last error live in metadata (no dedicated column, to
+          // keep RawSessionRecord's inferred type — and the CLI — untouched).
+          metadata: sql`jsonb_set(
+            jsonb_set(coalesce(${rawSessionRecords.metadata}, '{}'::jsonb), '{derivationAttempts}', to_jsonb(${nextAttempts})),
+            '{derivationError}',
+            to_jsonb(${errorMessage(cause).slice(0, 2000)}::text)
+          )`,
+          status: sql`case when ${nextAttempts} >= ${MAX_DERIVATION_ATTEMPTS} then 'failed' else ${rawSessionRecords.status} end`,
+          updatedAt: new Date(),
+        })
+        .where(eq(rawSessionRecords.id, rawSessionRecordId));
+    },
+    catch: (innerCause) => new RawSessionImportError({ message: errorMessage(innerCause) }),
+  }).pipe(Effect.catchAll(() => Effect.void));
 }
 
 // SGA-238: settle/open the activity interval for a stored lifecycle-boundary raw
@@ -283,16 +323,55 @@ export function settleStoredLifecycleBoundaryEvent(
       cause instanceof RawSessionImportError
         ? cause
         : new RawSessionImportError({ message: errorMessage(cause) }),
+  }).pipe(Effect.tapError((cause) => recordSettlementFailure(service, rawEventId, cause)));
+}
+
+// Enqueue a stored lifecycle-boundary raw event for the extraction job to settle.
+// Idempotent on the raw event id (a re-posted boundary does not re-enqueue).
+export function enqueueLifecycleSettlement(
+  service: DatabaseService,
+  input: { rawEventId: string; workspaceId: string },
+): Effect.Effect<void, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      await service.db
+        .insert(lifecycleSettlementQueue)
+        .values({ rawEventId: input.rawEventId, workspaceId: input.workspaceId })
+        .onConflictDoNothing({ target: [lifecycleSettlementQueue.rawEventId] });
+    },
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
   });
 }
 
-// SGA-238 extraction-job work discovery (absence-based, ADR-0039). The ACTIVE
-// raw snapshot for a session whose derived turns are not attributed to it has not
-// been derived yet. Only the active record is a candidate: regenerateDerivedSessionRecords
-// homes the session's turns to whichever record it last derived, so a superseded
-// (inactive) record is deliberately ignored — deriving it would clobber the
-// active snapshot's rows. A genuinely empty snapshot (no turns) re-appears each
-// tick; re-deriving it is an idempotent no-op (real transcripts always emit turns).
+// Best-effort dead-letter bookkeeping for a settlement, in its own transaction.
+// Swallows its own errors so the original settlement error is what the job logs.
+function recordSettlementFailure(
+  service: DatabaseService,
+  rawEventId: string,
+  cause: unknown,
+): Effect.Effect<void> {
+  return Effect.tryPromise({
+    try: async () => {
+      await service.db
+        .update(lifecycleSettlementQueue)
+        .set({
+          attempts: sql`${lifecycleSettlementQueue.attempts} + 1`,
+          error: errorMessage(cause).slice(0, 2000),
+          status: sql`case when ${lifecycleSettlementQueue.attempts} + 1 >= ${MAX_SETTLEMENT_ATTEMPTS} then 'failed' else 'pending' end`,
+        })
+        .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    },
+    catch: (innerCause) => new RawSessionImportError({ message: errorMessage(innerCause) }),
+  }).pipe(Effect.catchAll(() => Effect.void));
+}
+
+// SGA-238 extraction-job work discovery — recorded-done, not inferred. A raw
+// snapshot whose status is still 'captured' has not been derived; 'derived' and
+// 'failed' rows have left the queue. Ordered FIFO and bounded; the partial index
+// raw_session_records_derivation_queue_idx keeps this off the full history.
 export function listRawSessionRecordsAwaitingDerivation(
   service: DatabaseService,
   input: { limit: number },
@@ -302,17 +381,7 @@ export function listRawSessionRecordsAwaitingDerivation(
       const rows = await service.db
         .select({ id: rawSessionRecords.id })
         .from(rawSessionRecords)
-        .where(
-          and(
-            eq(rawSessionRecords.isActive, true),
-            notExists(
-              service.db
-                .select({ one: sql`1` })
-                .from(sessionTurns)
-                .where(eq(sessionTurns.rawSessionRecordId, rawSessionRecords.id)),
-            ),
-          ),
-        )
+        .where(eq(rawSessionRecords.status, 'captured'))
         .orderBy(asc(rawSessionRecords.createdAt))
         .limit(input.limit);
       return rows.map((row) => row.id);
@@ -324,47 +393,64 @@ export function listRawSessionRecordsAwaitingDerivation(
   });
 }
 
-// SGA-238 extraction-job work discovery. A stored lifecycle-boundary raw event
-// (Stop/SessionStart) that no activity interval yet references as its settlement
-// trigger — via the FK column or metadata.triggerRawEventId, matching
-// findLifecycleNoop's key — has not been settled. settleStoredLifecycleBoundaryEvent
-// re-checks the noop precisely, so this filter is safe under at-least-once.
-export function listLifecycleBoundaryEventsAwaitingSettlement(
+// SGA-238 extraction-job work discovery. Drains the lifecycle-settlement queue:
+// rows enqueued at ingest whose status is still 'pending'. Terminal states
+// ('settled'/'failed') have left the queue — no absence inference, so an outcome
+// that writes no interval reference ('updated'/'unchanged') can never re-match.
+export function listPendingLifecycleSettlements(
   service: DatabaseService,
   input: { limit: number },
 ): Effect.Effect<string[], DatabaseError | RawSessionImportError> {
   return Effect.tryPromise({
     try: async () => {
       const rows = await service.db
-        .select({ id: rawEvents.id })
-        .from(rawEvents)
-        .where(
-          and(
-            or(
-              sql`${rawEvents.eventType} like '%.Stop'`,
-              sql`${rawEvents.eventType} like '%.SessionStart'`,
-            ),
-            notExists(
-              service.db
-                .select({ one: sql`1` })
-                .from(activityIntervals)
-                .where(
-                  and(
-                    eq(activityIntervals.workspaceId, rawEvents.workspaceId),
-                    or(
-                      eq(activityIntervals.settlementTriggerRawEventId, rawEvents.id),
-                      // metadata ->> yields text; cast the uuid id so the compare
-                      // is text = text (Postgres has no implicit text/uuid coercion).
-                      sql`${activityIntervals.metadata} ->> 'triggerRawEventId' = ${rawEvents.id}::text`,
-                    ),
-                  ),
-                ),
-            ),
-          ),
-        )
-        .orderBy(asc(rawEvents.occurredAt))
+        .select({ rawEventId: lifecycleSettlementQueue.rawEventId })
+        .from(lifecycleSettlementQueue)
+        .where(eq(lifecycleSettlementQueue.status, 'pending'))
+        .orderBy(asc(lifecycleSettlementQueue.enqueuedAt))
         .limit(input.limit);
-      return rows.map((row) => row.id);
+      return rows.map((row) => row.rawEventId);
+    },
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+// SGA-238 observability: the extraction backlog surfaced on GET /v1/info so an
+// operator can see whether the job is keeping up (pending) and whether anything
+// dead-lettered (failed), for both the derivation and settlement queues.
+export type ExtractionBacklog = {
+  derivationFailed: number;
+  derivationPending: number;
+  settlementFailed: number;
+  settlementPending: number;
+};
+
+export function getExtractionBacklog(
+  service: DatabaseService,
+): Effect.Effect<ExtractionBacklog, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const [derivation] = await service.db
+        .select({
+          failed: sql<number>`count(*) filter (where ${rawSessionRecords.status} = 'failed')::int`,
+          pending: sql<number>`count(*) filter (where ${rawSessionRecords.status} = 'captured')::int`,
+        })
+        .from(rawSessionRecords);
+      const [settlement] = await service.db
+        .select({
+          failed: sql<number>`count(*) filter (where ${lifecycleSettlementQueue.status} = 'failed')::int`,
+          pending: sql<number>`count(*) filter (where ${lifecycleSettlementQueue.status} = 'pending')::int`,
+        })
+        .from(lifecycleSettlementQueue);
+      return {
+        derivationFailed: derivation?.failed ?? 0,
+        derivationPending: derivation?.pending ?? 0,
+        settlementFailed: settlement?.failed ?? 0,
+        settlementPending: settlement?.pending ?? 0,
+      };
     },
     catch: (cause) =>
       cause instanceof RawSessionImportError
@@ -581,9 +667,17 @@ async function deriveStoredSessionRecordInTransactionUnsafe(
     transcriptNormalization,
   });
 
+  // Recorded-done: advance the queue state in the same transaction as the derive
+  // so it commits atomically. A zero-turn snapshot still becomes 'derived'.
+  const [updatedRecord] = await tx
+    .update(rawSessionRecords)
+    .set({ status: 'derived', updatedAt: new Date() })
+    .where(eq(rawSessionRecords.id, record.id))
+    .returning();
+
   return {
     activityInterval: derived.activityInterval,
-    rawSessionRecord: record,
+    rawSessionRecord: updatedRecord ?? record,
     session: derived.session,
   };
 }
@@ -628,7 +722,17 @@ async function settleStoredLifecycleBoundaryEventInTransactionUnsafe(
   }
 
   const input = await reconstructLifecycleInputFromStoredEvent(tx, event);
-  return importLifecycleBoundaryEventInTransactionUnsafe(tx, input);
+  const result = await importLifecycleBoundaryEventInTransactionUnsafe(tx, input);
+
+  // Recorded-done: mark the queue row settled on ANY successful outcome
+  // (settled/opened/updated/unchanged — all mean "handled"), in the same
+  // transaction. No-op when the event was settled outside the queue (e.g. a test).
+  await tx
+    .update(lifecycleSettlementQueue)
+    .set({ error: null, processedAt: new Date(), status: 'settled' })
+    .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+
+  return result;
 }
 
 // A lifecycle-boundary raw event carries eventType "<harness>.<HookEventName>"
@@ -1004,12 +1108,25 @@ async function importRawSessionRecordInTransactionUnsafe(
     transcriptNormalization,
   });
 
+  // SGA-238: record the synchronous CLI derive as done so the extraction job
+  // (which claims status='captured' rows) never touches a CLI-derived record.
+  // Additive, and only advances the queue state — a record inserted with a
+  // meaningful status (e.g. 'redacted') keeps it and never enters the queue.
+  const [derivedRecord] =
+    insertedRawSessionRecord.status === 'captured'
+      ? await tx
+          .update(rawSessionRecords)
+          .set({ status: 'derived', updatedAt: now })
+          .where(eq(rawSessionRecords.id, insertedRawSessionRecord.id))
+          .returning()
+      : [insertedRawSessionRecord];
+
   return {
     activityInterval: derived.activityInterval,
     authorUser,
     contentHash: input.contentHash,
     operation: 'inserted',
-    rawSessionRecord: insertedRawSessionRecord,
+    rawSessionRecord: derivedRecord ?? insertedRawSessionRecord,
     session: derived.session,
     sourceBinding,
   };

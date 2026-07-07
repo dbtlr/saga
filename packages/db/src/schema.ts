@@ -375,6 +375,13 @@ export const rawSessionRecords = pgTable(
     ),
     snapshotOrdinal: integer('snapshot_ordinal').notNull(),
     isActive: boolean('is_active').notNull().default(true),
+    // The derivation queue state (SGA-238): 'captured' = stored, not yet derived
+    // (the extraction job's work signal); 'derived' = turns/segments produced
+    // (synchronously by the CLI or asynchronously by the job); 'failed' = dead-
+    // lettered after the attempt cap. Processed-ness is a written fact, never
+    // inferred from the presence of a derived side-effect. The attempt count and
+    // last error live in metadata.derivation* (a new NOT NULL column here would
+    // change RawSessionRecord's inferred type and break the CLI's zero-diff gate).
     status: text('status').notNull().default('captured'),
     harness: text('harness').notNull(),
     harnessSessionId: text('harness_session_id'),
@@ -406,6 +413,11 @@ export const rawSessionRecords = pgTable(
     uniqueIndex('raw_session_records_one_active_per_session_idx')
       .on(table.sessionId)
       .where(sql`${table.isActive} = true`),
+    // The extraction job's derivation queue: index only the small captured set so
+    // discovery never scans the full record history (SGA-238).
+    index('raw_session_records_derivation_queue_idx')
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'captured'`),
     check(
       'raw_session_records_content_type_check',
       sql`${table.contentType} in ('jsonl', 'json', 'text')`,
@@ -757,6 +769,37 @@ export const jobRuns = pgTable(
   (table) => [
     index('job_runs_job_name_finished_idx').on(table.jobName, table.finishedAt),
     check('job_runs_outcome_check', sql`${table.outcome} in ('succeeded', 'failed')`),
+  ],
+);
+
+// SGA-238: the extraction job's lifecycle-settlement queue. A lifecycle-boundary
+// raw event (Stop/SessionStart, ADR-0030 — no raw_session_record) is enqueued at
+// ingest and drained by the job. Recorded-done, not inferred: some boundary
+// outcomes ('updated'/'unchanged-active') write no interval reference, so the old
+// absence scan re-matched them forever — this queue marks each row terminal.
+export const lifecycleSettlementQueue = pgTable(
+  'lifecycle_settlement_queue',
+  {
+    rawEventId: uuid('raw_event_id')
+      .primaryKey()
+      .references(() => rawEvents.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    error: text('error'),
+  },
+  (table) => [
+    index('lifecycle_settlement_queue_pending_idx')
+      .on(table.enqueuedAt)
+      .where(sql`${table.status} = 'pending'`),
+    check(
+      'lifecycle_settlement_queue_status_check',
+      sql`${table.status} in ('pending', 'settled', 'failed')`,
+    ),
   ],
 );
 
@@ -1338,6 +1381,7 @@ export type SessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferSele
 export type NewSessionSegmentEmbedding = typeof sessionSegmentEmbeddings.$inferInsert;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type NewJobRun = typeof jobRuns.$inferInsert;
+export type LifecycleSettlementQueueRow = typeof lifecycleSettlementQueue.$inferSelect;
 export type ConsolidationRecordRow = typeof consolidationRecords.$inferSelect;
 export type NewConsolidationRecordRow = typeof consolidationRecords.$inferInsert;
 export type ConsolidationFindingRow = typeof consolidationFindings.$inferSelect;

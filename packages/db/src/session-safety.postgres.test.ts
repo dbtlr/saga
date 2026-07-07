@@ -662,7 +662,8 @@ describePostgres('session safety', () => {
     );
     expect(rawRecords.find((record) => record.id === second.rawSessionRecord.id)).toMatchObject({
       isActive: true,
-      status: 'captured',
+      // The synchronous import derives inline and records that as done (SGA-238).
+      status: 'derived',
     });
   });
 
