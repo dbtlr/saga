@@ -168,6 +168,25 @@ describe('createSagaApp Host allowlist (DNS-rebinding guard)', () => {
     expect((await errorBody(response)).error.code).toBe('forbidden');
   });
 
+  it('accepts a mixed-case loopback Host (comparison is case-insensitive)', async () => {
+    // A caller that types http://LOCALHOST:4766 sends `Host: LOCALHOST`; that is
+    // still loopback and must not be rejected as a rebinding attempt.
+    const response = await makeApp({ getDatabase: () => undefined }).request(
+      '/v1/sessions?workspaceId=ws-1',
+      { headers: { host: 'LOCALHOST:4766' } },
+    );
+    // Passes the Host check, so it reaches routing and gets the not-ready 503.
+    expect(response.status).toBe(503);
+  });
+
+  it('accepts a bracketed IPv6 loopback Host', async () => {
+    const response = await makeApp({ getDatabase: () => undefined }).request(
+      '/v1/sessions?workspaceId=ws-1',
+      { headers: { host: '[::1]:4766' } },
+    );
+    expect(response.status).toBe(503);
+  });
+
   it('permits a non-loopback Host header when the unsafe-bind ack is set', async () => {
     vi.stubEnv('SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK', '1');
     try {

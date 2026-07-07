@@ -80,7 +80,9 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       // URL's hostname only for absent-header callers (e.g. Hono's in-process
       // app.request), where the URL host is the authority anyway.
       const host = hostHeaderHost(c.req.header('host')) ?? safeUrlHostname(c.req.url);
-      if (host === undefined || !LOOPBACK_HOSTS.has(host)) {
+      // Host comparison is case-insensitive (RFC 3986), so a legitimate
+      // `Host: LOCALHOST` or an upper-case authority is loopback too.
+      if (host === undefined || !LOOPBACK_HOSTS.has(host.toLowerCase())) {
         return c.json(errorBody('forbidden', 'host not allowed'), 403);
       }
     }
@@ -248,7 +250,10 @@ function hostHeaderHost(header: string | undefined): string | undefined {
 
 function safeUrlHostname(url: string): string | undefined {
   try {
-    return new URL(url).hostname;
+    // URL.hostname keeps IPv6 brackets ('[::1]'); strip them so the result
+    // matches the unbracketed loopback entries, like the Host-header path does.
+    const hostname = new URL(url).hostname;
+    return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
   } catch {
     return undefined;
   }
