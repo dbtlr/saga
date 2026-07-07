@@ -7,7 +7,6 @@ import {
   getSessionDetail,
   insertLifecycleBoundaryEvent,
   insertRawEvent,
-  isLifecycleBoundaryEventType,
   listRecentRawEvents,
   listRecentSessionRecords,
   RawEventInsertError,
@@ -394,33 +393,21 @@ async function ingestOneItem(
   let rawEventRow: RawEvent | undefined;
   try {
     if (snapshot === undefined) {
-      if (isLifecycleBoundaryEventType(envelope.eventType)) {
-        // A lifecycle boundary: store the raw event AND enqueue its settlement in
-        // one transaction so a crash can never strand it (the queue is the only
-        // settlement-discovery path).
-        const { rawEvent, inserted } = await runIngestEffect(
-          insertLifecycleBoundaryEvent(database, envelope),
-        );
-        rawEventRow = rawEvent;
-        return {
-          externalEventId,
-          index,
-          rawEventId: rawEvent.id,
-          status: inserted ? 'stored' : 'duplicate',
-        };
-      }
-      // A snapshot-less NON-boundary event (PreToolUse, Notification, ...): store
-      // the raw event only — no settlement, so the job never opens a spurious
-      // activity interval for it.
-      const existing = await runIngestEffect(
-        findRawEventByEnvelopeKey(database, envelopeKey(envelope)),
+      // A snapshot-less item is a lifecycle event: store the raw event AND enqueue
+      // its settlement in one transaction so a crash can never strand it (the queue
+      // is the only settlement-discovery path). This mirrors the CLI, which calls
+      // importLifecycleBoundaryEvent for EVERY snapshot-less event regardless of
+      // type — parity for the twin. The queue settles each once, so a reference-less
+      // 'updated'/'unchanged' outcome marks it 'settled' and leaves (no livelock).
+      const { rawEvent, inserted } = await runIngestEffect(
+        insertLifecycleBoundaryEvent(database, envelope),
       );
-      rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
+      rawEventRow = rawEvent;
       return {
         externalEventId,
         index,
-        rawEventId: rawEventRow.id,
-        status: existing === undefined ? 'stored' : 'duplicate',
+        rawEventId: rawEvent.id,
+        status: inserted ? 'stored' : 'duplicate',
       };
     }
 
