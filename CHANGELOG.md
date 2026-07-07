@@ -16,6 +16,26 @@ release. When a release is cut, this section is promoted to
 
 ### Added
 
+- **Service write path: `POST /v1/ingest` + asynchronous extraction job**
+  (SGA-238, ADR-0030/0039). The service now accepts writes through a dumb raw
+  store: `POST /v1/ingest` takes a batch of items, each a `RawEventEnvelope` plus
+  an optional session snapshot, stores the raw event (idempotent on its 4-column
+  key) and — when a snapshot is present — the `raw_session_records` row (idempotent
+  on `(sessionId, contentHash)`), and returns a per-item ack (`stored` /
+  `duplicate` / `error`) that carries only ids, never session content. The batch is
+  non-transactional: one bad item fails alone while its siblings still succeed.
+  Storing does NOT derive; a new `extraction` background job (registered alongside
+  `heartbeat`) discovers work by absence — active raw snapshots with no turns yet,
+  and stored `Stop`/`SessionStart` lifecycle events no interval references yet — and
+  derives sessions/turns/segments and settles activity intervals asynchronously,
+  idempotently, and safe under at-least-once. In `@saga/db`, `importRawSessionRecord`
+  is split into a reusable `storeRawSessionRecord` (store only) and
+  `deriveStoredSessionRecord` (derive from the stored snapshot), with lifecycle
+  settlement invocable from a stored raw event via `settleStoredLifecycleBoundaryEvent`;
+  `importRawSessionRecord` keeps its exact prior behavior (the synchronous CLI path
+  is unchanged). `@saga/api-client` gains a typed `ingest()` method with its own wire
+  request/response types. `@saga/cli` is untouched — the CLI's synchronous capture
+  path stays live until a later swap.
 - **Service API twin: Hono layer, `/v1` read endpoints + `@saga/api-client`**
   (SGA-238, ADR-0046/0051). The service now serves an HTTP API through Hono (the
   bare `node:http` request handler is replaced; `GET /health` keeps its exact

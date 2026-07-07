@@ -28,6 +28,10 @@ describe('startSagaService', () => {
         },
       },
       {
+        // This test injects a bogus databaseUrl (no live DB), so it overrides the
+        // default jobs to a DB-free liveness tick rather than the real set, whose
+        // extraction job would query on its first tick.
+        jobs: [() => ({ interval: Duration.minutes(5), name: 'heartbeat', run: Effect.void })],
         recordRun: () => Effect.void,
         validateDatabase: async () => undefined,
       },

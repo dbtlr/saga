@@ -11,6 +11,7 @@ import { Effect } from 'effect';
 import { createSagaApp } from './app.js';
 import type { HealthJobStatus } from './app.js';
 import { describeError } from './errors.js';
+import { extractionJobFactory } from './jobs/extraction.js';
 import { heartbeatJobFactory } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
 import type { JobFactory, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
@@ -54,7 +55,7 @@ export async function startSagaService(
   await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
 
-  const jobFactories = dependencies.jobs ?? [heartbeatJobFactory];
+  const jobFactories = dependencies.jobs ?? [heartbeatJobFactory, extractionJobFactory];
   // The database connection and runner fibers are acquired only after the port
   // is bound, so a failed listen can never leak them. Until then /health reports
   // an empty jobs list and /v1 handlers get a clean 503. An injected database is
