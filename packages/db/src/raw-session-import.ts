@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists, notInArray, or, sql } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import {
@@ -14,6 +14,7 @@ import {
 import type { DatabaseError, DatabaseService } from './database.js';
 import {
   activityIntervals,
+  rawEvents,
   rawSessionRecords,
   sessionSegmentEmbeddings,
   sessionRelationships,
@@ -24,7 +25,14 @@ import {
   users,
   workspaces,
 } from './schema.js';
-import type { ActivityInterval, RawSessionRecord, Session, SourceBinding, User } from './schema.js';
+import type {
+  ActivityInterval,
+  RawEvent,
+  RawSessionRecord,
+  Session,
+  SourceBinding,
+  User,
+} from './schema.js';
 import { insertDerivedSessionSegments, sessionSegmentsAreCurrent } from './session-segments.js';
 import type {
   NormalizedTranscriptTurn,
@@ -144,6 +152,21 @@ export type LifecycleBoundaryResult = {
   // NOTE: deliberately NO rawSessionRecord field — ADR-0030.
 };
 
+// SGA-238: the STORE half of a raw-session import. `operation` is 'inserted' for
+// a freshly stored snapshot and 'unchanged' when the (sessionId, contentHash)
+// row already existed (idempotent re-ingest). The derived turns/segments are NOT
+// produced here — the extraction job calls deriveStoredSessionRecord later.
+export type StoreRawSessionRecordResult = {
+  operation: RawSessionImportStatus;
+  rawSessionRecordId: string;
+};
+
+export type DeriveStoredSessionRecordResult = {
+  activityInterval: ActivityInterval;
+  rawSessionRecord: RawSessionRecord;
+  session: Session;
+};
+
 export class RawSessionImportError extends Data.TaggedError('RawSessionImportError')<{
   readonly message: string;
 }> {}
@@ -191,6 +214,528 @@ export function importLifecycleBoundaryEvent(
         ? cause
         : new RawSessionImportError({ message: errorMessage(cause) }),
   });
+}
+
+// SGA-238: the STORE half of importRawSessionRecord, for the async ingest write
+// path (POST /v1/ingest). It resolves the author/binding/session, homes the raw
+// snapshot onto an activity interval, and inserts the raw_session_records row
+// (idempotent on (sessionId, contentHash) via onConflictDoNothing) — but does NOT
+// derive turns/segments. The extraction job calls deriveStoredSessionRecord to
+// finish the work. Kept separate from importRawSessionRecord (which stays the
+// synchronous CLI path) rather than recomposing it; see the commit message.
+export function storeRawSessionRecord(
+  service: DatabaseService,
+  input: RawSessionImportInput,
+): Effect.Effect<StoreRawSessionRecordResult, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: () => storeRawSessionRecordWithConflictRetry(service, normalizeInput(input)),
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+// SGA-238: the DERIVE half. Reconstructs the normalization from the stored
+// snapshot (bodyText/contentType/harness) and regenerates turns+segments,
+// refreshes the session+interval, and reconciles relationships. Idempotent
+// (regenerateDerivedSessionRecords deletes-then-reinserts), so the extraction
+// job may re-run it under at-least-once delivery without producing duplicates.
+export function deriveStoredSessionRecord(
+  service: DatabaseService,
+  rawSessionRecordId: string,
+): Effect.Effect<DeriveStoredSessionRecordResult, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db.transaction((tx) =>
+        deriveStoredSessionRecordInTransactionUnsafe(
+          tx as DatabaseService['db'],
+          rawSessionRecordId,
+        ),
+      ),
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+// SGA-238: settle/open the activity interval for a stored lifecycle-boundary raw
+// event (a Stop/SessionStart hook event, ADR-0030 — no raw_session_record). The
+// ingest handler only STORES the raw event; the extraction job invokes this to
+// apply the boundary. The LifecycleBoundaryInput is reconstructed from the stored
+// raw event + its source binding (host) + the existing session's author, since
+// the OS-user author and host identity the CLI computes locally are not on the
+// envelope. Idempotent via importLifecycleBoundaryEvent's settlementTriggerRawEventId noop.
+export function settleStoredLifecycleBoundaryEvent(
+  service: DatabaseService,
+  rawEventId: string,
+): Effect.Effect<LifecycleBoundaryResult, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db.transaction((tx) =>
+        settleStoredLifecycleBoundaryEventInTransactionUnsafe(
+          tx as DatabaseService['db'],
+          rawEventId,
+        ),
+      ),
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+// SGA-238 extraction-job work discovery (absence-based, ADR-0039). The ACTIVE
+// raw snapshot for a session whose derived turns are not attributed to it has not
+// been derived yet. Only the active record is a candidate: regenerateDerivedSessionRecords
+// homes the session's turns to whichever record it last derived, so a superseded
+// (inactive) record is deliberately ignored — deriving it would clobber the
+// active snapshot's rows. A genuinely empty snapshot (no turns) re-appears each
+// tick; re-deriving it is an idempotent no-op (real transcripts always emit turns).
+export function listRawSessionRecordsAwaitingDerivation(
+  service: DatabaseService,
+  input: { limit: number },
+): Effect.Effect<string[], DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const rows = await service.db
+        .select({ id: rawSessionRecords.id })
+        .from(rawSessionRecords)
+        .where(
+          and(
+            eq(rawSessionRecords.isActive, true),
+            notExists(
+              service.db
+                .select({ one: sql`1` })
+                .from(sessionTurns)
+                .where(eq(sessionTurns.rawSessionRecordId, rawSessionRecords.id)),
+            ),
+          ),
+        )
+        .orderBy(asc(rawSessionRecords.createdAt))
+        .limit(input.limit);
+      return rows.map((row) => row.id);
+    },
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+// SGA-238 extraction-job work discovery. A stored lifecycle-boundary raw event
+// (Stop/SessionStart) that no activity interval yet references as its settlement
+// trigger — via the FK column or metadata.triggerRawEventId, matching
+// findLifecycleNoop's key — has not been settled. settleStoredLifecycleBoundaryEvent
+// re-checks the noop precisely, so this filter is safe under at-least-once.
+export function listLifecycleBoundaryEventsAwaitingSettlement(
+  service: DatabaseService,
+  input: { limit: number },
+): Effect.Effect<string[], DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const rows = await service.db
+        .select({ id: rawEvents.id })
+        .from(rawEvents)
+        .where(
+          and(
+            or(
+              sql`${rawEvents.eventType} like '%.Stop'`,
+              sql`${rawEvents.eventType} like '%.SessionStart'`,
+            ),
+            notExists(
+              service.db
+                .select({ one: sql`1` })
+                .from(activityIntervals)
+                .where(
+                  and(
+                    eq(activityIntervals.workspaceId, rawEvents.workspaceId),
+                    or(
+                      eq(activityIntervals.settlementTriggerRawEventId, rawEvents.id),
+                      // metadata ->> yields text; cast the uuid id so the compare
+                      // is text = text (Postgres has no implicit text/uuid coercion).
+                      sql`${activityIntervals.metadata} ->> 'triggerRawEventId' = ${rawEvents.id}::text`,
+                    ),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .orderBy(asc(rawEvents.occurredAt))
+        .limit(input.limit);
+      return rows.map((row) => row.id);
+    },
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
+async function storeRawSessionRecordWithConflictRetry(
+  service: DatabaseService,
+  input: NormalizedRawSessionImportInput,
+): Promise<StoreRawSessionRecordResult> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await service.db.transaction((tx) =>
+        storeRawSessionRecordInTransactionUnsafe(tx as DatabaseService['db'], input),
+      );
+    } catch (cause) {
+      if (attempt === maxAttempts || !isRetryableImportConflict(cause)) {
+        throw cause;
+      }
+    }
+  }
+  throw new RawSessionImportError({ message: 'raw session store retry exhausted' });
+}
+
+// Mirrors the fresh-insert path of importRawSessionRecordInTransactionUnsafe up to
+// (and including) the raw_session_records insert, then stops. It intentionally
+// omits the noop/reuse idempotency branches of the synchronous path: an ingest
+// re-post of identical content is caught by the (sessionId, contentHash) lookup
+// and reported as 'unchanged', and re-deriving is the job's idempotent concern.
+async function storeRawSessionRecordInTransactionUnsafe(
+  tx: DatabaseService['db'],
+  input: NormalizedRawSessionImportInput,
+): Promise<StoreRawSessionRecordResult> {
+  const [workspace] = await tx
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  if (workspace === undefined) {
+    throw new RawSessionImportError({
+      message: 'workspace binding is required before importing raw sessions',
+    });
+  }
+
+  const now = new Date();
+  const transcriptNormalization = normalizeTranscript(input);
+  const authorUser = await upsertHostAuthor(tx, { input, now });
+  const sourceBinding = await resolveRawSessionSourceBinding(tx, { input, now });
+  const session = await resolveSession(tx, {
+    authorUserId: authorUser.id,
+    input,
+    sourceBindingId: sourceBinding.id,
+  });
+
+  const [activeRecord] = await tx
+    .select()
+    .from(rawSessionRecords)
+    .where(
+      and(
+        eq(rawSessionRecords.workspaceId, input.workspaceId),
+        eq(rawSessionRecords.sessionId, session.id),
+        eq(rawSessionRecords.isActive, true),
+      ),
+    )
+    .limit(1);
+  assertExpectedActiveRawSessionRecord(input, activeRecord);
+
+  const existingRecord = await findRawSessionRecordByContentHash(tx, {
+    contentHash: input.contentHash,
+    sessionId: session.id,
+  });
+  if (existingRecord !== undefined) {
+    return { operation: 'unchanged', rawSessionRecordId: existingRecord.id };
+  }
+
+  const [maxSnapshot] = await tx
+    .select({ snapshotOrdinal: rawSessionRecords.snapshotOrdinal })
+    .from(rawSessionRecords)
+    .where(eq(rawSessionRecords.sessionId, session.id))
+    .orderBy(desc(rawSessionRecords.snapshotOrdinal))
+    .limit(1);
+
+  const activityResolution = await resolveActivityInterval(tx, {
+    input,
+    now,
+    session,
+    transcriptNormalization,
+  });
+  const activityInterval = activityResolution.activityInterval;
+  const nextSnapshotOrdinal = (maxSnapshot?.snapshotOrdinal ?? -1) + 1;
+
+  if (activeRecord !== undefined) {
+    const [inactiveRawSessionRecord] = await tx
+      .update(rawSessionRecords)
+      .set({ isActive: false, updatedAt: now })
+      .where(
+        and(
+          eq(rawSessionRecords.workspaceId, input.workspaceId),
+          eq(rawSessionRecords.id, activeRecord.id),
+          eq(rawSessionRecords.isActive, true),
+        ),
+      )
+      .returning({ id: rawSessionRecords.id });
+    if (inactiveRawSessionRecord === undefined) {
+      const racedRecord = await findRawSessionRecordByContentHash(tx, {
+        contentHash: input.contentHash,
+        sessionId: session.id,
+      });
+      if (racedRecord !== undefined) {
+        return { operation: 'unchanged', rawSessionRecordId: racedRecord.id };
+      }
+      throw new RawSessionImportError({
+        message: 'active raw session record changed during import',
+      });
+    }
+  }
+
+  const rawBody = buildRawBody(input);
+  const [insertedRawSessionRecord] = await tx
+    .insert(rawSessionRecords)
+    .values({
+      activityIntervalId: activityInterval.id,
+      authorUserId: authorUser.id,
+      bodyJson: rawBody.bodyJson,
+      bodyText: rawBody.bodyText,
+      capturedAt: input.capturedAt,
+      contentBytes: input.contentBytes,
+      contentHash: input.contentHash,
+      contentType: input.contentType,
+      harness: input.harness,
+      harnessSessionId: input.harnessSessionId,
+      isActive: true,
+      metadata: {
+        ...input.metadata,
+        contentBytes: input.contentBytes,
+        harness: input.harnessMetadata,
+        normalization: transcriptNormalization?.metadata,
+        sourceLocatorHash: input.sourceLocatorHash,
+      },
+      provenance: input.provenance,
+      redactedFromRawSessionRecordId: input.rawRecord?.redactedFromRawSessionRecordId,
+      sessionId: session.id,
+      snapshotOrdinal: nextSnapshotOrdinal,
+      sourceBindingId: sourceBinding.id,
+      sourceLocator: input.locator,
+      status: input.rawRecord?.status ?? 'captured',
+      workspaceId: input.workspaceId,
+    })
+    .onConflictDoNothing({
+      target: [rawSessionRecords.sessionId, rawSessionRecords.contentHash],
+    })
+    .returning();
+  if (insertedRawSessionRecord === undefined) {
+    const racedRecord = await findRawSessionRecordByContentHash(tx, {
+      contentHash: input.contentHash,
+      sessionId: session.id,
+    });
+    if (racedRecord === undefined) {
+      throw new RawSessionImportError({ message: 'raw session record insert returned no row' });
+    }
+    return { operation: 'unchanged', rawSessionRecordId: racedRecord.id };
+  }
+
+  return { operation: 'inserted', rawSessionRecordId: insertedRawSessionRecord.id };
+}
+
+async function deriveStoredSessionRecordInTransactionUnsafe(
+  tx: DatabaseService['db'],
+  rawSessionRecordId: string,
+): Promise<DeriveStoredSessionRecordResult> {
+  const [record] = await tx
+    .select()
+    .from(rawSessionRecords)
+    .where(eq(rawSessionRecords.id, rawSessionRecordId))
+    .limit(1);
+  if (record === undefined) {
+    throw new RawSessionImportError({ message: 'stored raw session record is missing' });
+  }
+  if (record.activityIntervalId === null) {
+    throw new RawSessionImportError({
+      message: 'stored raw session record has no activity interval',
+    });
+  }
+
+  const [session] = await tx
+    .select()
+    .from(sessions)
+    .where(and(eq(sessions.id, record.sessionId), eq(sessions.workspaceId, record.workspaceId)))
+    .limit(1);
+  if (session === undefined) {
+    throw new RawSessionImportError({ message: 'stored raw session record session is missing' });
+  }
+
+  const activityInterval = await findActivityIntervalById(tx, {
+    id: record.activityIntervalId,
+    workspaceId: record.workspaceId,
+  });
+
+  const input = reconstructNormalizedInputFromStoredRecord(record, session);
+  const transcriptNormalization = normalizeTranscript(input);
+  const derived = await deriveInsertedSessionRecordInTransaction(tx, {
+    activityInterval,
+    input,
+    now: new Date(),
+    rawSessionRecordId: record.id,
+    sessionId: session.id,
+    // The snapshot never settles the interval; a Stop is a separate lifecycle raw
+    // event handled by settleStoredLifecycleBoundaryEvent (ADR-0030/0039).
+    settlement: undefined,
+    session,
+    transcriptNormalization,
+  });
+
+  return {
+    activityInterval: derived.activityInterval,
+    rawSessionRecord: record,
+    session: derived.session,
+  };
+}
+
+// The derive tail (refresh + regenerate + relationships) reads only these fields
+// of the normalized input; author/host are unused because the interval is already
+// homed. For a transcript snapshot the recomputed TranscriptNormalization drives
+// session model/status/title, so reconstructing them from the row/session is
+// faithful; the search-text fallback path reads model/status/title off the
+// session, which store set from the original input at insert time.
+function reconstructNormalizedInputFromStoredRecord(
+  record: RawSessionRecord,
+  session: Session,
+): NormalizedRawSessionImportInput {
+  return {
+    author: { handle: 'stored' },
+    capturedAt: record.capturedAt,
+    contentBytes: record.contentBytes ?? 0,
+    contentHash: record.contentHash,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- stored column is one of the RawSessionContentType literals
+    contentType: record.contentType as RawSessionContentType,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- stored column is one of the RawSessionHarness literals
+    harness: record.harness as RawSessionHarness,
+    harnessSessionId: record.harnessSessionId ?? undefined,
+    host: { id: 'stored' },
+    model: session.model ?? undefined,
+    rawContent: record.bodyText ?? '',
+    sourceBindingId: record.sourceBindingId ?? undefined,
+    sourceLocatorHash: undefined,
+    locator: record.sourceLocator ?? undefined,
+    workspaceId: record.workspaceId,
+  };
+}
+
+async function settleStoredLifecycleBoundaryEventInTransactionUnsafe(
+  tx: DatabaseService['db'],
+  rawEventId: string,
+): Promise<LifecycleBoundaryResult> {
+  const [event] = await tx.select().from(rawEvents).where(eq(rawEvents.id, rawEventId)).limit(1);
+  if (event === undefined) {
+    throw new RawSessionImportError({ message: 'stored raw event is missing' });
+  }
+
+  const input = await reconstructLifecycleInputFromStoredEvent(tx, event);
+  return importLifecycleBoundaryEventInTransactionUnsafe(tx, input);
+}
+
+// A lifecycle-boundary raw event carries eventType "<harness>.<HookEventName>"
+// (e.g. "claude.Stop"); the interval semantics live entirely in the hook name.
+// host identity is recovered from the source binding config, and the author from
+// the existing session's author user (falling back to the harness actor when no
+// session exists yet), since the CLI derives those from local machine state that
+// the envelope does not carry.
+async function reconstructLifecycleInputFromStoredEvent(
+  tx: DatabaseService['db'],
+  event: RawEvent,
+): Promise<NormalizedRawSessionImportInput> {
+  const harness: RawSessionHarness = event.sourceType === 'codex' ? 'codex' : 'claude';
+  const hookEventName = event.eventType.includes('.')
+    ? event.eventType.slice(event.eventType.indexOf('.') + 1)
+    : event.eventType;
+  const payload = asRecord(event.payload);
+  const sessionStartSource = cleanOptional(
+    readString(payload.source) ?? readString(payload.session_start_source),
+  );
+  const harnessSessionId =
+    cleanOptional(event.sessionId ?? undefined) ?? cleanOptional(readString(payload.session_id));
+
+  const [sourceBinding] = await tx
+    .select()
+    .from(sourceBindings)
+    .where(eq(sourceBindings.id, event.sourceBindingId))
+    .limit(1);
+  const bindingConfig = asRecord(sourceBinding?.config);
+  const hostId = readString(bindingConfig.hostId) ?? event.sourceId;
+  const author = await resolveLifecycleAuthorForStoredEvent(tx, {
+    harness,
+    harnessSessionId,
+    hostId,
+    sourceBindingId: event.sourceBindingId,
+    workspaceId: event.workspaceId,
+  });
+
+  return {
+    activity: {
+      hookEventName,
+      sessionStartSource,
+      settlementTriggerRawEventId: event.id,
+    },
+    author,
+    capturedAt: event.occurredAt,
+    contentBytes: 0,
+    contentHash: '',
+    contentType: 'text',
+    harness,
+    harnessSessionId,
+    host: {
+      id: hostId,
+      label: readString(bindingConfig.hostLabel),
+      projectRoot: readString(bindingConfig.projectRoot),
+    },
+    locator: undefined,
+    model: cleanOptional(readString(payload.model)),
+    rawContent: '',
+    sourceBindingId: event.sourceBindingId,
+    sourceLocatorHash: undefined,
+    status: hookEventName === 'Stop' ? 'completed' : 'active',
+    workspaceId: event.workspaceId,
+  };
+}
+
+async function resolveLifecycleAuthorForStoredEvent(
+  tx: DatabaseService['db'],
+  input: {
+    harness: RawSessionHarness;
+    harnessSessionId: string | undefined;
+    hostId: string;
+    sourceBindingId: string;
+    workspaceId: string;
+  },
+): Promise<RawSessionImportInput['author']> {
+  if (input.harnessSessionId !== undefined) {
+    const [session] = await tx
+      .select({ authorUserId: sessions.authorUserId })
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, input.workspaceId),
+          eq(sessions.sourceBindingId, input.sourceBindingId),
+          eq(sessions.harness, input.harness),
+          eq(sessions.harnessSessionId, input.harnessSessionId),
+        ),
+      )
+      .limit(1);
+    if (session !== undefined) {
+      const [authorUser] = await tx
+        .select()
+        .from(users)
+        .where(eq(users.id, session.authorUserId))
+        .limit(1);
+      if (authorUser !== undefined) {
+        return {
+          displayName: authorUser.displayName ?? undefined,
+          externalSubject: authorUser.externalSubject ?? undefined,
+          handle: authorUser.handle,
+        };
+      }
+    }
+  }
+  // No session yet (e.g. a first SessionStart): attribute to the harness host, the
+  // same externalSubject upsertHostAuthor defaults to.
+  return { externalSubject: input.hostId, handle: input.harness };
 }
 
 async function importRawSessionRecordWithConflictRetry(
@@ -448,38 +993,71 @@ async function importRawSessionRecordInTransactionUnsafe(
     };
   }
 
-  const updated = await refreshSessionAndActivityInterval(tx, {
+  const derived = await deriveInsertedSessionRecordInTransaction(tx, {
     activityInterval,
     input,
     now,
     rawSessionRecordId: insertedRawSessionRecord.id,
+    sessionId: session.id,
     settlement: activityResolution.settlement,
     session,
     transcriptNormalization,
   });
 
-  await regenerateDerivedSessionRecords(tx, {
-    activityIntervalId: activityInterval.id,
-    input,
-    transcriptNormalization,
-    rawSessionRecordId: insertedRawSessionRecord.id,
-    sessionId: session.id,
-  });
-
-  await deriveSessionRelationships(tx, {
-    input,
-    session: updated.session,
-  });
-
   return {
-    activityInterval: updated.activityInterval,
+    activityInterval: derived.activityInterval,
     authorUser,
     contentHash: input.contentHash,
     operation: 'inserted',
     rawSessionRecord: insertedRawSessionRecord,
-    session: updated.session,
+    session: derived.session,
     sourceBinding,
   };
+}
+
+// The DERIVE tail shared by the synchronous importRawSessionRecord insert path
+// and the asynchronous deriveStoredSessionRecord (SGA-238). Given a stored raw
+// record's snapshot (already inserted, interval already homed), it refreshes the
+// session/interval, regenerates turns+segments, and reconciles relationships.
+// regenerateDerivedSessionRecords deletes-then-reinserts the session's derived
+// rows, so re-running this is idempotent (safe under the job's at-least-once).
+async function deriveInsertedSessionRecordInTransaction(
+  tx: DatabaseService['db'],
+  input: {
+    activityInterval: ActivityInterval;
+    input: NormalizedRawSessionImportInput;
+    now: Date;
+    rawSessionRecordId: string;
+    sessionId: string;
+    settlement?: ActivityIntervalSettlement | undefined;
+    session: Session;
+    transcriptNormalization?: TranscriptNormalization | undefined;
+  },
+): Promise<{ activityInterval: ActivityInterval; session: Session }> {
+  const updated = await refreshSessionAndActivityInterval(tx, {
+    activityInterval: input.activityInterval,
+    input: input.input,
+    now: input.now,
+    rawSessionRecordId: input.rawSessionRecordId,
+    settlement: input.settlement,
+    session: input.session,
+    transcriptNormalization: input.transcriptNormalization,
+  });
+
+  await regenerateDerivedSessionRecords(tx, {
+    activityIntervalId: input.activityInterval.id,
+    input: input.input,
+    transcriptNormalization: input.transcriptNormalization,
+    rawSessionRecordId: input.rawSessionRecordId,
+    sessionId: input.sessionId,
+  });
+
+  await deriveSessionRelationships(tx, {
+    input: input.input,
+    session: updated.session,
+  });
+
+  return updated;
 }
 
 async function findCurrentNoopRawSessionImport(

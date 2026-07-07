@@ -59,6 +59,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hono/node-server": "^2.0.6",
+        "@saga/contracts": "workspace:*",
         "@saga/db": "workspace:*",
         "@saga/runtime": "workspace:*",
         "effect": "^3.21.4",
@@ -67,6 +68,7 @@
       },
       "devDependencies": {
         "@saga/api-client": "workspace:*",
+        "drizzle-orm": "^0.45.2",
       },
     },
     "packages/active-context": {

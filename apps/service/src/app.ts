@@ -1,16 +1,22 @@
+import type { RawEventEnvelope, TrustLevel } from '@saga/contracts';
 import {
   expandRecallContext,
+  findRawEventByEnvelopeKey,
   getMigrationStatus,
   getSessionDetail,
+  insertRawEvent,
   listRecentRawEvents,
   listRecentSessionRecords,
+  RawEventInsertError,
+  RawSessionImportError,
   RecallSearchError,
   RecallSegmentNotFoundError,
   redactAgentFacingSessionValue,
   searchSessionRecall,
   SessionRecordQueryError,
+  storeRawSessionRecord,
 } from '@saga/db';
-import type { DatabaseService } from '@saga/db';
+import type { DatabaseService, RawEvent, RawSessionImportInput } from '@saga/db';
 import { Cause, Effect, Exit, Option } from 'effect';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
@@ -51,6 +57,22 @@ const UNSAFE_BIND_ENV = 'SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK';
 // Recall is the only body-reading route; cap it so an oversized payload is
 // rejected with 413 before it is buffered into memory and parsed.
 const MAX_RECALL_BODY_BYTES = 1024 * 1024;
+
+// Ingest snapshots carry whole transcript bodies (and a batch of them), so the
+// cap is larger than recall's — still bounded so an oversized batch is a 413
+// before it is buffered and parsed.
+const MAX_INGEST_BODY_BYTES = 8 * 1024 * 1024;
+
+// A per-item ack (SGA-238). It never echoes the envelope payload or any session
+// content back to the caller — only stable ids and a status — so the ingest
+// response needs no agent-facing redaction pass.
+type IngestItemResult = {
+  code?: string;
+  externalEventId: string;
+  rawEventId?: string;
+  rawSessionRecordId?: string;
+  status: 'stored' | 'duplicate' | 'error';
+};
 
 // A response error carrying the HTTP status and the machine code echoed in the
 // `{ error: { code, message } }` body. Handlers throw it for validation misses;
@@ -157,6 +179,33 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         }),
       );
       return c.json(redactAgentFacingSessionValue(result));
+    },
+  );
+
+  // The WRITE path (SGA-238): a dumb raw store. Each item is a raw event (always
+  // stored, idempotent on the 4-col tuple) plus an optional session snapshot
+  // (stored, NOT derived — the extraction job derives it). The batch is
+  // non-transactional across items: one bad item gets `status:'error'` while its
+  // siblings still succeed. Acks carry only ids + a status, never payloads, so no
+  // agent-facing redaction is applied.
+  app.post(
+    '/v1/ingest',
+    bodyLimit({
+      maxSize: MAX_INGEST_BODY_BYTES,
+      onError: (c) => c.json(errorBody('bad_request', 'request body too large'), 413),
+    }),
+    async (c) => {
+      const database = requireDatabase();
+      const body = await readJsonBody(c);
+      if (!Array.isArray(body.items)) {
+        throw new HttpError(400, 'bad_request', 'items must be an array');
+      }
+      const results: IngestItemResult[] = [];
+      for (const item of body.items) {
+        // eslint-disable-next-line no-await-in-loop -- ordered, per-item isolation
+        results.push(await ingestOneItem(database, item));
+      }
+      return c.json({ results });
     },
   );
 
@@ -295,6 +344,271 @@ function mapDbError(error: unknown): HttpError {
 
 function errorBody(code: string, message: string): { error: { code: string; message: string } } {
   return { error: { code, message } };
+}
+
+// Store one ingest item and return its ack. Isolated: any failure becomes an
+// `error` ack for THIS item rather than throwing, so the batch stays partial-safe.
+async function ingestOneItem(
+  database: DatabaseService,
+  rawItem: unknown,
+): Promise<IngestItemResult> {
+  const item = asObject(rawItem);
+  // Pull the ack key up front so even a failed item can be attributed.
+  const externalEventId = readEnvelopeExternalEventId(item?.envelope);
+  try {
+    if (item === undefined) {
+      throw new HttpError(400, 'bad_request', 'each ingest item must be an object');
+    }
+    const envelope = coerceEnvelope(item.envelope);
+    const existing = await runIngestEffect(
+      findRawEventByEnvelopeKey(database, {
+        externalEventId: envelope.externalEventId,
+        sourceId: envelope.sourceId,
+        sourceType: envelope.sourceType,
+        workspaceId: envelope.workspaceId,
+      }),
+    );
+    const alreadyStored = existing !== undefined;
+    const rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
+
+    let rawSessionRecordId: string | undefined;
+    let snapshotInserted = false;
+    if (item.snapshot !== undefined && item.snapshot !== null) {
+      const snapshot = coerceSnapshot(item.snapshot);
+      const stored = await runIngestEffect(
+        storeRawSessionRecord(database, buildStoreInput(envelope, snapshot, rawEventRow)),
+      );
+      rawSessionRecordId = stored.rawSessionRecordId;
+      snapshotInserted = stored.operation === 'inserted';
+    }
+
+    // A duplicate only when nothing new landed: the raw event already existed and
+    // (there was no snapshot, or the snapshot row already existed too).
+    const status: IngestItemResult['status'] =
+      !alreadyStored || snapshotInserted ? 'stored' : 'duplicate';
+    return {
+      externalEventId,
+      rawEventId: rawEventRow.id,
+      status,
+      ...(rawSessionRecordId !== undefined ? { rawSessionRecordId } : {}),
+    };
+  } catch (cause) {
+    return { code: ingestErrorCode(cause), externalEventId, status: 'error' };
+  }
+}
+
+// Run a @saga/db write Effect for one item. A typed failure is rethrown so the
+// per-item catch maps it to an error code; a defect is logged (never leaked) and
+// surfaced as a generic internal error for that item.
+async function runIngestEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+  const exit = await Effect.runPromiseExit(effect);
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+  const failure = Cause.failureOption(exit.cause);
+  if (Option.isSome(failure)) {
+    throw failure.value;
+  }
+  console.error(Cause.pretty(exit.cause));
+  throw new HttpError(500, 'internal', 'internal error');
+}
+
+function ingestErrorCode(cause: unknown): string {
+  if (cause instanceof RawEventInsertError) {
+    return 'raw_event_insert';
+  }
+  if (cause instanceof RawSessionImportError) {
+    return 'raw_session_store';
+  }
+  if (cause instanceof HttpError) {
+    return cause.code;
+  }
+  return 'internal';
+}
+
+function readEnvelopeExternalEventId(rawEnvelope: unknown): string {
+  const envelope = asObject(rawEnvelope);
+  const value = envelope?.externalEventId;
+  return typeof value === 'string' ? value : '';
+}
+
+// The service re-derives capturedAt (from the raw event's occurredAt) and the
+// settlement trigger (the inserted raw event's id) here, so the client never
+// sends them; workspaceId/sourceBindingId ride on the envelope. Everything else
+// — the local-machine author/host identity and the transcript body — comes from
+// the snapshot because the service cannot reconstruct it (see the CLI capture
+// path). storeRawSessionRecord stores this WITHOUT deriving turns/segments.
+function buildStoreInput(
+  envelope: RawEventEnvelope,
+  snapshot: IngestSnapshot,
+  rawEventRow: RawEvent,
+): RawSessionImportInput {
+  return {
+    activity: {
+      hookEventName: snapshot.activity?.hookEventName,
+      sessionStartSource: snapshot.activity?.sessionStartSource,
+      settlementTriggerRawEventId: rawEventRow.id,
+    },
+    author: snapshot.author,
+    capturedAt: rawEventRow.occurredAt,
+    contentType: snapshot.contentType,
+    harness: snapshot.harness,
+    harnessMetadata: snapshot.harnessMetadata,
+    harnessSessionId: snapshot.harnessSessionId,
+    host: snapshot.host,
+    locator: snapshot.locator,
+    metadata: snapshot.metadata,
+    model: snapshot.model,
+    provenance: snapshot.provenance,
+    rawContent: snapshot.rawContent,
+    sourceBindingId: envelope.sourceBindingId,
+    status: snapshot.status,
+    title: snapshot.title,
+    workspaceId: envelope.workspaceId,
+  };
+}
+
+type IngestSnapshot = {
+  activity?:
+    | { hookEventName?: string | undefined; sessionStartSource?: string | undefined }
+    | undefined;
+  author: {
+    displayName?: string | undefined;
+    externalSubject?: string | undefined;
+    handle: string;
+  };
+  contentType: 'json' | 'jsonl' | 'text';
+  harness: 'claude' | 'codex';
+  harnessMetadata?: Record<string, unknown> | undefined;
+  harnessSessionId?: string | undefined;
+  host: { id: string; label?: string | undefined; projectRoot?: string | undefined };
+  locator?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
+  model?: string | undefined;
+  provenance?: Record<string, unknown> | undefined;
+  rawContent: string;
+  status?: 'active' | 'completed' | undefined;
+  title?: string | undefined;
+};
+
+function coerceEnvelope(raw: unknown): RawEventEnvelope {
+  const env = asObject(raw);
+  if (env === undefined) {
+    throw new HttpError(400, 'bad_request', 'item.envelope must be an object');
+  }
+  return {
+    actorId: requireString(env.actorId, 'envelope.actorId'),
+    eventType: requireString(env.eventType, 'envelope.eventType'),
+    externalEventId: requireString(env.externalEventId, 'envelope.externalEventId'),
+    ingestedAt: optionalString(env.ingestedAt, 'envelope.ingestedAt'),
+    occurredAt: requireString(env.occurredAt, 'envelope.occurredAt'),
+    payload: requireRecord(env.payload, 'envelope.payload'),
+    provenance: requireRecord(env.provenance, 'envelope.provenance'),
+    sessionId: optionalString(env.sessionId, 'envelope.sessionId'),
+    sourceBindingId: requireString(env.sourceBindingId, 'envelope.sourceBindingId'),
+    sourceId: requireString(env.sourceId, 'envelope.sourceId'),
+    sourceType: requireString(env.sourceType, 'envelope.sourceType'),
+    traceId: optionalString(env.traceId, 'envelope.traceId'),
+    trustLevel: coerceTrustLevel(env.trustLevel),
+    workspaceId: requireString(env.workspaceId, 'envelope.workspaceId'),
+  };
+}
+
+function coerceSnapshot(raw: unknown): IngestSnapshot {
+  const s = asObject(raw);
+  if (s === undefined) {
+    throw new HttpError(400, 'bad_request', 'item.snapshot must be an object');
+  }
+  const author = asObject(s.author);
+  if (author === undefined) {
+    throw new HttpError(400, 'bad_request', 'snapshot.author must be an object');
+  }
+  const host = asObject(s.host);
+  if (host === undefined) {
+    throw new HttpError(400, 'bad_request', 'snapshot.host must be an object');
+  }
+  const activity = asObject(s.activity);
+  return {
+    activity:
+      activity === undefined
+        ? undefined
+        : {
+            hookEventName: optionalString(
+              activity.hookEventName,
+              'snapshot.activity.hookEventName',
+            ),
+            sessionStartSource: optionalString(
+              activity.sessionStartSource,
+              'snapshot.activity.sessionStartSource',
+            ),
+          },
+    author: {
+      displayName: optionalString(author.displayName, 'snapshot.author.displayName'),
+      externalSubject: optionalString(author.externalSubject, 'snapshot.author.externalSubject'),
+      handle: requireString(author.handle, 'snapshot.author.handle'),
+    },
+    contentType: coerceEnum(
+      s.contentType,
+      ['json', 'jsonl', 'text'] as const,
+      'snapshot.contentType',
+    ),
+    harness: coerceEnum(s.harness, ['claude', 'codex'] as const, 'snapshot.harness'),
+    harnessMetadata: optionalRecord(s.harnessMetadata, 'snapshot.harnessMetadata'),
+    harnessSessionId: optionalString(s.harnessSessionId, 'snapshot.harnessSessionId'),
+    host: {
+      id: requireString(host.id, 'snapshot.host.id'),
+      label: optionalString(host.label, 'snapshot.host.label'),
+      projectRoot: optionalString(host.projectRoot, 'snapshot.host.projectRoot'),
+    },
+    locator: optionalString(s.locator, 'snapshot.locator'),
+    metadata: optionalRecord(s.metadata, 'snapshot.metadata'),
+    model: optionalString(s.model, 'snapshot.model'),
+    provenance: optionalRecord(s.provenance, 'snapshot.provenance'),
+    rawContent: requireString(s.rawContent, 'snapshot.rawContent'),
+    status:
+      s.status === undefined || s.status === null
+        ? undefined
+        : coerceEnum(s.status, ['active', 'completed'] as const, 'snapshot.status'),
+    title: optionalString(s.title, 'snapshot.title'),
+  };
+}
+
+function coerceTrustLevel(value: unknown): TrustLevel {
+  if (value === 'raw' || value === 'trusted') {
+    return value;
+  }
+  throw new HttpError(400, 'bad_request', "envelope.trustLevel must be 'raw' or 'trusted'");
+}
+
+function coerceEnum<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
+  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- membership checked against the literal set
+    return value as T;
+  }
+  throw new HttpError(400, 'bad_request', `${label} must be one of ${allowed.join(', ')}`);
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed to a non-array object above
+  return value as Record<string, unknown>;
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  const record = asObject(value);
+  if (record === undefined) {
+    throw new HttpError(400, 'bad_request', `${label} must be an object`);
+  }
+  return record;
+}
+
+function optionalRecord(value: unknown, label: string): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return requireRecord(value, label);
 }
 
 async function readJsonBody(c: Context): Promise<Record<string, unknown>> {

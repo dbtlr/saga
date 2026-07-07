@@ -2,6 +2,8 @@ import type {
   ApiErrorBody,
   GetSessionContextRequest,
   GetSessionRequest,
+  IngestRequest,
+  IngestResponse,
   ListEventsRequest,
   ListSessionsRequest,
   RawEvent,
@@ -61,6 +63,13 @@ export class SagaApiClient {
 
   recall(request: RecallRequest): Promise<RecallSearchResult> {
     return this.#request<RecallSearchResult>('POST', '/v1/recall', { body: request });
+  }
+
+  // The write path (SGA-238): stores raw events and optional session snapshots.
+  // Returns a per-item ack; the acks mean STORED, not derived — the extraction
+  // job turns stored snapshots into sessions/turns/segments asynchronously.
+  ingest(request: IngestRequest): Promise<IngestResponse> {
+    return this.#request<IngestResponse>('POST', '/v1/ingest', { body: request });
   }
 
   listSessions(request: ListSessionsRequest): Promise<RecentSessionRecord[]> {
