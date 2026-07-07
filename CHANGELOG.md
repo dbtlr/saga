@@ -21,7 +21,11 @@ release. When a release is cut, this section is promoted to
   bare `node:http` request handler is replaced; `GET /health` keeps its exact
   byte-compatible response for launchd). The service refuses to start on a
   non-loopback `SAGA_SERVICE_HOST` (only `127.0.0.1`, `::1`, `localhost`) until
-  service auth exists (ADR-0051). New read endpoints under `/v1`, thin handlers
+  service auth exists (ADR-0051); a containerized deployment, where the port
+  publish is the exposure boundary, asserts that explicitly with
+  `SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK=1` (dies at the auth phase). The
+  service Dockerfile's workspace-manifest COPY list is now guarded by a unit
+  test after `packages/client-cli` fell out of it. New read endpoints under `/v1`, thin handlers
   over the existing `@saga/db` read functions with a consistent
   `{ error: { code, message } }` shape and query/body workspace scoping: `GET
   /v1/info`, `POST /v1/recall`, `GET /v1/sessions`, `GET /v1/sessions/:id`, `GET
