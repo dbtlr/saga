@@ -90,8 +90,13 @@
     "packages/client-cli": {
       "name": "@saga/client-cli",
       "version": "0.0.0",
+      "bin": {
+        "saga-client": "./bin/saga-client.js",
+      },
       "dependencies": {
+        "@saga/api-client": "workspace:*",
         "@saga/runtime": "workspace:*",
+        "tsx": "^4.22.4",
       },
     },
     "packages/collectors": {

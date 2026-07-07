@@ -1,3 +1,5 @@
+import type { ColorMode, GlobalOptions, OutputFormat } from '@saga/client-cli';
+
 import { runDoctor } from './doctor.js';
 import { runHarnessCommand } from './harness.js';
 import { runIndexCommand } from './index-command.js';
@@ -12,16 +14,7 @@ import { runSessionsCommand } from './sessions.js';
 import { runStartCommand } from './start.js';
 import { VERSION } from './version.js';
 
-export type OutputFormat = 'records' | 'json' | 'jsonl' | 'ids';
-export type ColorMode = 'auto' | 'always' | 'never';
-
-export type GlobalOptions = {
-  ascii: boolean;
-  color: ColorMode;
-  format: OutputFormat;
-  help: boolean;
-  version: boolean;
-};
+export type { ColorMode, GlobalOptions, OutputFormat } from '@saga/client-cli';
 
 export type ParsedCommand = {
   args: string[];

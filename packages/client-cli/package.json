@@ -2,6 +2,9 @@
   "name": "@saga/client-cli",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "saga-client": "./bin/saga-client.js"
+  },
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
@@ -10,9 +13,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "tsc -p tsconfig.json --noEmit",
+    "saga-client": "tsx src/main.ts",
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@saga/runtime": "workspace:*"
+    "@saga/api-client": "workspace:*",
+    "@saga/runtime": "workspace:*",
+    "tsx": "^4.22.4"
   }
 }
