@@ -5,6 +5,7 @@ import {
   listRecentRawEvents,
   listRecentSessionRecords,
   RecallSearchError,
+  redactAgentFacingSessionValue,
   searchSessionRecall,
   SessionRecordQueryError,
 } from '@saga/db';
@@ -12,6 +13,7 @@ import type { DatabaseService } from '@saga/db';
 import { Cause, Effect, Exit, Option } from 'effect';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 
 import type { JobStatus } from './jobs/job-runner.js';
 
@@ -35,7 +37,19 @@ export type SagaAppDependencies = {
 
 // The status codes the API emits; each is a Hono ContentfulStatusCode, so an
 // HttpError.status flows into c.json without a cast.
-type ApiStatus = 400 | 404 | 500 | 503;
+type ApiStatus = 400 | 403 | 404 | 413 | 500 | 503;
+
+// A DNS-rebinding guard: an off-box attacker who lures a loopback client into
+// resolving an attacker domain to 127.0.0.1 still fails the Host check. Mirrors
+// server.ts's bind-gate allow-set and honors the same unsafe escape so a
+// deliberately-exposed deployment (its port publish is the boundary) opts out
+// (ADR-0051). Kept local rather than imported to avoid an app<->server cycle.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+const UNSAFE_BIND_ENV = 'SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK';
+
+// Recall is the only body-reading route; cap it so an oversized payload is
+// rejected with 413 before it is buffered into memory and parsed.
+const MAX_RECALL_BODY_BYTES = 1024 * 1024;
 
 // A response error carrying the HTTP status and the machine code echoed in the
 // `{ error: { code, message } }` body. Handlers throw it for validation misses;
@@ -54,6 +68,23 @@ class HttpError extends Error {
 
 export function createSagaApp(dependencies: SagaAppDependencies): Hono {
   const app = new Hono();
+
+  // Runs before routing: reject any request whose Host header host-part is not
+  // loopback, upholding ADR-0051's "unreachable off-box" guarantee against a
+  // DNS-rebinding attacker. Skipped when the deployment sets the same escape the
+  // bind gate honors — there the port-publish perimeter is the boundary.
+  app.use('*', async (c, next) => {
+    if (process.env[UNSAFE_BIND_ENV] !== '1') {
+      // The node server always populates a Host header; fall back to the request
+      // URL's hostname only for absent-header callers (e.g. Hono's in-process
+      // app.request), where the URL host is the authority anyway.
+      const host = hostHeaderHost(c.req.header('host')) ?? safeUrlHostname(c.req.url);
+      if (host === undefined || !LOOPBACK_HOSTS.has(host)) {
+        return c.json(errorBody('forbidden', 'host not allowed'), 403);
+      }
+    }
+    return next();
+  });
 
   const uptimeSeconds = (): number => Math.floor((Date.now() - dependencies.startedAt) / 1000);
 
@@ -91,33 +122,40 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     });
   });
 
-  app.post('/v1/recall', async (c) => {
-    const database = requireDatabase();
-    const body = await readJsonBody(c);
-    const query = requireString(body.query, 'query');
-    const mode = optionalString(body.mode, 'mode');
-    if (mode !== undefined && mode !== 'lexical') {
-      // Vector recall needs a query-embedding egress that arrives in a later
-      // slice; only the lexical path crosses this boundary today.
-      throw new HttpError(400, 'bad_request', "mode must be 'lexical'");
-    }
-    const result = await runRead(
-      searchSessionRecall(database, {
-        activityIntervalId: optionalString(body.activityIntervalId, 'activityIntervalId'),
-        limit: optionalPositiveInt(body.limit, 'limit'),
-        minTrigramScore: optionalScore(body.minTrigramScore, 'minTrigramScore'),
-        query,
-        rawSessionRecordId: optionalString(body.rawSessionRecordId, 'rawSessionRecordId'),
-        sessionId: optionalString(body.sessionId, 'sessionId'),
-        vectorCandidateLimit: optionalPositiveInt(
-          body.vectorCandidateLimit,
-          'vectorCandidateLimit',
-        ),
-        workspaceId: requireString(body.workspaceId, 'workspaceId'),
-      }),
-    );
-    return c.json(result);
-  });
+  app.post(
+    '/v1/recall',
+    bodyLimit({
+      maxSize: MAX_RECALL_BODY_BYTES,
+      onError: (c) => c.json(errorBody('bad_request', 'request body too large'), 413),
+    }),
+    async (c) => {
+      const database = requireDatabase();
+      const body = await readJsonBody(c);
+      const query = requireString(body.query, 'query');
+      const mode = optionalString(body.mode, 'mode');
+      if (mode !== undefined && mode !== 'lexical') {
+        // Vector recall needs a query-embedding egress that arrives in a later
+        // slice; only the lexical path crosses this boundary today.
+        throw new HttpError(400, 'bad_request', "mode must be 'lexical'");
+      }
+      const result = await runRead(
+        searchSessionRecall(database, {
+          activityIntervalId: optionalString(body.activityIntervalId, 'activityIntervalId'),
+          limit: optionalPositiveInt(body.limit, 'limit'),
+          minTrigramScore: optionalScore(body.minTrigramScore, 'minTrigramScore'),
+          query,
+          rawSessionRecordId: optionalString(body.rawSessionRecordId, 'rawSessionRecordId'),
+          sessionId: optionalString(body.sessionId, 'sessionId'),
+          vectorCandidateLimit: optionalPositiveInt(
+            body.vectorCandidateLimit,
+            'vectorCandidateLimit',
+          ),
+          workspaceId: requireString(body.workspaceId, 'workspaceId'),
+        }),
+      );
+      return c.json(redactAgentFacingSessionValue(result));
+    },
+  );
 
   app.get('/v1/sessions', async (c) => {
     const database = requireDatabase();
@@ -129,7 +167,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         workspaceId: requireWorkspaceId(c),
       }),
     );
-    return c.json(rows);
+    return c.json(redactAgentFacingSessionValue(rows));
   });
 
   app.get('/v1/sessions/:id/context', async (c) => {
@@ -145,7 +183,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         workspaceId: requireWorkspaceId(c),
       }),
     );
-    return c.json(result);
+    return c.json(redactAgentFacingSessionValue(result));
   });
 
   app.get('/v1/sessions/:id', async (c) => {
@@ -160,7 +198,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         workspaceId: requireWorkspaceId(c),
       }),
     );
-    return c.json(detail);
+    return c.json(redactAgentFacingSessionValue(detail));
   });
 
   app.get('/v1/events', async (c) => {
@@ -171,7 +209,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         workspaceId: requireWorkspaceId(c),
       }),
     );
-    return c.json(rows);
+    return c.json(redactAgentFacingSessionValue(rows));
   });
 
   app.notFound((c) => c.json(errorBody('not_found', `no route for ${c.req.path}`), 404));
@@ -180,13 +218,39 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     if (cause instanceof HttpError) {
       return c.json(errorBody(cause.code, cause.message), cause.status);
     }
-    return c.json(
-      errorBody('internal', cause instanceof Error ? cause.message : String(cause)),
-      500,
-    );
+    // Never surface an unexpected cause to the client; log it server-side and
+    // return a static body so no stack or driver text leaks.
+    console.error(cause);
+    return c.json(errorBody('internal', 'internal error'), 500);
   });
 
   return app;
+}
+
+// Extract the host-part of a Host header, dropping any `:port` and IPv6 brackets
+// so it can be matched against the loopback allow-set.
+function hostHeaderHost(header: string | undefined): string | undefined {
+  if (header === undefined) {
+    return undefined;
+  }
+  const trimmed = header.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']');
+    return end === -1 ? undefined : trimmed.slice(1, end);
+  }
+  const colon = trimmed.indexOf(':');
+  return colon === -1 ? trimmed : trimmed.slice(0, colon);
+}
+
+function safeUrlHostname(url: string): string | undefined {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 // Run a @saga/db read Effect and surface its typed failure as an HttpError with a
@@ -200,20 +264,27 @@ async function runRead<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   if (Option.isSome(failure)) {
     throw mapDbError(failure.value);
   }
-  throw new HttpError(500, 'internal', Cause.pretty(exit.cause));
+  // A defect (no typed failure) carries a stack we must not leak; log it
+  // server-side and throw a 500 whose static message crosses the wire.
+  console.error(Cause.pretty(exit.cause));
+  throw new HttpError(500, 'internal', 'internal error');
 }
 
 function mapDbError(error: unknown): HttpError {
   const message = error instanceof Error ? error.message : String(error);
   // A bad or missing id surfaces as a query error → 404; a malformed recall input
   // surfaces as a recall error → 400; everything else is an internal fault → 500.
+  // The 404/400 branches carry hand-authored, validation-grade messages; the 500
+  // branch must not forward raw db/driver text, so it logs the cause and returns
+  // a static body instead.
   if (error instanceof SessionRecordQueryError) {
     return new HttpError(404, 'not_found', message);
   }
   if (error instanceof RecallSearchError) {
     return new HttpError(400, 'bad_request', message);
   }
-  return new HttpError(500, 'internal', message);
+  console.error(error);
+  return new HttpError(500, 'internal', 'internal error');
 }
 
 function errorBody(code: string, message: string): { error: { code: string; message: string } } {
