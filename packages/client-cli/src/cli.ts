@@ -1,11 +1,15 @@
+import type { ClientCommandContext } from './command-context.js';
 import type { ColorMode, GlobalOptions, OutputFormat } from './options.js';
+import { runRecallCommand } from './recall.js';
 import { errorLine, renderOptionsFromGlobals } from './render.js';
+import type { RenderOptions } from './render.js';
+import { runSessionsCommand } from './sessions.js';
 import { VERSION } from './version.js';
 
-// Standalone client-cli entry point (SGA-239 slice 1: mechanical foundation).
-// Mirrors the shape of apps/cli/src/cli.ts (parseArgs/COMMANDS/run), but the
-// command table starts empty — commands are registered in later slices as the
-// client surface grows.
+// Standalone client-cli entry point (SGA-239). Mirrors the shape of
+// apps/cli/src/cli.ts (parseArgs/COMMANDS/run). Slice 2 registers the READ
+// commands (recall, sessions) that run over @saga/api-client; write/lifecycle
+// commands stay on the local db-backed CLI.
 
 export type ClientGlobalOptions = GlobalOptions & {
   authToken: string | undefined;
@@ -23,9 +27,19 @@ export type CommandDefinition = {
   subcommands?: readonly string[];
 };
 
-// Empty in this slice: later slices add entries as commands are ported over
-// from apps/cli onto the standalone client surface.
-export const COMMANDS = {} as const satisfies Record<string, CommandDefinition>;
+// The READ command surface (SGA-239). Descriptions mirror apps/cli's COMMANDS
+// entries; the subcommand lists are narrowed to what this client surface
+// implements (write/lifecycle subcommands stay on the local db-backed CLI).
+export const COMMANDS = {
+  recall: {
+    description: 'search and expand captured session memory',
+    subcommands: ['search', 'show'],
+  },
+  sessions: {
+    description: 'import and inspect raw session records',
+    subcommands: ['recent', 'show'],
+  },
+} as const satisfies Record<string, CommandDefinition>;
 
 export type CommandName = keyof typeof COMMANDS;
 
@@ -57,10 +71,21 @@ export class UsageError extends Error {
   }
 }
 
-// Empty in this slice, matching COMMANDS; later slices widen both together.
-export type CommandHandlers = Record<CommandName, never>;
+export type ClientCommandHandler = (
+  args: readonly string[],
+  options: RenderOptions,
+  context: ClientCommandContext,
+) => Promise<string>;
 
-export const DEFAULT_HANDLERS: CommandHandlers = {};
+export type CommandHandlers = {
+  recall: ClientCommandHandler;
+  sessions: ClientCommandHandler;
+};
+
+export const DEFAULT_HANDLERS: CommandHandlers = {
+  recall: runRecallCommand,
+  sessions: runSessionsCommand,
+};
 
 const COMMAND_HELP = Object.entries(COMMANDS as Record<string, CommandDefinition>)
   .map(([name, command]) => `  ${name.padEnd(20)} ${command.description}`)
@@ -224,11 +249,26 @@ export async function run(
 
     validateCommand(parsed);
 
-    // No commands are registered yet (this slice is plumbing-only); every
-    // valid, known command name still has nothing to dispatch to. A future
-    // slice widens COMMANDS/CommandHandlers together and adds the dispatch
-    // arms here, mirroring apps/cli/src/cli.ts's per-command `if` chain.
-    void handlers;
+    const renderOptions = renderOptionsFromGlobals(parsed.options);
+    // The service client is constructed inside the command from this context
+    // (honoring --service-url/--auth-token/env via resolveApiClient); tests
+    // inject a client/workspace through the same seam.
+    const context: ClientCommandContext = {
+      apiClient: {
+        authToken: parsed.options.authToken,
+        serviceUrl: parsed.options.serviceUrl,
+      },
+    };
+
+    if (parsed.command === 'recall') {
+      write(await handlers.recall(parsed.args, renderOptions, context));
+      return 0;
+    }
+    if (parsed.command === 'sessions') {
+      write(await handlers.sessions(parsed.args, renderOptions, context));
+      return 0;
+    }
+
     write(`${parsed.command} is not implemented yet`);
     return 1;
   } catch (error) {
