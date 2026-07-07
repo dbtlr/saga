@@ -1,6 +1,6 @@
 import { Duration, Effect } from 'effect';
 
-import type { Job } from './job-runner.js';
+import type { Job, JobFactory } from './job-runner.js';
 
 export const HEARTBEAT_JOB_NAME = 'heartbeat';
 
@@ -13,3 +13,7 @@ export const heartbeatJob: Job = {
   name: HEARTBEAT_JOB_NAME,
   run: Effect.void,
 };
+
+// The heartbeat needs no pool; the factory shape is the seam the service resolves
+// jobs through so a later pool-backed job slots in without a signature change.
+export const heartbeatJobFactory: JobFactory = () => heartbeatJob;
