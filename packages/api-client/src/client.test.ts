@@ -142,4 +142,47 @@ describe('error mapping', () => {
     expect((error as SagaApiError).code).toBe('http_502');
     expect((error as SagaApiError).message).toBe('Bad Gateway');
   });
+
+  it('wraps a 2xx non-JSON body as an invalid_response SagaApiError', async () => {
+    const syntaxCause = new SyntaxError('Unexpected token');
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(syntaxCause),
+    })) as unknown as typeof fetch;
+    const client = new SagaApiClient({ baseUrl: 'http://127.0.0.1:4766', fetch: fetchImpl });
+
+    const error = await client.info().catch((cause) => cause);
+    expect(error).toBeInstanceOf(SagaApiError);
+    expect((error as SagaApiError).status).toBe(200);
+    expect((error as SagaApiError).code).toBe('invalid_response');
+    expect((error as SagaApiError).cause).toBe(syntaxCause);
+  });
+
+  it('wraps a transport failure as a network SagaApiError', async () => {
+    const transportCause = new TypeError('fetch failed');
+    const fetchImpl = (() => Promise.reject(transportCause)) as unknown as typeof fetch;
+    const client = new SagaApiClient({ baseUrl: 'http://127.0.0.1:4766', fetch: fetchImpl });
+
+    const error = await client.info().catch((cause) => cause);
+    expect(error).toBeInstanceOf(SagaApiError);
+    expect((error as SagaApiError).status).toBe(0);
+    expect((error as SagaApiError).code).toBe('network');
+    expect((error as SagaApiError).cause).toBe(transportCause);
+  });
+
+  it('maps an AbortSignal.timeout rejection to a timeout SagaApiError', async () => {
+    const timeoutCause = new DOMException('The operation timed out.', 'TimeoutError');
+    const fetchImpl = (() => Promise.reject(timeoutCause)) as unknown as typeof fetch;
+    const client = new SagaApiClient({
+      baseUrl: 'http://127.0.0.1:4766',
+      fetch: fetchImpl,
+      timeoutMs: 5,
+    });
+
+    const error = await client.info().catch((cause) => cause);
+    expect(error).toBeInstanceOf(SagaApiError);
+    expect((error as SagaApiError).status).toBe(0);
+    expect((error as SagaApiError).code).toBe('timeout');
+  });
 });

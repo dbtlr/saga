@@ -13,21 +13,28 @@ import type {
   SessionDetail,
 } from './types.js';
 
+// Bound every request so a hung service can never wedge a caller indefinitely.
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 export type SagaApiClientOptions = {
   authToken?: string | undefined;
   baseUrl: string;
   // Injectable for tests; defaults to the global fetch (Bun/Node 20+).
   fetch?: typeof fetch | undefined;
+  // Per-request timeout in milliseconds; defaults to 10s.
+  timeoutMs?: number | undefined;
 };
 
-// Thrown for any non-2xx response. `code`/`message` come from the service's
-// `{ error: { code, message } }` body when present, falling back to the status.
+// Thrown for any non-2xx response, and for transport/timeout/parse failures.
+// `code`/`message` come from the service's `{ error: { code, message } }` body
+// when present, falling back to the status; synthetic codes cover the client-
+// side failures. `cause` carries the originating error when there is one.
 export class SagaApiError extends Error {
   readonly code: string;
   readonly status: number;
 
-  constructor(status: number, code: string, message: string) {
-    super(message);
+  constructor(status: number, code: string, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'SagaApiError';
     this.code = code;
     this.status = status;
@@ -38,12 +45,14 @@ export class SagaApiClient {
   readonly #baseUrl: string;
   readonly #authToken: string | undefined;
   readonly #fetch: typeof fetch;
+  readonly #timeoutMs: number;
 
   constructor(options: SagaApiClientOptions) {
     // Normalize away a single trailing slash so path joins never double up.
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, '');
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   info(): Promise<ServiceInfo> {
@@ -127,18 +136,44 @@ export class SagaApiClient {
     if (this.#authToken !== undefined) {
       headers.authorization = `Bearer ${this.#authToken}`;
     }
-    const init: RequestInit = { headers, method };
+    const init: RequestInit = {
+      headers,
+      method,
+      // Available on both Node 24 and Bun; rejects with a DOMException named
+      // 'TimeoutError' once the deadline passes.
+      signal: AbortSignal.timeout(this.#timeoutMs),
+    };
     if (options.body !== undefined) {
       headers['content-type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
 
-    const response = await this.#fetch(url.toString(), init);
+    let response: Response;
+    try {
+      response = await this.#fetch(url.toString(), init);
+    } catch (cause) {
+      // Distinguish a timeout from any other transport failure so callers can
+      // retry or surface a precise message.
+      if (cause instanceof DOMException && cause.name === 'TimeoutError') {
+        throw new SagaApiError(0, 'timeout', 'the saga service request timed out', { cause });
+      }
+      throw new SagaApiError(0, 'network', 'could not reach the saga service', { cause });
+    }
+
     if (!response.ok) {
       throw await toApiError(response);
     }
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- decoded service JSON; T is the caller-declared wire response type
-    return (await response.json()) as T;
+    try {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- decoded service JSON; T is the caller-declared wire response type
+      return (await response.json()) as T;
+    } catch (cause) {
+      throw new SagaApiError(
+        response.status,
+        'invalid_response',
+        'service returned a non-JSON response',
+        { cause },
+      );
+    }
   }
 }
 
