@@ -134,6 +134,53 @@ describe('startSagaService', () => {
     }
   });
 
+  it('refuses to bind a non-loopback host before touching the database (ADR-0051)', async () => {
+    let validateCalls = 0;
+    await expect(
+      startSagaService(
+        {
+          databaseUrl: 'postgres://test/saga',
+          databaseUrlSource: 'environment',
+          environment: 'test',
+          logLevel: 'info',
+          service: { host: '0.0.0.0', port: 0 },
+          secrets: { openaiApiKey: undefined },
+        },
+        {
+          recordRun: () => Effect.void,
+          validateDatabase: async () => {
+            validateCalls += 1;
+          },
+        },
+      ),
+    ).rejects.toThrow(/non-loopback host 0\.0\.0\.0/);
+    // The bind gate runs first, so a refused host never reaches readiness checks.
+    expect(validateCalls).toBe(0);
+  });
+
+  it('binds loopback aliases without refusal', async () => {
+    // ::1 is in the allow-set but not bound here to avoid IPv6-disabled CI flakiness.
+    for (const host of ['127.0.0.1', 'localhost']) {
+      const service = await startSagaService(
+        {
+          databaseUrl: 'postgres://test/saga',
+          databaseUrlSource: 'environment',
+          environment: 'test',
+          logLevel: 'info',
+          service: { host, port: 0 },
+          secrets: { openaiApiKey: undefined },
+        },
+        {
+          database: {} as never,
+          recordRun: () => Effect.void,
+          validateDatabase: async () => undefined,
+        },
+      );
+      expect(service.url).toMatch(/^http:\/\//u);
+      await service.close();
+    }
+  });
+
   it('fails startup when database config is missing', async () => {
     await expect(
       startSagaService({

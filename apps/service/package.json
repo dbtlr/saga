@@ -15,9 +15,14 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.6",
     "@saga/db": "workspace:*",
     "@saga/runtime": "workspace:*",
     "effect": "^3.21.4",
+    "hono": "^4.12.27",
     "tsx": "^4.22.4"
+  },
+  "devDependencies": {
+    "@saga/api-client": "workspace:*"
   }
 }
