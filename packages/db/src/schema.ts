@@ -413,11 +413,17 @@ export const rawSessionRecords = pgTable(
     uniqueIndex('raw_session_records_one_active_per_session_idx')
       .on(table.sessionId)
       .where(sql`${table.isActive} = true`),
-    // The extraction job's derivation queue: index only the small captured set so
-    // discovery never scans the full record history (SGA-238).
+    // The extraction job's derivation queue: index only the small ACTIVE captured
+    // set so discovery never scans the full record history and never picks up a
+    // superseded snapshot (whose re-derive would re-home the session's turns to
+    // the inactive record and clobber the active one) (SGA-238).
     index('raw_session_records_derivation_queue_idx')
       .on(table.createdAt)
-      .where(sql`${table.status} = 'captured'`),
+      .where(sql`${table.status} = 'captured' and ${table.isActive} = true`),
+    // Serves the /v1/info derivation dead-letter count without a full-table scan.
+    index('raw_session_records_derivation_failed_idx')
+      .on(table.id)
+      .where(sql`${table.status} = 'failed'`),
     check(
       'raw_session_records_content_type_check',
       sql`${table.contentType} in ('jsonl', 'json', 'text')`,
@@ -796,6 +802,10 @@ export const lifecycleSettlementQueue = pgTable(
     index('lifecycle_settlement_queue_pending_idx')
       .on(table.enqueuedAt)
       .where(sql`${table.status} = 'pending'`),
+    // Serves the /v1/info settlement dead-letter count without a full-table scan.
+    index('lifecycle_settlement_queue_failed_idx')
+      .on(table.rawEventId)
+      .where(sql`${table.status} = 'failed'`),
     check(
       'lifecycle_settlement_queue_status_check',
       sql`${table.status} in ('pending', 'settled', 'failed')`,

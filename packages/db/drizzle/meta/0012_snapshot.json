@@ -1,5 +1,5 @@
 {
-  "id": "dc39a31a-f022-4e70-9ca6-9a2081e57884",
+  "id": "3ab7a126-fb35-4396-b0fc-b25e5a7b9301",
   "prevId": "8066e8be-1d67-4952-bece-15653a08132d",
   "version": "7",
   "dialect": "postgresql",
@@ -1845,6 +1845,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "lifecycle_settlement_queue_failed_idx": {
+          "name": "lifecycle_settlement_queue_failed_idx",
+          "columns": [
+            {
+              "expression": "raw_event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"lifecycle_settlement_queue\".\"status\" = 'failed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2441,7 +2457,23 @@
             }
           ],
           "isUnique": false,
-          "where": "\"raw_session_records\".\"status\" = 'captured'",
+          "where": "\"raw_session_records\".\"status\" = 'captured' and \"raw_session_records\".\"is_active\" = true",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "raw_session_records_derivation_failed_idx": {
+          "name": "raw_session_records_derivation_failed_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"raw_session_records\".\"status\" = 'failed'",
           "concurrently": false,
           "method": "btree",
           "with": {}
