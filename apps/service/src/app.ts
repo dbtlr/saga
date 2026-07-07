@@ -19,7 +19,7 @@ import {
   storeRawSessionRecord,
 } from '@saga/db';
 import type { DatabaseService, RawEvent, RawSessionImportInput } from '@saga/db';
-import type { JsonRpcRequest } from '@saga/mcp';
+import type { JsonRpcRequest, JsonRpcResponse } from '@saga/mcp';
 import { Cause, Effect, Exit, Option } from 'effect';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
@@ -236,12 +236,25 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     }),
     async (c) => {
       const database = requireDatabase();
-      const request = coerceJsonRpcRequest(await readJsonBody(c));
+      // Pre-dispatch failures (unparseable body, non-JSON-RPC shape) are answered
+      // with a JSON-RPC error envelope (id null), not the HTTP `{error}` shape, so a
+      // strict MCP client can parse them. Transport-level failures (413 oversized,
+      // 403 non-loopback, 503 db-not-ready) keep the HTTP shape.
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json(jsonRpcErrorEnvelope(-32700, 'request body must be JSON'));
+      }
+      const parsed = parseJsonRpcRequest(body);
+      if (!parsed.ok) {
+        return c.json(jsonRpcErrorEnvelope(-32600, parsed.message));
+      }
       const server = createServiceMcpServer({
         database,
         workspaceId: c.req.query('workspaceId'),
       });
-      const response = await server.handle(request);
+      const response = await server.handle(parsed.request);
       // A JSON-RPC notification (no id) yields no response object. Per the MCP
       // Streamable HTTP transport, acknowledge it with 202 and an empty body
       // rather than a JSON-RPC envelope.
@@ -697,22 +710,33 @@ function optionalRecord(value: unknown, label: string): Record<string, unknown> 
 }
 
 // Validate the POST /mcp body into a JsonRpcRequest before handing it to the
-// @saga/mcp core. A structurally-invalid request (not JSON-RPC 2.0, or missing a
-// string method) is a 400; method-not-found and tool-level failures flow back as
-// proper JSON-RPC error responses from the core, not HTTP errors.
-function coerceJsonRpcRequest(body: Record<string, unknown>): JsonRpcRequest {
-  if (body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
-    throw new HttpError(400, 'bad_request', 'expected a JSON-RPC 2.0 request object');
+// @saga/mcp core. Returns a result rather than throwing so the route can answer a
+// structurally-invalid request with a JSON-RPC error envelope. Method-not-found and
+// tool-level failures flow back as proper JSON-RPC error responses from the core.
+function parseJsonRpcRequest(
+  body: unknown,
+): { ok: true; request: JsonRpcRequest } | { message: string; ok: false } {
+  const record = asObject(body);
+  if (record === undefined) {
+    return { message: 'request body must be a JSON object', ok: false };
   }
-  const id = body.id;
+  if (record.jsonrpc !== '2.0' || typeof record.method !== 'string') {
+    return { message: 'expected a JSON-RPC 2.0 request object', ok: false };
+  }
+  const id = record.id;
   if (id !== undefined && id !== null && typeof id !== 'string' && typeof id !== 'number') {
-    throw new HttpError(
-      400,
-      'bad_request',
-      'JSON-RPC request id must be a string, number, or null',
-    );
+    return { message: 'JSON-RPC request id must be a string, number, or null', ok: false };
   }
-  return { id, jsonrpc: '2.0', method: body.method, params: body.params };
+  return {
+    ok: true,
+    request: { id, jsonrpc: '2.0', method: record.method, params: record.params },
+  };
+}
+
+// A JSON-RPC 2.0 error object for a pre-dispatch failure. The id is null because the
+// request could not be parsed far enough to echo its id (JSON-RPC convention).
+function jsonRpcErrorEnvelope(code: number, message: string): JsonRpcResponse {
+  return { error: { code, message }, id: null, jsonrpc: '2.0' };
 }
 
 async function readJsonBody(c: Context): Promise<Record<string, unknown>> {
