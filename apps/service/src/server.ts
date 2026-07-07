@@ -2,17 +2,31 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { promisify } from 'node:util';
 
+import { getRequestListener } from '@hono/node-server';
 import { assertMigrationsCurrent, makeDatabase, recordJobRun } from '@saga/db';
 import type { DatabaseService } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 
+import { createSagaApp } from './app.js';
+import type { HealthJobStatus } from './app.js';
 import { describeError } from './errors.js';
 import { heartbeatJob } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
 import type { Job, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
+import { VERSION } from './version.js';
 
 export { describeError as describeReadinessCause } from './errors.js';
+export type { HealthJobStatus, HealthPayload } from './app.js';
+
+// Loopback-only bind (ADR-0051): until service auth exists, the service refuses
+// to bind anything but a loopback host so an unauthenticated surface can never be
+// reachable off-box. Auth arrives in a later phase; this gate lifts with it.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+// The API database serves concurrent read handlers, so it needs more than the
+// single connection the CLI opens per one-shot command.
+const API_DATABASE_POOL_SIZE = 8;
 
 export type SagaServiceHandle = {
   close: () => Promise<void>;
@@ -21,16 +35,11 @@ export type SagaServiceHandle = {
   url: string;
 };
 
-export type HealthJobStatus = Omit<JobStatus, 'lastRunAt'> & { lastRunAt: string | null };
-
-export type HealthPayload = {
-  jobs: HealthJobStatus[];
-  ok: true;
-  service: 'saga';
-  uptimeSeconds: number;
-};
-
 export type SagaServiceDependencies = {
+  // Injectable API/recorder database connection (integration tests supply their
+  // own so a request and a direct db call share one connection). When supplied,
+  // the service uses it but does not own its lifecycle and will not close it.
+  database?: DatabaseService | undefined;
   jobs?: readonly Job[] | undefined;
   recordRun?: JobRunRecorder | undefined;
   validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
@@ -40,32 +49,26 @@ export async function startSagaService(
   config: RuntimeConfig,
   dependencies: SagaServiceDependencies = {},
 ): Promise<SagaServiceHandle> {
+  assertLoopbackBind(config.service.host);
   await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
 
   const jobs = dependencies.jobs ?? [heartbeatJob];
-  // The job database connection and runner fibers are acquired only after the
-  // port is bound, so a failed listen can never leak them. Until then /health
-  // reports an empty jobs list.
-  let jobDatabase: DatabaseService | undefined;
+  // The database connection and runner fibers are acquired only after the port
+  // is bound, so a failed listen can never leak them. Until then /health reports
+  // an empty jobs list and /v1 handlers get a clean 503. An injected database is
+  // available immediately; a service-owned one is opened post-listen.
+  let ownedDatabase: DatabaseService | undefined;
+  let apiDatabase: DatabaseService | undefined = dependencies.database;
   let runner: JobRunnerHandle | undefined;
 
-  const server = createServer((request, response) => {
-    if (request.url === '/health') {
-      const payload: HealthPayload = {
-        jobs: runner === undefined ? [] : runner.status().map(toHealthJobStatus),
-        ok: true,
-        service: 'saga',
-        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-      };
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify(payload));
-      return;
-    }
-
-    response.writeHead(404, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ error: 'not found' }));
+  const app = createSagaApp({
+    getDatabase: () => apiDatabase,
+    jobStatus: () => (runner === undefined ? [] : runner.status().map(toHealthJobStatus)),
+    startedAt,
+    version: VERSION,
   });
+  const server = createServer(getRequestListener(app.fetch));
 
   await listen(server, config.service.port, config.service.host);
   const address = server.address();
@@ -79,12 +82,18 @@ export async function startSagaService(
   // Post-listen acquisition: on any failure, release whatever was acquired and
   // the bound port before rethrowing so startup never leaks resources.
   try {
-    // A DB-backed recorder needs a long-lived connection; only open one when the
-    // caller has not supplied its own recorder (tests inject an in-memory one).
+    // One long-lived connection backs both the /v1 read handlers and (unless the
+    // caller injects its own recorder) the job-run recorder. Only open a
+    // service-owned connection when the caller has not supplied one.
+    if (apiDatabase === undefined) {
+      ownedDatabase = await Effect.runPromise(
+        makeDatabase(config, { postgres: { max: API_DATABASE_POOL_SIZE } }),
+      );
+      apiDatabase = ownedDatabase;
+    }
     let recordRun = dependencies.recordRun;
     if (recordRun === undefined) {
-      jobDatabase = await Effect.runPromise(makeDatabase(config, { postgres: { max: 1 } }));
-      const service = jobDatabase;
+      const service = apiDatabase;
       recordRun = (run) => recordJobRun(service, run).pipe(Effect.asVoid);
     }
     runner = startJobRunner({ jobs, recordRun });
@@ -92,8 +101,8 @@ export async function startSagaService(
     if (runner !== undefined) {
       await runner.stop();
     }
-    if (jobDatabase !== undefined) {
-      await Effect.runPromise(jobDatabase.close());
+    if (ownedDatabase !== undefined) {
+      await Effect.runPromise(ownedDatabase.close());
     }
     await close(server);
     throw cause;
@@ -111,9 +120,9 @@ export async function startSagaService(
       } catch (cause) {
         errors.push(cause);
       }
-      if (jobDatabase !== undefined) {
+      if (ownedDatabase !== undefined) {
         try {
-          await Effect.runPromise(jobDatabase.close());
+          await Effect.runPromise(ownedDatabase.close());
         } catch (cause) {
           errors.push(cause);
         }
@@ -131,6 +140,14 @@ export async function startSagaService(
     port,
     url: `http://${host}:${port}`,
   };
+}
+
+function assertLoopbackBind(host: string): void {
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new Error(
+      `refusing to bind saga service to non-loopback host ${host}: only 127.0.0.1, ::1, or localhost are permitted until service auth exists (ADR-0051). Set SAGA_SERVICE_HOST to a loopback address.`,
+    );
+  }
 }
 
 function toHealthJobStatus(status: JobStatus): HealthJobStatus {
