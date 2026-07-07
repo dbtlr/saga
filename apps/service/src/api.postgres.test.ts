@@ -198,10 +198,9 @@ describePostgres('service /v1 read parity', () => {
     // invocations; assert it is a valid instant, then compare the rest.
     expect(new Date(viaApi.searchedAt).toISOString()).toBe(viaApi.searchedAt);
     const { searchedAt: _apiAt, ...apiRest } = viaApi;
-    const { searchedAt: _dbAt, ...dbRest } = jsonify(redactAgentFacingSessionValue(direct)) as Record<
-      string,
-      unknown
-    >;
+    const { searchedAt: _dbAt, ...dbRest } = jsonify(
+      redactAgentFacingSessionValue(direct),
+    ) as Record<string, unknown>;
     expect(apiRest).toStrictEqual(dbRest);
     expect(viaApi.matchCount).toBeGreaterThan(0);
   });

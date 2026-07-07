@@ -13,12 +13,7 @@ import type { HealthJobStatus } from './app.js';
 import { describeError } from './errors.js';
 import { heartbeatJobFactory } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
-import type {
-  JobFactory,
-  JobRunnerHandle,
-  JobRunRecorder,
-  JobStatus,
-} from './jobs/job-runner.js';
+import type { JobFactory, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
 import { VERSION } from './version.js';
 
 export { describeError as describeReadinessCause } from './errors.js';

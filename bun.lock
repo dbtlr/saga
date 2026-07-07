@@ -76,6 +76,9 @@
     "packages/api-client": {
       "name": "@saga/api-client",
       "version": "0.0.0",
+      "dependencies": {
+        "@saga/contracts": "workspace:*",
+      },
     },
     "packages/claims": {
       "name": "@saga/claims",
