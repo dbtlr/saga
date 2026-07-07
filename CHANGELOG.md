@@ -98,16 +98,23 @@ release. When a release is cut, this section is promoted to
   deferred to the auth phase, so a client-sent `Authorization` header is ignored
   for now. The workspace is scoped via a `workspaceId` query parameter (optional
   for `initialize`/`tools/list`, which never touch the database; a `tools/call`
-  without it is a JSON-RPC error). A notification (no id) is acknowledged with
-  `202` and an empty body. Recall is LEXICAL-ONLY here — vector query egress is a
-  later slice, so the search posture is a fixed lexical stance. The MCP
-  presentation (bookkeeping-blob compaction, agent-facing redaction, and the
-  markdown renderers) is duplicated into the service so it does not depend on
-  `@saga/cli`; a Postgres-backed parity test drives `POST /mcp` and the CLI's
-  stdio server against the same seeded data and asserts byte-identical tool lists,
-  structured content, and markdown (modulo the per-call recall `searchedAt`),
-  including the unknown-tool error path. `@saga/cli` is untouched — the two MCP
-  surfaces run side by side until the swap.
+  without it is a JSON-RPC error). The `workspaceId` is UUID-validated at the
+  boundary so a malformed value can never reach the pg `uuid` cast. A notification
+  (no id) is acknowledged with `202` and an empty body; an unparseable / non-JSON-RPC
+  body is answered with a JSON-RPC error envelope (`-32700` / `-32600`). Tool
+  handlers run through a defect-hardened runner (mirroring the `/v1` routes): a
+  defect or a wrapped-driver db failure is logged server-side and surfaced as a
+  clean, static `-32000` — no stack or raw pg text ever crosses the wire. Recall is
+  LEXICAL-ONLY here — vector query egress is a later slice, so the search posture is
+  a fixed lexical stance. The MCP presentation (bookkeeping-blob compaction,
+  agent-facing redaction, and the markdown renderers) is duplicated into the service
+  so it does not depend on `@saga/cli`; a Postgres-backed parity test drives `POST
+  /mcp` and the CLI's stdio server against the same seeded data and asserts
+  byte-identical tool lists, structured content, and markdown (modulo the per-call
+  recall `searchedAt` and the environment-resolved posture), including the
+  unknown-tool error path, and independently asserts the service structured output
+  scrubs a seeded local path and drops the unsafe `config`/`sourceLocator` keys.
+  `@saga/cli` is untouched — the two MCP surfaces run side by side until the swap.
 - **`@saga/client-cli` package + client-tier boundary guard** (SGA-237,
   ADR-0048/0050). Structural groundwork for the client/service split, no behavior
   change. A new leaf package `@saga/client-cli` (depends only on `@saga/runtime`)
