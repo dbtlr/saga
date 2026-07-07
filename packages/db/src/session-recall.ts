@@ -232,6 +232,14 @@ export class RecallSearchError extends Data.TaggedError('RecallSearchError')<{
   readonly message: string;
 }> {}
 
+// A distinct not-found error so callers can map a missing anchor segment to a
+// 404 rather than lumping it in with malformed-input RecallSearchErrors (400).
+export class RecallSegmentNotFoundError extends Data.TaggedError('RecallSegmentNotFoundError')<{
+  readonly message: string;
+}> {}
+
+const RECALL_SEGMENT_NOT_FOUND_MESSAGE = 'recall segment was not found in workspace';
+
 type RecallSearchRow = {
   activity_interval_ended_at: Date | null;
   activity_interval_id: string;
@@ -812,7 +820,7 @@ export function searchSessionRecall(
 export function expandRecallContext(
   service: DatabaseService,
   input: RecallContextExpansionInput,
-): Effect.Effect<RecallContextExpansion, DatabaseError | RecallSearchError> {
+): Effect.Effect<RecallContextExpansion, DatabaseError | RecallSearchError | RecallSegmentNotFoundError> {
   return Effect.tryPromise({
     try: async () => {
       const contextWindow = normalizeContextWindow(input);
@@ -986,7 +994,7 @@ export function expandRecallContext(
       `;
 
       if (rows.length === 0) {
-        throw new RecallSearchError({ message: 'recall segment was not found in workspace' });
+        throw new RecallSegmentNotFoundError({ message: RECALL_SEGMENT_NOT_FOUND_MESSAGE });
       }
 
       return mapContextRows(rows, {
@@ -997,7 +1005,7 @@ export function expandRecallContext(
       });
     },
     catch: (cause) =>
-      cause instanceof RecallSearchError
+      cause instanceof RecallSearchError || cause instanceof RecallSegmentNotFoundError
         ? cause
         : new RecallSearchError({ message: errorMessage(cause) }),
   });
@@ -1053,7 +1061,7 @@ function mapContextRows(
 ): RecallContextExpansion {
   const first = rows[0];
   if (first === undefined) {
-    throw new RecallSearchError({ message: 'recall segment was not found in workspace' });
+    throw new RecallSegmentNotFoundError({ message: RECALL_SEGMENT_NOT_FOUND_MESSAGE });
   }
 
   const turns = new Map<string, RecallExpandedTurn>();

@@ -125,6 +125,39 @@ describe('createSagaApp error shape', () => {
   });
 });
 
+describe('createSagaApp query param parsing', () => {
+  it('rejects a scientific-notation limit with 400 rather than accepting it', async () => {
+    const response = await makeApp({ getDatabase: () => stubDatabase }).request(
+      '/v1/sessions?workspaceId=ws-1&limit=1e9',
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).error.message).toContain('limit');
+  });
+
+  it('rejects a blank windowTurns with 400', async () => {
+    const response = await makeApp({ getDatabase: () => stubDatabase }).request(
+      '/v1/sessions/seg-1/context?workspaceId=ws-1&windowTurns=',
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).error.message).toContain('windowTurns');
+  });
+
+  it('rejects an oversized (unsafe-integer) limit with 400, not a 500', async () => {
+    const response = await makeApp({ getDatabase: () => stubDatabase }).request(
+      '/v1/sessions?workspaceId=ws-1&limit=99999999999999999999',
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).error.code).toBe('bad_request');
+  });
+
+  it('rejects a hex limit with 400', async () => {
+    const response = await makeApp({ getDatabase: () => stubDatabase }).request(
+      '/v1/sessions?workspaceId=ws-1&limit=0x10',
+    );
+    expect(response.status).toBe(400);
+  });
+});
+
 describe('createSagaApp Host allowlist (DNS-rebinding guard)', () => {
   it('rejects a non-loopback Host header with 403 by default', async () => {
     const response = await makeApp({ getDatabase: () => stubDatabase }).request(

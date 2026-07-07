@@ -1,4 +1,4 @@
-import { SagaApiClient } from '@saga/api-client';
+import { SagaApiClient, SagaApiError } from '@saga/api-client';
 import {
   expandRecallContext,
   getSessionDetail,
@@ -211,6 +211,15 @@ describePostgres('service /v1 read parity', () => {
       workspaceId: '00000000-0000-0000-0000-000000000000',
     });
     expect(viaApi).toStrictEqual([]);
+  });
+
+  test('returns 404, not 400, for an unknown context segment', async () => {
+    const error = await (client ?? fail())
+      .getSessionContext('00000000-0000-0000-0000-000000000000', { workspaceId })
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(SagaApiError);
+    expect((error as SagaApiError).status).toBe(404);
+    expect((error as SagaApiError).code).toBe('not_found');
   });
 
   test('scrubs a local path embedded in a session title before it crosses the wire', async () => {

@@ -5,6 +5,7 @@ import {
   listRecentRawEvents,
   listRecentSessionRecords,
   RecallSearchError,
+  RecallSegmentNotFoundError,
   redactAgentFacingSessionValue,
   searchSessionRecall,
   SessionRecordQueryError,
@@ -163,7 +164,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       listRecentSessionRecords(database, {
         activeOnly: queryBoolean(c, 'activeOnly'),
         harness: c.req.query('harness'),
-        limit: queryPositiveInt(c, 'limit'),
+        limit: queryInt(c, 'limit', { min: 1 }),
         workspaceId: requireWorkspaceId(c),
       }),
     );
@@ -174,12 +175,12 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     const database = requireDatabase();
     const result = await runRead(
       expandRecallContext(database, {
-        afterTurns: queryNonNegativeInt(c, 'afterTurns'),
-        beforeTurns: queryNonNegativeInt(c, 'beforeTurns'),
+        afterTurns: queryInt(c, 'afterTurns', { min: 0 }),
+        beforeTurns: queryInt(c, 'beforeTurns', { min: 0 }),
         // `:id` is the anchor SEGMENT id, matching expandRecallContext / the MCP
         // get_session_context handler — not a session id.
         segmentId: c.req.param('id'),
-        windowTurns: queryNonNegativeInt(c, 'windowTurns'),
+        windowTurns: queryInt(c, 'windowTurns', { min: 0 }),
         workspaceId: requireWorkspaceId(c),
       }),
     );
@@ -192,9 +193,9 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       getSessionDetail(database, {
         id: c.req.param('id'),
         includeRawBody: queryBoolean(c, 'includeRawBody'),
-        maxRawRecords: queryPositiveInt(c, 'maxRawRecords'),
-        maxSegmentsPerTurn: queryPositiveInt(c, 'maxSegmentsPerTurn'),
-        maxTurns: queryPositiveInt(c, 'maxTurns'),
+        maxRawRecords: queryInt(c, 'maxRawRecords', { min: 1 }),
+        maxSegmentsPerTurn: queryInt(c, 'maxSegmentsPerTurn', { min: 1 }),
+        maxTurns: queryInt(c, 'maxTurns', { min: 1 }),
         workspaceId: requireWorkspaceId(c),
       }),
     );
@@ -205,7 +206,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     const database = requireDatabase();
     const rows = await runRead(
       listRecentRawEvents(database, {
-        limit: queryPositiveInt(c, 'limit'),
+        limit: queryInt(c, 'limit', { min: 1 }),
         workspaceId: requireWorkspaceId(c),
       }),
     );
@@ -277,7 +278,7 @@ function mapDbError(error: unknown): HttpError {
   // The 404/400 branches carry hand-authored, validation-grade messages; the 500
   // branch must not forward raw db/driver text, so it logs the cause and returns
   // a static body instead.
-  if (error instanceof SessionRecordQueryError) {
+  if (error instanceof SessionRecordQueryError || error instanceof RecallSegmentNotFoundError) {
     return new HttpError(404, 'not_found', message);
   }
   if (error instanceof RecallSearchError) {
@@ -330,7 +331,9 @@ function optionalPositiveInt(value: unknown, label: string): number | undefined 
   if (value === undefined || value === null) {
     return undefined;
   }
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+  // Number.isSafeInteger rejects both non-integers and values past 2^53, so an
+  // oversized body int is a 400 here rather than a downstream overflow/500.
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
     throw new HttpError(400, 'bad_request', `${label} must be a positive integer`);
   }
   return value;
@@ -346,26 +349,24 @@ function optionalScore(value: unknown, label: string): number | undefined {
   return value;
 }
 
-function queryPositiveInt(c: Context, label: string): number | undefined {
+// Strict integer query parse: the app layer owns format/safety/lower-bound (the
+// db layer owns the upper clamp). Only a bare decimal string passes — leading
+// `/^\d+$/` on the trimmed raw rejects blank/whitespace, signs, hex (`0x10`),
+// and scientific (`1e9`) forms before Number, and Number.isSafeInteger rejects
+// values past 2^53 so an oversized limit is a 400, never a 500.
+function queryInt(c: Context, label: string, options: { min: number }): number | undefined {
   const raw = c.req.query(label);
   if (raw === undefined) {
     return undefined;
   }
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new HttpError(400, 'bad_request', `${label} must be a positive integer`);
+  const noun = options.min >= 1 ? 'a positive integer' : 'a non-negative integer';
+  const trimmed = raw.trim();
+  if (!/^\d+$/u.test(trimmed)) {
+    throw new HttpError(400, 'bad_request', `${label} must be ${noun}`);
   }
-  return parsed;
-}
-
-function queryNonNegativeInt(c: Context, label: string): number | undefined {
-  const raw = c.req.query(label);
-  if (raw === undefined) {
-    return undefined;
-  }
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new HttpError(400, 'bad_request', `${label} must be a non-negative integer`);
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < options.min) {
+    throw new HttpError(400, 'bad_request', `${label} must be ${noun}`);
   }
   return parsed;
 }
