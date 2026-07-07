@@ -21,6 +21,7 @@
         "saga": "./bin/saga.js",
       },
       "dependencies": {
+        "@saga/api-client": "workspace:*",
         "@saga/client-cli": "workspace:*",
         "@saga/collectors": "workspace:*",
         "@saga/db": "workspace:*",
@@ -95,6 +96,7 @@
       },
       "dependencies": {
         "@saga/api-client": "workspace:*",
+        "@saga/collectors": "workspace:*",
         "@saga/runtime": "workspace:*",
         "tsx": "^4.22.4",
       },

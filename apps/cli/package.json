@@ -13,6 +13,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@saga/api-client": "workspace:*",
     "@saga/client-cli": "workspace:*",
     "@saga/collectors": "workspace:*",
     "@saga/db": "workspace:*",

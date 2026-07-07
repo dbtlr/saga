@@ -16,6 +16,27 @@ release. When a release is cut, this section is promoted to
 
 ### Added
 
+- **`@saga/client-cli` INGEST commands over `@saga/api-client`** (SGA-239,
+  ADR-0047/0048). The standalone client now captures ambient harness hooks and
+  inspects raw events through the service instead of the local database:
+  `saga-client ingest claude-hook` / `ingest codex-hook` read the hook payload
+  from stdin, build a `RawEventEnvelope` (via `@saga/collectors`) plus — when a
+  transcript is present — a `@saga/contracts` `IngestSnapshot` (author/host/harness/
+  content-type/rawContent/model/status/activity/harnessSessionId/locator/metadata/
+  provenance computed client-side, mirroring the CLI's ambient import input minus
+  the `capturedAt` and settlement-trigger the service derives server-side), and
+  POST them to `/v1/ingest`; a transcript-less lifecycle event is POSTed with no
+  snapshot and settled server-side. `ingest recent` lists raw events over `GET
+  /v1/events`. The hook JSON contract is unchanged — the command still returns
+  `{ continue: true }` (and `{ continue: true, systemMessage: … }` on a capture
+  failure) so harnesses are unaffected. Per ADR-0047 the capture output now
+  reflects the service's `stored`/`duplicate`/`error` ack (STORED, not derived —
+  the extraction job derives asynchronously) rather than the db path's
+  inserted/unchanged import line. `@saga/client-cli` still never depends on
+  `@saga/db` (the `check-client-boundary` guard and oxlint rule enforce it). A
+  Postgres-backed parity test proves a Claude and a Codex hook captured through the
+  client, once derived by the extraction job, produce the same turns/segments the
+  synchronous `@saga/cli` `captureHook` produces for the same hook input.
 - **Service write path: `POST /v1/ingest` + asynchronous extraction job**
   (SGA-238, ADR-0030/0039). The service now accepts writes through a dumb raw
   store: `POST /v1/ingest` takes a batch of items, each a `RawEventEnvelope` plus
