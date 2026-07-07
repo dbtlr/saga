@@ -1,7 +1,7 @@
 import { SagaApiClient } from '@saga/api-client';
 
 import { loadClientConfig } from './config.js';
-import type { ClientConfigResolutionOptions } from './config.js';
+import type { ClientConfig, ClientConfigResolutionOptions } from './config.js';
 
 // Resolves the SagaApiClient the standalone client-cli talks to the service
 // through. Precedence (highest first): explicit args (for tests/overrides) ->
@@ -21,8 +21,16 @@ export type ResolveApiClientOptions = ClientConfigResolutionOptions & {
 // reconstructing the resolution rules. Throws the identical error as
 // resolveApiClient when no URL resolves.
 export function resolveServiceUrl(options: ResolveApiClientOptions = {}): string {
+  return resolveServiceUrlFromConfig(loadClientConfig(options), options);
+}
+
+// Resolve the URL from an already-loaded config, so callers that also need other
+// config fields load the file exactly once.
+function resolveServiceUrlFromConfig(
+  config: ClientConfig,
+  options: ResolveApiClientOptions,
+): string {
   const env = options.env ?? process.env;
-  const config = loadClientConfig(options);
   const serviceUrl = options.serviceUrl ?? env.SAGA_SERVICE_URL ?? config.service?.url;
   if (serviceUrl === undefined || serviceUrl === '') {
     throw new Error(
@@ -35,7 +43,7 @@ export function resolveServiceUrl(options: ResolveApiClientOptions = {}): string
 export function resolveApiClient(options: ResolveApiClientOptions = {}): SagaApiClient {
   const env = options.env ?? process.env;
   const config = loadClientConfig(options);
-  const serviceUrl = resolveServiceUrl(options);
+  const serviceUrl = resolveServiceUrlFromConfig(config, options);
   const authToken = options.authToken ?? env.SAGA_AUTH_TOKEN ?? config.authToken;
 
   return new SagaApiClient({ authToken, baseUrl: serviceUrl });

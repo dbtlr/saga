@@ -210,6 +210,19 @@ async function checkService(context: ClientCommandContext): Promise<DoctorCheck[
     ];
   }
 
+  // A 2xx with a missing/partial body (no migrations/extraction) is not a healthy
+  // service: fail cleanly here instead of letting the sub-checks read undefined
+  // fields and throw a raw TypeError from outside this guard.
+  if (!isCompleteServiceInfo(info)) {
+    return [
+      {
+        detail: `service at ${target} returned an unexpected response (missing version/migrations/extraction)`,
+        label: 'service',
+        status: 'fail',
+      },
+    ];
+  }
+
   return [
     {
       detail: `healthy at ${target}; version ${info.version}, uptime ${formatUptime(info.uptimeSeconds)}`,
@@ -219,6 +232,24 @@ async function checkService(context: ClientCommandContext): Promise<DoctorCheck[
     serviceMigrationCheck(info.migrations),
     serviceExtractionCheck(info.extraction),
   ];
+}
+
+// Guard the ServiceInfo shape the ok path depends on. client.info() decodes the
+// body to the declared type without validating it, so a partial 200 can arrive
+// with these fields absent; verify the leaves the sub-checks read exist.
+function isCompleteServiceInfo(info: ServiceInfo): boolean {
+  return (
+    typeof info.version === 'string' &&
+    typeof info.uptimeSeconds === 'number' &&
+    isRecord(info.migrations) &&
+    typeof info.migrations.applied === 'number' &&
+    typeof info.migrations.expected === 'number' &&
+    isRecord(info.extraction)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 /**
