@@ -86,6 +86,33 @@ export function insertRawEvent(
   });
 }
 
+// SGA-238: look up a raw event by its idempotency key (the 4-col unique tuple)
+// so the ingest handler can report 'stored' vs 'duplicate'. insertRawEvent is
+// idempotent regardless; this only informs the per-item ack.
+export function findRawEventByEnvelopeKey(
+  service: DatabaseService,
+  key: { externalEventId: string; sourceId: string; sourceType: string; workspaceId: string },
+): Effect.Effect<RawEvent | undefined, RawEventInsertError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const [row] = await service.db
+        .select()
+        .from(rawEvents)
+        .where(
+          and(
+            eq(rawEvents.workspaceId, key.workspaceId),
+            eq(rawEvents.sourceType, key.sourceType),
+            eq(rawEvents.sourceId, key.sourceId),
+            eq(rawEvents.externalEventId, key.externalEventId),
+          ),
+        )
+        .limit(1);
+      return row;
+    },
+    catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
+  });
+}
+
 export function listRecentRawEvents(
   service: DatabaseService,
   input: {

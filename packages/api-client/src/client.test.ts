@@ -92,6 +92,40 @@ describe('request construction', () => {
     });
   });
 
+  it('posts the ingest batch to /v1/ingest as JSON and returns the acks', async () => {
+    const { calls, fetch } = stubFetch(() =>
+      jsonResponse({
+        results: [{ externalEventId: 'evt-1', rawEventId: 're-1', status: 'stored' }],
+      }),
+    );
+    const client = new SagaApiClient({ baseUrl: 'http://127.0.0.1:4766', fetch });
+
+    const response = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.Stop',
+            externalEventId: 'evt-1',
+            occurredAt: '2026-01-01T00:00:00.000Z',
+            payload: {},
+            provenance: {},
+            sourceBindingId: 'sb-1',
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId: 'ws-1',
+          },
+        },
+      ],
+    });
+
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(new URL(calls[0]?.url ?? '').pathname).toBe('/v1/ingest');
+    expect(new Headers(calls[0]?.init?.headers).get('content-type')).toBe('application/json');
+    expect(response.results[0]?.status).toBe('stored');
+  });
+
   it('sends an Authorization: Bearer header only when a token is configured', async () => {
     const withToken = stubFetch(() => jsonResponse({}));
     const authed = new SagaApiClient({

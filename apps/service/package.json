@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.6",
+    "@saga/contracts": "workspace:*",
     "@saga/db": "workspace:*",
     "@saga/runtime": "workspace:*",
     "effect": "^3.21.4",
@@ -23,6 +24,7 @@
     "tsx": "^4.22.4"
   },
   "devDependencies": {
-    "@saga/api-client": "workspace:*"
+    "@saga/api-client": "workspace:*",
+    "drizzle-orm": "^0.45.2"
   }
 }
