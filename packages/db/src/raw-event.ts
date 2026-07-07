@@ -10,23 +10,6 @@ export class RawEventInsertError extends Data.TaggedError('RawEventInsertError')
   readonly message: string;
 }> {}
 
-// SGA-238: the lifecycle-boundary event types the extraction job settles — the
-// concrete '<harness>.<HookEventName>' values (an exact set, not a suffix match),
-// mirroring the old activation/boundary discovery. A snapshot-less item is only
-// enqueued for settlement when its eventType is one of these; any other
-// snapshot-less event (PreToolUse, Notification, a bare UserPromptSubmit, ...) is
-// stored as a plain raw event and never opens an activity interval.
-export const LIFECYCLE_BOUNDARY_EVENT_TYPES = [
-  'claude.SessionStart',
-  'claude.Stop',
-  'codex.SessionStart',
-  'codex.Stop',
-] as const;
-
-export function isLifecycleBoundaryEventType(eventType: string): boolean {
-  return (LIFECYCLE_BOUNDARY_EVENT_TYPES as readonly string[]).includes(eventType);
-}
-
 // Match listRecentSessionRecords: a caller-supplied limit is clamped so an
 // uncapped or oversized request can never fan a full-table scan (or an unsafe
 // int) into the query. This also caps the CLI's `ingest recent` path.

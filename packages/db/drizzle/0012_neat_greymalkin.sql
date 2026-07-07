@@ -15,15 +15,20 @@ CREATE INDEX "lifecycle_settlement_queue_pending_idx" ON "lifecycle_settlement_q
 CREATE INDEX "lifecycle_settlement_queue_failed_idx" ON "lifecycle_settlement_queue" USING btree ("raw_event_id") WHERE "lifecycle_settlement_queue"."status" = 'failed';--> statement-breakpoint
 CREATE INDEX "raw_session_records_derivation_queue_idx" ON "raw_session_records" USING btree ("created_at") WHERE "raw_session_records"."status" = 'captured' and "raw_session_records"."is_active" = true;--> statement-breakpoint
 CREATE INDEX "raw_session_records_derivation_failed_idx" ON "raw_session_records" USING btree ("id") WHERE "raw_session_records"."status" = 'failed';--> statement-breakpoint
--- SGA-238 backfill: mark already-derived history done so the extraction job does
--- not re-derive every historical session on first deploy (all historical active
--- records were CLI-derived). Idempotent: a re-run finds no captured rows with turns.
-UPDATE "raw_session_records" SET "status" = 'derived'
-WHERE "status" = 'captured'
-AND EXISTS (SELECT 1 FROM "session_turns" t WHERE t."raw_session_record_id" = "raw_session_records"."id");--> statement-breakpoint
+-- SGA-238 backfill: mark ALL captured history 'derived'. The extraction job has
+-- never run before this migration, so every pre-existing raw_session_record was
+-- derived synchronously by the CLI monolith (store+derive in one txn — a derive
+-- failure rolled the whole record back, so no undived records exist). Marking all
+-- captured history done is therefore correct and also closes the gap where a
+-- legitimately-derived ZERO-turn historical record would otherwise be left
+-- 'captured' and re-derived on first deploy. Idempotent: a re-run finds none.
+UPDATE "raw_session_records" SET "status" = 'derived' WHERE "status" = 'captured';--> statement-breakpoint
 -- SGA-238 backfill: enqueue pre-existing UNSETTLED lifecycle-boundary events (the
 -- old absence condition) so in-flight boundaries are not stranded now that the
--- LIKE scan is gone. Idempotent via ON CONFLICT.
+-- LIKE scan is gone. This set is narrower than the runtime enqueue (which mirrors
+-- the CLI and enqueues every snapshot-less event): historical non-boundary events
+-- were already reflected by the CLI's synchronous path and need no re-settlement;
+-- only interval-boundary events could be left stranded. Idempotent via ON CONFLICT.
 INSERT INTO "lifecycle_settlement_queue" ("raw_event_id", "workspace_id")
 SELECT re."id", re."workspace_id" FROM "raw_events" re
 WHERE re."event_type" IN ('claude.Stop', 'claude.SessionStart', 'codex.Stop', 'codex.SessionStart')

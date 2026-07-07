@@ -455,6 +455,42 @@ export function getExtractionBacklog(
   });
 }
 
+// SGA-238: the two data-backfill statements from migration 0012, as a callable so
+// the populated-data backfill test can exercise them against a seeded state (the
+// migration runner only ever runs them against empty tables). This MUST stay
+// textually equivalent to the backfill block in
+// packages/db/drizzle/0012_neat_greymalkin.sql. Both statements are idempotent.
+export function applyExtractionBackfill(
+  service: DatabaseService,
+): Effect.Effect<void, DatabaseError | RawSessionImportError> {
+  return Effect.tryPromise({
+    try: async () => {
+      // Backfill 1: mark ALL captured history 'derived' (every pre-existing record
+      // was CLI-derived synchronously; a derive failure rolled the record back).
+      await service.db.execute(
+        sql`update "raw_session_records" set "status" = 'derived' where "status" = 'captured'`,
+      );
+      // Backfill 2: enqueue pre-existing UNSETTLED interval-boundary events. Narrower
+      // than the runtime enqueue on purpose (see the migration comment).
+      await service.db.execute(sql`
+        insert into "lifecycle_settlement_queue" ("raw_event_id", "workspace_id")
+        select re."id", re."workspace_id" from "raw_events" re
+        where re."event_type" in ('claude.Stop', 'claude.SessionStart', 'codex.Stop', 'codex.SessionStart')
+        and not exists (
+          select 1 from "activity_intervals" ai
+          where ai."workspace_id" = re."workspace_id"
+          and (ai."settlement_trigger_raw_event_id" = re."id" or ai."metadata" ->> 'triggerRawEventId' = re."id"::text)
+        )
+        on conflict ("raw_event_id") do nothing
+      `);
+    },
+    catch: (cause) =>
+      cause instanceof RawSessionImportError
+        ? cause
+        : new RawSessionImportError({ message: errorMessage(cause) }),
+  });
+}
+
 async function storeRawSessionRecordWithConflictRetry(
   service: DatabaseService,
   input: NormalizedRawSessionImportInput,
