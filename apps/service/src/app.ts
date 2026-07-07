@@ -1,7 +1,9 @@
-import type { RawEventEnvelope, TrustLevel } from '@saga/contracts';
+import type { IngestItemResult, IngestSnapshot, RawEventEnvelope } from '@saga/contracts';
 import {
+  enqueueLifecycleSettlement,
   expandRecallContext,
   findRawEventByEnvelopeKey,
+  getExtractionBacklog,
   getMigrationStatus,
   getSessionDetail,
   insertRawEvent,
@@ -62,17 +64,6 @@ const MAX_RECALL_BODY_BYTES = 1024 * 1024;
 // cap is larger than recall's — still bounded so an oversized batch is a 413
 // before it is buffered and parsed.
 const MAX_INGEST_BODY_BYTES = 8 * 1024 * 1024;
-
-// A per-item ack (SGA-238). It never echoes the envelope payload or any session
-// content back to the caller — only stable ids and a status — so the ingest
-// response needs no agent-facing redaction pass.
-type IngestItemResult = {
-  code?: string;
-  externalEventId: string;
-  rawEventId?: string;
-  rawSessionRecordId?: string;
-  status: 'stored' | 'duplicate' | 'error';
-};
 
 // A response error carrying the HTTP status and the machine code echoed in the
 // `{ error: { code, message } }` body. Handlers throw it for validation misses;
@@ -136,7 +127,11 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
   app.get('/v1/info', async (c) => {
     const database = requireDatabase();
     const migrations = await runRead(getMigrationStatus(database));
+    // The extraction backlog (SGA-238) so doctor/operators can see whether the
+    // async write path is keeping up (pending) or has dead-lettered work (failed).
+    const extraction = await runRead(getExtractionBacklog(database));
     return c.json({
+      extraction,
       migrations: {
         applied: migrations.applied,
         compatible: migrations.compatible,
@@ -201,9 +196,9 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         throw new HttpError(400, 'bad_request', 'items must be an array');
       }
       const results: IngestItemResult[] = [];
-      for (const item of body.items) {
+      for (const [index, item] of body.items.entries()) {
         // eslint-disable-next-line no-await-in-loop -- ordered, per-item isolation
-        results.push(await ingestOneItem(database, item));
+        results.push(await ingestOneItem(database, item, index));
       }
       return c.json({ results });
     },
@@ -308,21 +303,34 @@ function safeUrlHostname(url: string): string | undefined {
   }
 }
 
-// Run a @saga/db read Effect and surface its typed failure as an HttpError with a
-// stable code/status. Keeps every handler a thin, uniform mapping.
-async function runRead<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+// Run a @saga/db Effect and, on failure, throw what `mapFailure` returns for its
+// typed failure. A defect (no typed failure) carries a stack we must not leak, so
+// it is logged server-side and surfaced as a static 500 regardless of the mapper.
+async function runEffect<A, E>(
+  effect: Effect.Effect<A, E>,
+  mapFailure: (failure: E) => unknown,
+): Promise<A> {
   const exit = await Effect.runPromiseExit(effect);
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }
   const failure = Cause.failureOption(exit.cause);
   if (Option.isSome(failure)) {
-    throw mapDbError(failure.value);
+    throw mapFailure(failure.value);
   }
-  // A defect (no typed failure) carries a stack we must not leak; log it
-  // server-side and throw a 500 whose static message crosses the wire.
   console.error(Cause.pretty(exit.cause));
   throw new HttpError(500, 'internal', 'internal error');
+}
+
+// Read handlers map the typed db failure to a stable HttpError code/status.
+function runRead<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+  return runEffect(effect, mapDbError);
+}
+
+// Ingest rethrows the raw typed failure so the per-item catch maps it to an error
+// code (the batch is partial-safe; one bad item must not fail the whole request).
+function runIngestEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+  return runEffect(effect, (failure) => failure);
 }
 
 function mapDbError(error: unknown): HttpError {
@@ -348,18 +356,29 @@ function errorBody(code: string, message: string): { error: { code: string; mess
 
 // Store one ingest item and return its ack. Isolated: any failure becomes an
 // `error` ack for THIS item rather than throwing, so the batch stays partial-safe.
+// `index` is the item's position in the request array, echoed on every ack so a
+// caller/spool can map an ack back to its source item.
 async function ingestOneItem(
   database: DatabaseService,
   rawItem: unknown,
+  index: number,
 ): Promise<IngestItemResult> {
-  const item = asObject(rawItem);
-  // Pull the ack key up front so even a failed item can be attributed.
-  const externalEventId = readEnvelopeExternalEventId(item?.envelope);
+  const externalEventId = readEnvelopeExternalEventId(asObject(rawItem)?.envelope);
+
+  // Validate the WHOLE item — envelope AND snapshot — BEFORE any write, so a
+  // malformed snapshot can never leave a half-stored raw event behind.
+  let coerced: { envelope: RawEventEnvelope; snapshot: IngestSnapshot | undefined };
   try {
-    if (item === undefined) {
-      throw new HttpError(400, 'bad_request', 'each ingest item must be an object');
-    }
-    const envelope = coerceEnvelope(item.envelope);
+    coerced = coerceItem(rawItem);
+  } catch (cause) {
+    return { code: ingestErrorCode(cause), externalEventId, index, status: 'error' };
+  }
+  const { envelope, snapshot } = coerced;
+
+  // Tracked outside the try so a failure AFTER the raw event persisted still
+  // reports its id (a future spool's flush-delete keys on rawEventId).
+  let rawEventRow: RawEvent | undefined;
+  try {
     const existing = await runIngestEffect(
       findRawEventByEnvelopeKey(database, {
         externalEventId: envelope.externalEventId,
@@ -369,48 +388,66 @@ async function ingestOneItem(
       }),
     );
     const alreadyStored = existing !== undefined;
-    const rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
+    rawEventRow = await runIngestEffect(insertRawEvent(database, envelope));
 
-    let rawSessionRecordId: string | undefined;
-    let snapshotInserted = false;
-    if (item.snapshot !== undefined && item.snapshot !== null) {
-      const snapshot = coerceSnapshot(item.snapshot);
-      const stored = await runIngestEffect(
-        storeRawSessionRecord(database, buildStoreInput(envelope, snapshot, rawEventRow)),
+    if (snapshot === undefined) {
+      // A lifecycle-boundary event (no snapshot): enqueue it for the extraction
+      // job to settle. Idempotent on the raw event id.
+      await runIngestEffect(
+        enqueueLifecycleSettlement(database, {
+          rawEventId: rawEventRow.id,
+          workspaceId: envelope.workspaceId,
+        }),
       );
-      rawSessionRecordId = stored.rawSessionRecordId;
-      snapshotInserted = stored.operation === 'inserted';
+      return {
+        externalEventId,
+        index,
+        rawEventId: rawEventRow.id,
+        status: alreadyStored ? 'duplicate' : 'stored',
+      };
     }
 
+    const stored = await runIngestEffect(
+      storeRawSessionRecord(database, buildStoreInput(envelope, snapshot, rawEventRow)),
+    );
     // A duplicate only when nothing new landed: the raw event already existed and
-    // (there was no snapshot, or the snapshot row already existed too).
+    // the snapshot row already existed too.
     const status: IngestItemResult['status'] =
-      !alreadyStored || snapshotInserted ? 'stored' : 'duplicate';
+      !alreadyStored || stored.operation === 'inserted' ? 'stored' : 'duplicate';
     return {
       externalEventId,
+      index,
       rawEventId: rawEventRow.id,
+      rawSessionRecordId: stored.rawSessionRecordId,
       status,
-      ...(rawSessionRecordId !== undefined ? { rawSessionRecordId } : {}),
     };
   } catch (cause) {
-    return { code: ingestErrorCode(cause), externalEventId, status: 'error' };
+    return {
+      code: ingestErrorCode(cause),
+      externalEventId,
+      index,
+      status: 'error',
+      ...(rawEventRow !== undefined ? { rawEventId: rawEventRow.id } : {}),
+    };
   }
 }
 
-// Run a @saga/db write Effect for one item. A typed failure is rethrown so the
-// per-item catch maps it to an error code; a defect is logged (never leaked) and
-// surfaced as a generic internal error for that item.
-async function runIngestEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
-  const exit = await Effect.runPromiseExit(effect);
-  if (Exit.isSuccess(exit)) {
-    return exit.value;
+// Validate the whole item up front (before any write). Throws an HttpError the
+// per-item catch maps to an error ack.
+function coerceItem(rawItem: unknown): {
+  envelope: RawEventEnvelope;
+  snapshot: IngestSnapshot | undefined;
+} {
+  const item = asObject(rawItem);
+  if (item === undefined) {
+    throw new HttpError(400, 'bad_request', 'each ingest item must be an object');
   }
-  const failure = Cause.failureOption(exit.cause);
-  if (Option.isSome(failure)) {
-    throw failure.value;
-  }
-  console.error(Cause.pretty(exit.cause));
-  throw new HttpError(500, 'internal', 'internal error');
+  const envelope = coerceEnvelope(item.envelope);
+  const snapshot =
+    item.snapshot === undefined || item.snapshot === null
+      ? undefined
+      : coerceSnapshot(item.snapshot);
+  return { envelope, snapshot };
 }
 
 function ingestErrorCode(cause: unknown): string {
@@ -468,29 +505,6 @@ function buildStoreInput(
   };
 }
 
-type IngestSnapshot = {
-  activity?:
-    | { hookEventName?: string | undefined; sessionStartSource?: string | undefined }
-    | undefined;
-  author: {
-    displayName?: string | undefined;
-    externalSubject?: string | undefined;
-    handle: string;
-  };
-  contentType: 'json' | 'jsonl' | 'text';
-  harness: 'claude' | 'codex';
-  harnessMetadata?: Record<string, unknown> | undefined;
-  harnessSessionId?: string | undefined;
-  host: { id: string; label?: string | undefined; projectRoot?: string | undefined };
-  locator?: string | undefined;
-  metadata?: Record<string, unknown> | undefined;
-  model?: string | undefined;
-  provenance?: Record<string, unknown> | undefined;
-  rawContent: string;
-  status?: 'active' | 'completed' | undefined;
-  title?: string | undefined;
-};
-
 function coerceEnvelope(raw: unknown): RawEventEnvelope {
   const env = asObject(raw);
   if (env === undefined) {
@@ -509,7 +523,11 @@ function coerceEnvelope(raw: unknown): RawEventEnvelope {
     sourceId: requireString(env.sourceId, 'envelope.sourceId'),
     sourceType: requireString(env.sourceType, 'envelope.sourceType'),
     traceId: optionalString(env.traceId, 'envelope.traceId'),
-    trustLevel: coerceTrustLevel(env.trustLevel),
+    // Ingest is an unauthenticated capture surface (loopback + bearer gate only)
+    // with no basis to assert 'trusted' (which grants a downstream +claim-score
+    // boost). Clamp every ingested event to 'raw'; a client-supplied 'trusted' is
+    // NOT honored — trusted assertions require the authenticated path (later phase).
+    trustLevel: 'raw',
     workspaceId: requireString(env.workspaceId, 'envelope.workspaceId'),
   };
 }
@@ -573,13 +591,6 @@ function coerceSnapshot(raw: unknown): IngestSnapshot {
   };
 }
 
-function coerceTrustLevel(value: unknown): TrustLevel {
-  if (value === 'raw' || value === 'trusted') {
-    return value;
-  }
-  throw new HttpError(400, 'bad_request', "envelope.trustLevel must be 'raw' or 'trusted'");
-}
-
 function coerceEnum<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
   if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- membership checked against the literal set
@@ -588,6 +599,7 @@ function coerceEnum<T extends string>(value: unknown, allowed: readonly T[], lab
   throw new HttpError(400, 'bad_request', `${label} must be one of ${allowed.join(', ')}`);
 }
 
+// SGA-247: a local copy of the isRecord helper (unify the two when that lands).
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;

@@ -5,13 +5,24 @@
 // of the shared shapes into @saga/contracts can come when ingest lands; until
 // then the parity tests pin these against the live db read functions.
 
-import type { RawEventEnvelope, TrustLevel } from '@saga/contracts';
+import type { TrustLevel } from '@saga/contracts';
 
 export type JsonRecord = Record<string, unknown>;
 
 // --- /v1/info ---
 
+// The extraction-job backlog (SGA-238): pending = queued work not yet processed,
+// failed = dead-lettered after the attempt cap, for both the derivation and
+// lifecycle-settlement queues. Mirrors @saga/db's ExtractionBacklog.
+export type ExtractionBacklog = {
+  derivationFailed: number;
+  derivationPending: number;
+  settlementFailed: number;
+  settlementPending: number;
+};
+
 export type ServiceInfo = {
+  extraction: ExtractionBacklog;
   migrations: {
     applied: number;
     compatible: boolean;
@@ -355,68 +366,18 @@ export type RawEvent = {
   workspaceId: string;
 };
 
-// --- POST /v1/ingest ---
-
-// The write path (SGA-238). Each item is a raw event (always stored) plus an
-// optional session snapshot. The snapshot carries the fields the service cannot
-// reconstruct from the envelope + inserted raw-event row: the local-machine
-// author/host identity and the transcript body/content-type/locator. The service
-// derives capturedAt (from the raw event's occurredAt) and the settlement trigger
-// (the inserted raw event's id) itself, so they are absent here. Ingest STORES
-// only; the extraction job derives turns/segments asynchronously.
-export type IngestSnapshotActivity = {
-  hookEventName?: string | undefined;
-  sessionStartSource?: string | undefined;
-};
-
-export type IngestSnapshot = {
-  activity?: IngestSnapshotActivity | undefined;
-  author: {
-    displayName?: string | undefined;
-    externalSubject?: string | undefined;
-    handle: string;
-  };
-  contentType: 'json' | 'jsonl' | 'text';
-  harness: 'claude' | 'codex';
-  harnessMetadata?: JsonRecord | undefined;
-  harnessSessionId?: string | undefined;
-  host: {
-    id: string;
-    label?: string | undefined;
-    projectRoot?: string | undefined;
-  };
-  locator?: string | undefined;
-  metadata?: JsonRecord | undefined;
-  model?: string | undefined;
-  provenance?: JsonRecord | undefined;
-  rawContent: string;
-  status?: 'active' | 'completed' | undefined;
-  title?: string | undefined;
-};
-
-export type IngestItem = {
-  envelope: RawEventEnvelope;
-  snapshot?: IngestSnapshot | undefined;
-};
-
-export type IngestRequest = {
-  items: IngestItem[];
-};
-
-// A per-item ack. `status` is 'stored' for a newly persisted item, 'duplicate'
-// for an idempotent no-op, or 'error' when that one item failed (the batch is
-// non-transactional, so siblings still succeed). Acks mean STORED, not derived.
-export type IngestItemResult = {
-  code?: string | undefined;
-  externalEventId: string;
-  rawEventId?: string | undefined;
-  rawSessionRecordId?: string | undefined;
-  status: 'stored' | 'duplicate' | 'error';
-};
-
-export type IngestResponse = {
-  results: IngestItemResult[];
-};
+// --- POST /v1/ingest (SGA-238) ---
+// The ingest wire types live in @saga/contracts (the single source shared with
+// the service handler); re-exported here so client callers import them from
+// @saga/api-client alongside the other wire types.
+export type {
+  IngestItem,
+  IngestItemResult,
+  IngestRequest,
+  IngestResponse,
+  IngestSnapshot,
+  IngestSnapshotActivity,
+} from '@saga/contracts';
 
 // --- Errors ---
 
