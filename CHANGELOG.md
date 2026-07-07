@@ -16,6 +16,24 @@ release. When a release is cut, this section is promoted to
 
 ### Added
 
+- **Service API twin: Hono layer, `/v1` read endpoints + `@saga/api-client`**
+  (SGA-238, ADR-0046/0051). The service now serves an HTTP API through Hono (the
+  bare `node:http` request handler is replaced; `GET /health` keeps its exact
+  byte-compatible response for launchd). The service refuses to start on a
+  non-loopback `SAGA_SERVICE_HOST` (only `127.0.0.1`, `::1`, `localhost`) until
+  service auth exists (ADR-0051). New read endpoints under `/v1`, thin handlers
+  over the existing `@saga/db` read functions with a consistent
+  `{ error: { code, message } }` shape and query/body workspace scoping: `GET
+  /v1/info`, `POST /v1/recall`, `GET /v1/sessions`, `GET /v1/sessions/:id`, `GET
+  /v1/sessions/:id/context` (`:id` is the anchor segment id), and `GET /v1/events`.
+  A new client-tier package `@saga/api-client` exposes a typed `SagaApiClient`
+  (one method per endpoint, `Authorization: Bearer` when a token is configured)
+  with its own wire request/response types and never depends on `@saga/db`; the
+  `check-client-boundary` guard and the vite import-boundary rule now cover it too.
+  `@saga/cli` is untouched — the CLI and the service twin are duplicate read
+  surfaces for now. Postgres-backed parity tests assert each `/v1` endpoint returns
+  exactly the JSON form of its underlying `@saga/db` read function. Vector recall,
+  ingest, the extraction job, registration, and MCP re-hosting are later slices.
 - **`@saga/client-cli` package + client-tier boundary guard** (SGA-237,
   ADR-0048/0050). Structural groundwork for the client/service split, no behavior
   change. A new leaf package `@saga/client-cli` (depends only on `@saga/runtime`)
