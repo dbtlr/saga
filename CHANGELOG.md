@@ -28,16 +28,21 @@ release. When a release is cut, this section is promoted to
   basis to assert `trusted`). The response is a per-item ack (`stored` /
   `duplicate` / `error`) carrying only ids — never session content — with the
   item's positional `index` and, on a post-insert failure, the persisted
-  `rawEventId`. The batch is non-transactional: one bad item fails alone while its
-  siblings still succeed. Storing does NOT derive; a new `extraction` background
+  `rawEventId`. The batch is non-transactional (one bad item fails alone) and
+  capped at 1000 items. Only a real lifecycle boundary (a
+  `<harness>.{Stop,SessionStart}` event) is enqueued for settlement; any other
+  snapshot-less event is stored as a plain raw event and never opens an interval.
+  Storing does NOT derive; a new `extraction` background
   job (registered alongside `heartbeat`) turns stored work into sessions/turns/
   segments and settled intervals asynchronously. Processed-ness is a WRITTEN FACT,
   never inferred from a side-effect: a raw snapshot's `status` is the derivation
-  queue (`captured` → `derived`, or `failed` after an attempt cap dead-letters a
-  poison item), and lifecycle-boundary events are enqueued at ingest into a
-  `lifecycle_settlement_queue` drained to a terminal `settled`/`failed`. Both
-  queues are idempotent, bounded per tick, and can never livelock. The backlog
-  (pending/failed per queue) is surfaced on `GET /v1/info`. In `@saga/db`,
+  queue (`captured` → `derived` for the ACTIVE record, or `failed` after an attempt
+  cap dead-letters a poison item), and lifecycle-boundary events are enqueued —
+  atomically with the raw-event insert — into a `lifecycle_settlement_queue`
+  drained to a terminal `settled`/`failed`. Both queues are idempotent, bounded
+  per tick, index-served, and can never livelock; migration 0012 backfills them so
+  a first deploy neither re-derives history nor strands in-flight boundaries. The
+  backlog (pending/failed per queue) is surfaced on `GET /v1/info`. In `@saga/db`,
   `importRawSessionRecord` is split into a reusable `storeRawSessionRecord` (store
   only) and `deriveStoredSessionRecord` (derive from the stored snapshot), with
   settlement invocable from a stored raw event via
