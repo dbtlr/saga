@@ -1,4 +1,5 @@
 import type { ClientCommandContext } from './command-context.js';
+import { runDoctor } from './doctor.js';
 import { runIngestCommand } from './ingest.js';
 import type { ColorMode, GlobalOptions, OutputFormat } from './options.js';
 import { runRecallCommand } from './recall.js';
@@ -32,6 +33,9 @@ export type CommandDefinition = {
 // entries; the subcommand lists are narrowed to what this client surface
 // implements (write/lifecycle subcommands stay on the local db-backed CLI).
 export const COMMANDS = {
+  doctor: {
+    description: 'inspect the local environment and Saga service health',
+  },
   ingest: {
     description: 'manually ingest source data for debugging',
     subcommands: ['claude-hook', 'codex-hook', 'recent'],
@@ -83,12 +87,14 @@ export type ClientCommandHandler = (
 ) => Promise<string>;
 
 export type CommandHandlers = {
+  doctor: ClientCommandHandler;
   ingest: ClientCommandHandler;
   recall: ClientCommandHandler;
   sessions: ClientCommandHandler;
 };
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
+  doctor: runDoctor,
   ingest: runIngestCommand,
   recall: runRecallCommand,
   sessions: runSessionsCommand,
@@ -267,6 +273,10 @@ export async function run(
       },
     };
 
+    if (parsed.command === 'doctor') {
+      write(await handlers.doctor(parsed.args, renderOptions, context));
+      return 0;
+    }
     if (parsed.command === 'ingest') {
       write(await handlers.ingest(parsed.args, renderOptions, context));
       return 0;

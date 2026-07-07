@@ -15,17 +15,27 @@ export type ResolveApiClientOptions = ClientConfigResolutionOptions & {
   serviceUrl?: string | undefined;
 };
 
-export function resolveApiClient(options: ResolveApiClientOptions = {}): SagaApiClient {
+// The service base URL the client resolves, using the same precedence as
+// resolveApiClient. Exposed so the doctor can name the target in its service
+// reachability check (and report a clear "not configured" state) without
+// reconstructing the resolution rules. Throws the identical error as
+// resolveApiClient when no URL resolves.
+export function resolveServiceUrl(options: ResolveApiClientOptions = {}): string {
   const env = options.env ?? process.env;
   const config = loadClientConfig(options);
-
   const serviceUrl = options.serviceUrl ?? env.SAGA_SERVICE_URL ?? config.service?.url;
   if (serviceUrl === undefined || serviceUrl === '') {
     throw new Error(
       'no saga service URL configured: pass --service-url, set SAGA_SERVICE_URL, or run `saga init`',
     );
   }
+  return serviceUrl;
+}
 
+export function resolveApiClient(options: ResolveApiClientOptions = {}): SagaApiClient {
+  const env = options.env ?? process.env;
+  const config = loadClientConfig(options);
+  const serviceUrl = resolveServiceUrl(options);
   const authToken = options.authToken ?? env.SAGA_AUTH_TOKEN ?? config.authToken;
 
   return new SagaApiClient({ authToken, baseUrl: serviceUrl });
