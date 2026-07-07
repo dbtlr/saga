@@ -4,6 +4,7 @@ export * from './binding.js';
 export * from './client.js';
 export * from './command-context.js';
 export * from './config.js';
+export * from './doctor.js';
 export * from './ingest.js';
 export type * from './options.js';
 export * from './output.js';
