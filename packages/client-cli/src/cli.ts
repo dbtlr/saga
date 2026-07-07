@@ -1,4 +1,5 @@
 import type { ClientCommandContext } from './command-context.js';
+import { runIngestCommand } from './ingest.js';
 import type { ColorMode, GlobalOptions, OutputFormat } from './options.js';
 import { runRecallCommand } from './recall.js';
 import { errorLine, renderOptionsFromGlobals } from './render.js';
@@ -31,6 +32,10 @@ export type CommandDefinition = {
 // entries; the subcommand lists are narrowed to what this client surface
 // implements (write/lifecycle subcommands stay on the local db-backed CLI).
 export const COMMANDS = {
+  ingest: {
+    description: 'manually ingest source data for debugging',
+    subcommands: ['claude-hook', 'codex-hook', 'recent'],
+  },
   recall: {
     description: 'search and expand captured session memory',
     subcommands: ['search', 'show'],
@@ -78,11 +83,13 @@ export type ClientCommandHandler = (
 ) => Promise<string>;
 
 export type CommandHandlers = {
+  ingest: ClientCommandHandler;
   recall: ClientCommandHandler;
   sessions: ClientCommandHandler;
 };
 
 export const DEFAULT_HANDLERS: CommandHandlers = {
+  ingest: runIngestCommand,
   recall: runRecallCommand,
   sessions: runSessionsCommand,
 };
@@ -260,6 +267,10 @@ export async function run(
       },
     };
 
+    if (parsed.command === 'ingest') {
+      write(await handlers.ingest(parsed.args, renderOptions, context));
+      return 0;
+    }
     if (parsed.command === 'recall') {
       write(await handlers.recall(parsed.args, renderOptions, context));
       return 0;
