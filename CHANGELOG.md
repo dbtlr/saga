@@ -87,6 +87,27 @@ release. When a release is cut, this section is promoted to
   each `/v1` endpoint returns exactly the JSON form of its underlying `@saga/db`
   read function. Vector recall, ingest, the extraction job, registration, and MCP
   re-hosting are later slices.
+- **Service-hosted HTTP MCP twin: `POST /mcp`** (SGA-238, ADR-0046/0051). The
+  service now speaks the Model Context Protocol over HTTP, running IN PARALLEL
+  with the CLI's stdio MCP (a strangler twin; the swap that retires the stdio
+  server is a later task). A single JSON-RPC request rides the `POST /mcp` body
+  and is answered by the transport-free `@saga/mcp` core wired to the same three
+  session tools (`list_recent_sessions`, `search_sessions`, `get_session_context`)
+  over the same `@saga/db` read ops the `/v1` endpoints use. It sits behind the
+  same loopback Host guard and body limit as `/v1`; bearer verification is
+  deferred to the auth phase, so a client-sent `Authorization` header is ignored
+  for now. The workspace is scoped via a `workspaceId` query parameter (optional
+  for `initialize`/`tools/list`, which never touch the database; a `tools/call`
+  without it is a JSON-RPC error). A notification (no id) is acknowledged with
+  `202` and an empty body. Recall is LEXICAL-ONLY here — vector query egress is a
+  later slice, so the search posture is a fixed lexical stance. The MCP
+  presentation (bookkeeping-blob compaction, agent-facing redaction, and the
+  markdown renderers) is duplicated into the service so it does not depend on
+  `@saga/cli`; a Postgres-backed parity test drives `POST /mcp` and the CLI's
+  stdio server against the same seeded data and asserts byte-identical tool lists,
+  structured content, and markdown (modulo the per-call recall `searchedAt`),
+  including the unknown-tool error path. `@saga/cli` is untouched — the two MCP
+  surfaces run side by side until the swap.
 - **`@saga/client-cli` package + client-tier boundary guard** (SGA-237,
   ADR-0048/0050). Structural groundwork for the client/service split, no behavior
   change. A new leaf package `@saga/client-cli` (depends only on `@saga/runtime`)
