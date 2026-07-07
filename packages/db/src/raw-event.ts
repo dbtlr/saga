@@ -10,6 +10,12 @@ export class RawEventInsertError extends Data.TaggedError('RawEventInsertError')
   readonly message: string;
 }> {}
 
+// Match listRecentSessionRecords: a caller-supplied limit is clamped so an
+// uncapped or oversized request can never fan a full-table scan (or an unsafe
+// int) into the query. This also caps the CLI's `ingest recent` path.
+const DEFAULT_RECENT_RAW_EVENT_LIMIT = 10;
+const MAX_RECENT_RAW_EVENT_LIMIT = 100;
+
 export function insertRawEvent(
   service: DatabaseService,
   event: RawEventEnvelope,
@@ -94,7 +100,9 @@ export function listRecentRawEvents(
         .from(rawEvents)
         .where(and(eq(rawEvents.workspaceId, input.workspaceId)))
         .orderBy(desc(rawEvents.occurredAt), desc(rawEvents.ingestedAt))
-        .limit(input.limit ?? 10),
+        .limit(
+          Math.min(input.limit ?? DEFAULT_RECENT_RAW_EVENT_LIMIT, MAX_RECENT_RAW_EVENT_LIMIT),
+        ),
     catch: (cause) => new RawEventInsertError({ message: errorMessage(cause) }),
   });
 }
