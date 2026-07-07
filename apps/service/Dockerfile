@@ -14,7 +14,9 @@ COPY apps/cli/package.json ./apps/cli/
 COPY apps/control-plane/package.json ./apps/control-plane/
 COPY apps/service/package.json ./apps/service/
 COPY packages/active-context/package.json ./packages/active-context/
+COPY packages/api-client/package.json ./packages/api-client/
 COPY packages/claims/package.json ./packages/claims/
+COPY packages/client-cli/package.json ./packages/client-cli/
 COPY packages/collectors/package.json ./packages/collectors/
 COPY packages/contracts/package.json ./packages/contracts/
 COPY packages/db/package.json ./packages/db/
