@@ -736,10 +736,13 @@ describePostgres('service ingest → extraction parity', () => {
     expect(olderAfter?.isActive).toBe(false);
   });
 
-  test('a snapshot-less non-boundary event is stored but never enqueued or opens an interval', async () => {
+  test('a snapshot-less non-boundary event IS enqueued and settled once (CLI parity)', async () => {
     if (client === undefined) {
       throw new Error('client not initialized');
     }
+    // The CLI calls importLifecycleBoundaryEvent for EVERY snapshot-less event, so
+    // the twin enqueues every snapshot-less item regardless of type. The queue
+    // settles each exactly once (no livelock), even a non-boundary event type.
     const response = await client.ingest({
       items: [
         {
@@ -762,25 +765,31 @@ describePostgres('service ingest → extraction parity', () => {
     expect(response.results[0]?.status).toBe('stored');
     const rawEventId = response.results[0]?.rawEventId ?? '';
 
-    // Not enqueued for settlement.
-    const [queued] = await svc()
+    // Enqueued for settlement (parity with the CLI).
+    const [pendingRow] = await svc()
       .db.select()
       .from(lifecycleSettlementQueue)
       .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
-    expect(queued).toBeUndefined();
+    expect(pendingRow?.status).toBe('pending');
 
-    // The job must not open a spurious interval — no session is created for it.
     await runExtractionOnce();
-    const [session] = await svc()
+
+    // Settled exactly once; a second run does not re-process it.
+    const [settledRow] = await svc()
       .db.select()
-      .from(sessions)
-      .where(
-        and(
-          eq(sessions.workspaceId, workspaceId),
-          eq(sessions.harnessSessionId, 'nonboundary-session'),
-        ),
-      );
-    expect(session).toBeUndefined();
+      .from(lifecycleSettlementQueue)
+      .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    expect(settledRow?.status).toBe('settled');
+    const pending = await Effect.runPromise(
+      listPendingLifecycleSettlements(svc(), { limit: 1000 }),
+    );
+    expect(pending).not.toContain(rawEventId);
+    await runExtractionOnce();
+    const [stillSettled] = await svc()
+      .db.select()
+      .from(lifecycleSettlementQueue)
+      .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    expect(stillSettled?.status).toBe('settled');
   });
 
   test('a snapshot missing both harnessSessionId and locator is a 400 with no raw event stored', async () => {
