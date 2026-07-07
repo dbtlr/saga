@@ -137,6 +137,33 @@ const config = {
             ],
           },
         },
+        // Client boundary (ADR-0048), mirroring the client-cli entry above:
+        // @saga/api-client is a client-tier package (SGA-238) and must never
+        // reach the db tier. Same replace-not-merge caveat applies — it sits after
+        // the packages/** UI-isolation entry and re-states the UI ban so
+        // api-client keeps that restriction rather than losing it to this replace.
+        {
+          files: ['packages/api-client/**'],
+          rules: {
+            'no-restricted-imports': [
+              'error',
+              {
+                patterns: [
+                  {
+                    group: [...sagaPackage('db'), ...relativeLayer('db')],
+                    message:
+                      'Client boundary (ADR-0048): api-client is a client-tier package and must never reach the db tier.',
+                  },
+                  {
+                    group: uiPackages,
+                    message:
+                      'UI isolation: React/TanStack client dependencies belong in the control-plane UI boundary.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
         {
           files: ['**/*.test.ts', '**/*.test.tsx'],
           rules: {
