@@ -3,12 +3,29 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Data, Effect } from 'effect';
 
 import type { DatabaseError, DatabaseService } from './database.js';
-import { rawEvents, sourceBindings } from './schema.js';
+import { lifecycleSettlementQueue, rawEvents, sourceBindings } from './schema.js';
 import type { RawEvent } from './schema.js';
 
 export class RawEventInsertError extends Data.TaggedError('RawEventInsertError')<{
   readonly message: string;
 }> {}
+
+// SGA-238: the lifecycle-boundary event types the extraction job settles — the
+// concrete '<harness>.<HookEventName>' values (an exact set, not a suffix match),
+// mirroring the old activation/boundary discovery. A snapshot-less item is only
+// enqueued for settlement when its eventType is one of these; any other
+// snapshot-less event (PreToolUse, Notification, a bare UserPromptSubmit, ...) is
+// stored as a plain raw event and never opens an activity interval.
+export const LIFECYCLE_BOUNDARY_EVENT_TYPES = [
+  'claude.SessionStart',
+  'claude.Stop',
+  'codex.SessionStart',
+  'codex.Stop',
+] as const;
+
+export function isLifecycleBoundaryEventType(eventType: string): boolean {
+  return (LIFECYCLE_BOUNDARY_EVENT_TYPES as readonly string[]).includes(eventType);
+}
 
 // Match listRecentSessionRecords: a caller-supplied limit is clamped so an
 // uncapped or oversized request can never fan a full-table scan (or an unsafe
@@ -22,68 +39,108 @@ export function insertRawEvent(
 ): Effect.Effect<RawEvent, DatabaseError | RawEventInsertError> {
   return Effect.tryPromise({
     try: async () => {
-      await assertSourceBindingInWorkspace(service, {
+      await assertSourceBindingInWorkspace(service.db, {
         sourceBindingId: event.sourceBindingId,
         workspaceId: event.workspaceId,
       });
-
-      const [row] = await service.db
-        .insert(rawEvents)
-        .values({
-          actorId: event.actorId,
-          eventType: event.eventType,
-          externalEventId: event.externalEventId,
-          ingestedAt:
-            event.ingestedAt === undefined ? undefined : parseDate(event.ingestedAt, 'ingestedAt'),
-          occurredAt: parseDate(event.occurredAt, 'occurredAt'),
-          payload: event.payload,
-          provenance: event.provenance,
-          sessionId: event.sessionId,
-          sourceBindingId: event.sourceBindingId,
-          sourceId: event.sourceId,
-          sourceType: event.sourceType,
-          traceId: event.traceId,
-          trustLevel: event.trustLevel,
-          workspaceId: event.workspaceId,
-        })
-        .onConflictDoNothing({
-          target: [
-            rawEvents.workspaceId,
-            rawEvents.sourceType,
-            rawEvents.sourceId,
-            rawEvents.externalEventId,
-          ],
-        })
-        .returning();
-
-      if (row !== undefined) {
-        return row;
-      }
-
-      const [existing] = await service.db
-        .select()
-        .from(rawEvents)
-        .where(
-          and(
-            eq(rawEvents.workspaceId, event.workspaceId),
-            eq(rawEvents.sourceType, event.sourceType),
-            eq(rawEvents.sourceId, event.sourceId),
-            eq(rawEvents.externalEventId, event.externalEventId),
-          ),
-        )
-        .limit(1);
-
-      if (existing === undefined) {
-        throw new RawEventInsertError({ message: 'raw event insert returned no row' });
-      }
-
-      return existing;
+      const { row } = await insertRawEventUnsafe(service.db, event);
+      return row;
     },
     catch: (cause) =>
       cause instanceof RawEventInsertError
         ? cause
         : new RawEventInsertError({ message: errorMessage(cause) }),
   });
+}
+
+// SGA-238: store a lifecycle-boundary raw event AND enqueue its settlement in ONE
+// transaction, so a crash between the two can never strand the boundary (the queue
+// is now the only settlement-discovery path). `inserted` is false when the raw
+// event already existed (idempotent re-post); the enqueue is idempotent on the
+// raw event id, so a re-post never resets a row the job already processed.
+export function insertLifecycleBoundaryEvent(
+  service: DatabaseService,
+  event: RawEventEnvelope,
+): Effect.Effect<{ inserted: boolean; rawEvent: RawEvent }, DatabaseError | RawEventInsertError> {
+  return Effect.tryPromise({
+    try: () =>
+      service.db.transaction(async (tx) => {
+        const db = tx as DatabaseService['db'];
+        await assertSourceBindingInWorkspace(db, {
+          sourceBindingId: event.sourceBindingId,
+          workspaceId: event.workspaceId,
+        });
+        const { row, inserted } = await insertRawEventUnsafe(db, event);
+        await db
+          .insert(lifecycleSettlementQueue)
+          .values({ rawEventId: row.id, workspaceId: event.workspaceId })
+          .onConflictDoNothing({ target: [lifecycleSettlementQueue.rawEventId] });
+        return { inserted, rawEvent: row };
+      }),
+    catch: (cause) =>
+      cause instanceof RawEventInsertError
+        ? cause
+        : new RawEventInsertError({ message: errorMessage(cause) }),
+  });
+}
+
+// Insert the raw event idempotently on its 4-column key, returning the row and
+// whether it was freshly inserted (vs an existing row on conflict).
+async function insertRawEventUnsafe(
+  db: DatabaseService['db'],
+  event: RawEventEnvelope,
+): Promise<{ inserted: boolean; row: RawEvent }> {
+  const [row] = await db
+    .insert(rawEvents)
+    .values({
+      actorId: event.actorId,
+      eventType: event.eventType,
+      externalEventId: event.externalEventId,
+      ingestedAt:
+        event.ingestedAt === undefined ? undefined : parseDate(event.ingestedAt, 'ingestedAt'),
+      occurredAt: parseDate(event.occurredAt, 'occurredAt'),
+      payload: event.payload,
+      provenance: event.provenance,
+      sessionId: event.sessionId,
+      sourceBindingId: event.sourceBindingId,
+      sourceId: event.sourceId,
+      sourceType: event.sourceType,
+      traceId: event.traceId,
+      trustLevel: event.trustLevel,
+      workspaceId: event.workspaceId,
+    })
+    .onConflictDoNothing({
+      target: [
+        rawEvents.workspaceId,
+        rawEvents.sourceType,
+        rawEvents.sourceId,
+        rawEvents.externalEventId,
+      ],
+    })
+    .returning();
+
+  if (row !== undefined) {
+    return { inserted: true, row };
+  }
+
+  const [existing] = await db
+    .select()
+    .from(rawEvents)
+    .where(
+      and(
+        eq(rawEvents.workspaceId, event.workspaceId),
+        eq(rawEvents.sourceType, event.sourceType),
+        eq(rawEvents.sourceId, event.sourceId),
+        eq(rawEvents.externalEventId, event.externalEventId),
+      ),
+    )
+    .limit(1);
+
+  if (existing === undefined) {
+    throw new RawEventInsertError({ message: 'raw event insert returned no row' });
+  }
+
+  return { inserted: false, row: existing };
 }
 
 // SGA-238: look up a raw event by its idempotency key (the 4-col unique tuple)
@@ -176,10 +233,10 @@ export function listHarnessActivationRawEvents(
 }
 
 async function assertSourceBindingInWorkspace(
-  service: DatabaseService,
+  db: DatabaseService['db'],
   input: { sourceBindingId: string; workspaceId: string },
 ): Promise<void> {
-  const [sourceBinding] = await service.db
+  const [sourceBinding] = await db
     .select({ id: sourceBindings.id })
     .from(sourceBindings)
     .where(

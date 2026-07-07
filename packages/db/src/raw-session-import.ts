@@ -272,7 +272,8 @@ export function deriveStoredSessionRecord(
 
 // Best-effort dead-letter bookkeeping, run in its own transaction because the
 // derive transaction has already rolled back. Never fails the caller (its own
-// errors are swallowed): the original derivation error is what the job logs.
+// errors are swallowed): the original derivation error is what the job logs. The
+// attempt increment assumes a single job instance (no row lock) — tracked as SGA-252.
 function recordDerivationFailure(
   service: DatabaseService,
   rawSessionRecordId: string,
@@ -326,28 +327,10 @@ export function settleStoredLifecycleBoundaryEvent(
   }).pipe(Effect.tapError((cause) => recordSettlementFailure(service, rawEventId, cause)));
 }
 
-// Enqueue a stored lifecycle-boundary raw event for the extraction job to settle.
-// Idempotent on the raw event id (a re-posted boundary does not re-enqueue).
-export function enqueueLifecycleSettlement(
-  service: DatabaseService,
-  input: { rawEventId: string; workspaceId: string },
-): Effect.Effect<void, DatabaseError | RawSessionImportError> {
-  return Effect.tryPromise({
-    try: async () => {
-      await service.db
-        .insert(lifecycleSettlementQueue)
-        .values({ rawEventId: input.rawEventId, workspaceId: input.workspaceId })
-        .onConflictDoNothing({ target: [lifecycleSettlementQueue.rawEventId] });
-    },
-    catch: (cause) =>
-      cause instanceof RawSessionImportError
-        ? cause
-        : new RawSessionImportError({ message: errorMessage(cause) }),
-  });
-}
-
 // Best-effort dead-letter bookkeeping for a settlement, in its own transaction.
 // Swallows its own errors so the original settlement error is what the job logs.
+// The read-modify-write of attempts assumes a single job instance (no row lock) —
+// tracked as SGA-252.
 function recordSettlementFailure(
   service: DatabaseService,
   rawEventId: string,
@@ -370,8 +353,12 @@ function recordSettlementFailure(
 
 // SGA-238 extraction-job work discovery — recorded-done, not inferred. A raw
 // snapshot whose status is still 'captured' has not been derived; 'derived' and
-// 'failed' rows have left the queue. Ordered FIFO and bounded; the partial index
-// raw_session_records_derivation_queue_idx keeps this off the full history.
+// 'failed' rows have left the queue. Only the ACTIVE record is a candidate:
+// regenerateDerivedSessionRecords re-homes the session's turns to whichever record
+// it derives, so deriving a superseded (is_active=false) record would clobber the
+// active snapshot's rows. Ordered FIFO and bounded; the partial index
+// raw_session_records_derivation_queue_idx serves exactly this predicate.
+// Single-instance assumption for the FIFO claim (no row lock) — tracked as SGA-252.
 export function listRawSessionRecordsAwaitingDerivation(
   service: DatabaseService,
   input: { limit: number },
@@ -381,7 +368,7 @@ export function listRawSessionRecordsAwaitingDerivation(
       const rows = await service.db
         .select({ id: rawSessionRecords.id })
         .from(rawSessionRecords)
-        .where(eq(rawSessionRecords.status, 'captured'))
+        .where(and(eq(rawSessionRecords.status, 'captured'), eq(rawSessionRecords.isActive, true)))
         .orderBy(asc(rawSessionRecords.createdAt))
         .limit(input.limit);
       return rows.map((row) => row.id);
@@ -433,23 +420,32 @@ export function getExtractionBacklog(
 ): Effect.Effect<ExtractionBacklog, DatabaseError | RawSessionImportError> {
   return Effect.tryPromise({
     try: async () => {
-      const [derivation] = await service.db
-        .select({
-          failed: sql<number>`count(*) filter (where ${rawSessionRecords.status} = 'failed')::int`,
-          pending: sql<number>`count(*) filter (where ${rawSessionRecords.status} = 'captured')::int`,
-        })
-        .from(rawSessionRecords);
-      const [settlement] = await service.db
-        .select({
-          failed: sql<number>`count(*) filter (where ${lifecycleSettlementQueue.status} = 'failed')::int`,
-          pending: sql<number>`count(*) filter (where ${lifecycleSettlementQueue.status} = 'pending')::int`,
-        })
-        .from(lifecycleSettlementQueue);
+      // Four separate counts, each matching a partial index's predicate so the
+      // planner serves them from that small index rather than seq-scanning the
+      // full tables on every /v1/info. The 'captured'+is_active predicate mirrors
+      // the derivation queue (a superseded 'captured' row is not actionable
+      // backlog); the 'failed'/'pending' counts hit their own partial indexes.
+      const [derivationPending] = await service.db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(rawSessionRecords)
+        .where(and(eq(rawSessionRecords.status, 'captured'), eq(rawSessionRecords.isActive, true)));
+      const [derivationFailed] = await service.db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(rawSessionRecords)
+        .where(eq(rawSessionRecords.status, 'failed'));
+      const [settlementPending] = await service.db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(lifecycleSettlementQueue)
+        .where(eq(lifecycleSettlementQueue.status, 'pending'));
+      const [settlementFailed] = await service.db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(lifecycleSettlementQueue)
+        .where(eq(lifecycleSettlementQueue.status, 'failed'));
       return {
-        derivationFailed: derivation?.failed ?? 0,
-        derivationPending: derivation?.pending ?? 0,
-        settlementFailed: settlement?.failed ?? 0,
-        settlementPending: settlement?.pending ?? 0,
+        derivationFailed: derivationFailed?.n ?? 0,
+        derivationPending: derivationPending?.n ?? 0,
+        settlementFailed: settlementFailed?.n ?? 0,
+        settlementPending: settlementPending?.n ?? 0,
       };
     },
     catch: (cause) =>
