@@ -28,8 +28,11 @@ services:
       SAGA_LOG_LEVEL: info
       SAGA_SERVICE_HOST: 0.0.0.0
       SAGA_SERVICE_PORT: '4766'
+      # In-container 0.0.0.0 is required for the port publish; the publish
+      # below (host loopback only) is the actual exposure boundary.
+      SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK: '1'
     ports:
-      - '4766:4766'
+      - '127.0.0.1:4766:4766'
 
   postgres:
     image: pgvector/pgvector:pg16
