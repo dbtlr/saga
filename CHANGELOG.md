@@ -35,9 +35,23 @@ release. When a release is cut, this section is promoted to
   with its own wire request/response types and never depends on `@saga/db`; the
   `check-client-boundary` guard and the vite import-boundary rule now cover it too.
   `@saga/cli` is untouched — the CLI and the service twin are duplicate read
-  surfaces for now. Postgres-backed parity tests assert each `/v1` endpoint returns
-  exactly the JSON form of its underlying `@saga/db` read function. Vector recall,
-  ingest, the extraction job, registration, and MCP re-hosting are later slices.
+  surfaces for now. Every `/v1` read handler now runs its result through the same
+  agent-facing redaction pass the CLI and MCP apply, scrubbing local-path scalars
+  before they cross the wire. The HTTP surface is hardened further: a pre-routing
+  Host allowlist rejects non-loopback `Host` headers as a DNS-rebinding guard
+  (honoring the same unsafe-bind escape), `POST /v1/recall` enforces a 1 MiB body
+  limit, error bodies never leak driver/stack text (a defect returns a static
+  500), query/body integers are parsed strictly (rejecting blank, hex, scientific,
+  and unsafe-integer forms), the events limit is clamped, and an unknown context
+  segment now returns 404 rather than 400. `SagaApiClient` bounds every request
+  with a configurable timeout and classifies failures (`network`, `timeout`,
+  `invalid_response`) rather than surfacing raw fetch/parse errors. Internally the
+  job runner is now built from a post-listen `JobFactory` seam so a later job can
+  reach the shared database pool, and a compile-time parity guard pins the wire
+  types against the `@saga/db` read shapes. Postgres-backed parity tests assert
+  each `/v1` endpoint returns exactly the JSON form of its underlying `@saga/db`
+  read function. Vector recall, ingest, the extraction job, registration, and MCP
+  re-hosting are later slices.
 - **`@saga/client-cli` package + client-tier boundary guard** (SGA-237,
   ADR-0048/0050). Structural groundwork for the client/service split, no behavior
   change. A new leaf package `@saga/client-cli` (depends only on `@saga/runtime`)
