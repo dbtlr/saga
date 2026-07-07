@@ -7,6 +7,7 @@ import {
   listRecentRawEvents,
   listRecentSessionRecords,
   makeDatabase,
+  redactAgentFacingSessionValue,
   runMigrations,
   searchSessionRecall,
   workspaces,
@@ -23,8 +24,11 @@ const databaseUrl = process.env.SAGA_TEST_DATABASE_URL ?? process.env.SAGA_DATAB
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 // Every /v1 read endpoint must return exactly the JSON-serialized form of the
-// @saga/db read function it delegates to. Both sides run against the SAME db
-// connection, so any difference is the HTTP layer's doing, not data drift.
+// @saga/db read function it delegates to, AFTER the agent-facing redaction pass
+// the handlers apply (mirroring the CLI/MCP). The oracle therefore redacts the
+// direct db result too — asserting against the unredacted call would enshrine a
+// local-path leak. Both sides run against the SAME db connection, so any
+// remaining difference is the HTTP layer's doing, not data drift.
 function jsonify(value: unknown): unknown {
   // A JSON round-trip is the point: it normalizes Date instances to the ISO
   // strings that cross the wire. structuredClone would preserve Date objects and
@@ -157,7 +161,7 @@ describePostgres('service /v1 read parity', () => {
       listRecentSessionRecords(service ?? fail(), { workspaceId }),
     );
     const viaApi = await (client ?? fail()).listSessions({ workspaceId });
-    expect(viaApi).toStrictEqual(jsonify(direct));
+    expect(viaApi).toStrictEqual(jsonify(redactAgentFacingSessionValue(direct)));
     expect(viaApi.length).toBeGreaterThan(0);
   });
 
@@ -166,7 +170,7 @@ describePostgres('service /v1 read parity', () => {
       getSessionDetail(service ?? fail(), { id: sessionId, workspaceId }),
     );
     const viaApi = await (client ?? fail()).getSession(sessionId, { workspaceId });
-    expect(viaApi).toStrictEqual(jsonify(direct));
+    expect(viaApi).toStrictEqual(jsonify(redactAgentFacingSessionValue(direct)));
   });
 
   test('matches expandRecallContext via /v1/sessions/:id/context', async () => {
@@ -174,13 +178,13 @@ describePostgres('service /v1 read parity', () => {
       expandRecallContext(service ?? fail(), { segmentId, workspaceId }),
     );
     const viaApi = await (client ?? fail()).getSessionContext(segmentId, { workspaceId });
-    expect(viaApi).toStrictEqual(jsonify(direct));
+    expect(viaApi).toStrictEqual(jsonify(redactAgentFacingSessionValue(direct)));
   });
 
   test('matches listRecentRawEvents via /v1/events', async () => {
     const direct = await Effect.runPromise(listRecentRawEvents(service ?? fail(), { workspaceId }));
     const viaApi = await (client ?? fail()).listEvents({ workspaceId });
-    expect(viaApi).toStrictEqual(jsonify(direct));
+    expect(viaApi).toStrictEqual(jsonify(redactAgentFacingSessionValue(direct)));
     expect(viaApi.length).toBeGreaterThan(0);
   });
 
@@ -194,7 +198,10 @@ describePostgres('service /v1 read parity', () => {
     // invocations; assert it is a valid instant, then compare the rest.
     expect(new Date(viaApi.searchedAt).toISOString()).toBe(viaApi.searchedAt);
     const { searchedAt: _apiAt, ...apiRest } = viaApi;
-    const { searchedAt: _dbAt, ...dbRest } = jsonify(direct) as Record<string, unknown>;
+    const { searchedAt: _dbAt, ...dbRest } = jsonify(redactAgentFacingSessionValue(direct)) as Record<
+      string,
+      unknown
+    >;
     expect(apiRest).toStrictEqual(dbRest);
     expect(viaApi.matchCount).toBeGreaterThan(0);
   });
@@ -204,6 +211,21 @@ describePostgres('service /v1 read parity', () => {
       workspaceId: '00000000-0000-0000-0000-000000000000',
     });
     expect(viaApi).toStrictEqual([]);
+  });
+
+  test('scrubs a local path embedded in a session title before it crosses the wire', async () => {
+    // Seed a leak directly: a title carrying a real /Users/... path. The handler's
+    // redaction pass must scrub it to the placeholder before c.json.
+    const leakedTitle = 'sentinel leak /Users/drew/secret-notes.txt marker';
+    await (service ?? fail()).sql`
+      update sessions set title = ${leakedTitle} where id = ${sessionId}
+    `;
+
+    const viaApi = await (client ?? fail()).listSessions({ workspaceId });
+    const record = viaApi.find((row) => row.session.id === sessionId);
+    expect(record).toBeDefined();
+    expect(record?.session.title).not.toContain('/Users/drew');
+    expect(record?.session.title).toContain('[local-path-redacted]');
   });
 });
 
