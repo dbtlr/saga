@@ -2,10 +2,16 @@ import { SagaApiClient } from '@saga/api-client';
 import type { IngestItem } from '@saga/api-client';
 import {
   activityIntervals,
+  deriveStoredSessionRecord,
   importLifecycleBoundaryEvent,
   importRawSessionRecord,
   insertRawEvent,
+  lifecycleSettlementQueue,
+  listPendingLifecycleSettlements,
+  listRawSessionRecordsAwaitingDerivation,
   makeDatabase,
+  MAX_DERIVATION_ATTEMPTS,
+  rawEvents,
   runMigrations,
   sessions,
   sessionSegments,
@@ -17,7 +23,7 @@ import {
 import type { DatabaseService } from '@saga/db';
 import type { RuntimeConfig } from '@saga/runtime';
 import { and, asc, eq } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import { extractionJobFactory } from './jobs/extraction.js';
@@ -385,5 +391,272 @@ describePostgres('service ingest → extraction parity', () => {
 
     const oracleSession = await findSession('oracle-session');
     expect(jsonify(ingestSession.status)).toStrictEqual(jsonify(oracleSession.status));
+  });
+
+  // --- livelock regressions the recorded-done redesign fixes ---
+
+  test('a zero-turn snapshot is derived once (status=derived) and never re-processed', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const base = snapshotItem('zeroturn-session', 'zeroturn-evt-1');
+    // A codex session_meta-only transcript normalizes to zero turns.
+    const snapshot: IngestItem['snapshot'] =
+      base.snapshot === undefined
+        ? undefined
+        : {
+            ...base.snapshot,
+            rawContent: JSON.stringify({ payload: { cwd: '/tmp/saga' }, type: 'session_meta' }),
+          };
+    const item: IngestItem = { envelope: base.envelope, snapshot };
+    const response = await client.ingest({ items: [item] });
+    const recordId = response.results[0]?.rawSessionRecordId ?? '';
+    expect(response.results[0]?.status).toBe('stored');
+
+    await runExtractionOnce();
+
+    // Derived with zero turns — but it still left the queue (status='derived').
+    const session = await findSession('zeroturn-session');
+    await expect(loadTurns(session.id)).resolves.toHaveLength(0);
+    const [derivedRecord] = await svc()
+      .db.select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, recordId));
+    expect(derivedRecord?.status).toBe('derived');
+
+    // The old absence-of-turns query would re-match this forever; the status queue
+    // does not. It is no longer discoverable, and a second run leaves it untouched.
+    const pending = await Effect.runPromise(
+      listRawSessionRecordsAwaitingDerivation(svc(), { limit: 1000 }),
+    );
+    expect(pending).not.toContain(recordId);
+    await runExtractionOnce();
+    await expect(loadTurns(session.id)).resolves.toHaveLength(0);
+  });
+
+  test('a lifecycle boundary with an updated outcome settles once and is not re-processed', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    // A session with an active interval (snapshot + derive).
+    await client.ingest({ items: [snapshotItem('updated-session', 'updated-snap-1')] });
+    await runExtractionOnce();
+    const session = await findSession('updated-session');
+    expect((await activeIntervalFor(session.id)).some((i) => i.status === 'active')).toBe(true);
+
+    // A plain SessionStart (source 'startup', not clear/compact) within the idle
+    // window → 'updated' outcome: NO interval reference is written, which is
+    // exactly what made the old absence scan loop forever.
+    const startResponse = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.SessionStart',
+            externalEventId: 'updated-start-1',
+            occurredAt: '2026-06-21T14:02:00.000Z',
+            payload: {
+              hook_event_name: 'SessionStart',
+              session_id: 'updated-session',
+              source: 'startup',
+            },
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+        },
+      ],
+    });
+    expect(startResponse.results[0]?.status).toBe('stored');
+    const rawEventId = startResponse.results[0]?.rawEventId ?? '';
+
+    await runExtractionOnce();
+
+    // The queue row is terminal ('settled'), so it can never re-match.
+    const [queued] = await svc()
+      .db.select()
+      .from(lifecycleSettlementQueue)
+      .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    expect(queued?.status).toBe('settled');
+    const pending = await Effect.runPromise(
+      listPendingLifecycleSettlements(svc(), { limit: 1000 }),
+    );
+    expect(pending).not.toContain(rawEventId);
+    await runExtractionOnce();
+    const [stillQueued] = await svc()
+      .db.select()
+      .from(lifecycleSettlementQueue)
+      .where(eq(lifecycleSettlementQueue.rawEventId, rawEventId));
+    expect(stillQueued?.status).toBe('settled');
+  });
+
+  test('a poison snapshot is dead-lettered as failed after the attempt cap', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const response = await client.ingest({
+      items: [snapshotItem('poison-session', 'poison-evt-1')],
+    });
+    const recordId = response.results[0]?.rawSessionRecordId ?? '';
+    // Poison it: strip the activity interval so deriveStoredSessionRecord always throws.
+    await svc()
+      .db.update(rawSessionRecords)
+      .set({ activityIntervalId: null })
+      .where(eq(rawSessionRecords.id, recordId));
+
+    for (let attempt = 0; attempt < MAX_DERIVATION_ATTEMPTS; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop -- sequential attempts drive the cap
+      const exit = await Effect.runPromiseExit(deriveStoredSessionRecord(svc(), recordId));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }
+
+    const [record] = await svc()
+      .db.select()
+      .from(rawSessionRecords)
+      .where(eq(rawSessionRecords.id, recordId));
+    expect(record?.status).toBe('failed');
+    expect(Number(record?.metadata.derivationAttempts)).toBe(MAX_DERIVATION_ATTEMPTS);
+
+    // A dead-lettered record has left the queue.
+    const pending = await Effect.runPromise(
+      listRawSessionRecordsAwaitingDerivation(svc(), { limit: 1000 }),
+    );
+    expect(pending).not.toContain(recordId);
+  });
+
+  // --- ack contract ---
+
+  test('a malformed snapshot yields an error ack and does not half-store the raw event', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const response = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.UserPromptSubmit',
+            externalEventId: 'malformed-evt-1',
+            occurredAt: CAPTURED_AT,
+            payload: {},
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+          // Missing required author/host/rawContent → coercion fails before any write.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberately malformed for the test
+          snapshot: { contentType: 'jsonl', harness: 'codex' } as IngestItem['snapshot'],
+        },
+      ],
+    });
+    const ack = response.results[0];
+    expect(ack?.status).toBe('error');
+    expect(ack?.index).toBe(0);
+    expect(ack?.rawEventId).toBeUndefined();
+    // The raw event was NOT stored: validation ran before insertRawEvent.
+    const events = await svc()
+      .db.select()
+      .from(rawEvents)
+      .where(eq(rawEvents.externalEventId, 'malformed-evt-1'));
+    expect(events).toHaveLength(0);
+  });
+
+  test('a failure after the raw event persists still reports its rawEventId', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    // Valid envelope but a snapshot whose harness mismatches the (codex) binding:
+    // the raw event stores, then storeRawSessionRecord throws on the binding check.
+    const response = await client.ingest({
+      items: [
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.UserPromptSubmit',
+            externalEventId: 'partial-evt-1',
+            occurredAt: CAPTURED_AT,
+            payload: {},
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+          snapshot: {
+            author: { handle: 'drew' },
+            contentType: 'jsonl',
+            harness: 'claude',
+            harnessSessionId: 'partial-session',
+            host: { id: 'host-1' },
+            rawContent: RAW_CONTENT,
+          },
+        },
+      ],
+    });
+    const ack = response.results[0];
+    expect(ack?.status).toBe('error');
+    expect(ack?.rawEventId).toBeTypeOf('string');
+    const events = await svc()
+      .db.select()
+      .from(rawEvents)
+      .where(eq(rawEvents.externalEventId, 'partial-evt-1'));
+    expect(events).toHaveLength(1);
+  });
+
+  test('every ack carries its positional index, even across mixed outcomes', async () => {
+    if (client === undefined) {
+      throw new Error('client not initialized');
+    }
+    const response = await client.ingest({
+      items: [
+        // 0: a lifecycle boundary (no snapshot) → stored + enqueued.
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.SessionStart',
+            externalEventId: 'idx-a',
+            occurredAt: CAPTURED_AT,
+            payload: { session_id: 'index-lifecycle' },
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+        },
+        // 1: a malformed snapshot → error.
+        {
+          envelope: {
+            actorId: 'codex',
+            eventType: 'codex.UserPromptSubmit',
+            externalEventId: 'idx-b',
+            occurredAt: CAPTURED_AT,
+            payload: {},
+            provenance: {},
+            sourceBindingId,
+            sourceId: 'codex:local',
+            sourceType: 'codex',
+            trustLevel: 'raw',
+            workspaceId,
+          },
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberately malformed for the test
+          snapshot: { contentType: 'jsonl' } as IngestItem['snapshot'],
+        },
+        // 2: a valid snapshot → stored.
+        snapshotItem('index-session', 'idx-c'),
+      ],
+    });
+    expect(response.results.map((r) => r.index)).toStrictEqual([0, 1, 2]);
+    expect(response.results[0]?.externalEventId).toBe('idx-a');
+    expect(response.results[1]?.status).toBe('error');
+    expect(response.results[2]?.externalEventId).toBe('idx-c');
   });
 });

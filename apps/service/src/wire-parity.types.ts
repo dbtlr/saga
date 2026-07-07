@@ -6,6 +6,9 @@
 // both packages, so there is no boundary concern in referencing them here.
 
 import type {
+  ExtractionBacklog as WireExtractionBacklog,
+  IngestRequest as WireIngestRequest,
+  IngestResponse as WireIngestResponse,
   RawEvent as WireRawEvent,
   RecallContextExpansion as WireRecallContextExpansion,
   RecallExpandedSegment as WireRecallExpandedSegment,
@@ -15,6 +18,11 @@ import type {
   SessionDetail as WireSessionDetail,
 } from '@saga/api-client';
 import type {
+  IngestRequest as ContractsIngestRequest,
+  IngestResponse as ContractsIngestResponse,
+} from '@saga/contracts';
+import type {
+  ExtractionBacklog as DbExtractionBacklog,
   RawEvent as DbRawEvent,
   RecallContextExpansion as DbRecallContextExpansion,
   RecallExpandedSegment as DbRecallExpandedSegment,
@@ -69,3 +77,13 @@ type _rawEventParity = Expect<
 type _rawEventTrustParity = Expect<
   Extends<WireRawEvent['trustLevel'], Jsonify<DbRawEvent>['trustLevel']>
 >;
+
+// The /v1/info extraction backlog the handler returns is @saga/db's shape; pin the
+// wire type against it (all numbers, so Jsonify is identity here).
+type _extractionBacklogParity = Expect<WireMatchesDb<WireExtractionBacklog, DbExtractionBacklog>>;
+
+// The ingest request/response wire types are defined once in @saga/contracts and
+// re-exported through @saga/api-client. Pin the re-export against the source so a
+// local redefinition in the client can never silently shadow or drift from it.
+type _ingestRequestParity = Expect<Equal<WireIngestRequest, ContractsIngestRequest>>;
+type _ingestResponseParity = Expect<Equal<WireIngestResponse, ContractsIngestResponse>>;
