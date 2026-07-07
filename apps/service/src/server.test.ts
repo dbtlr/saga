@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Duration, Effect } from 'effect';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { describeReadinessCause, startSagaService, validateDatabaseReady } from './server.js';
 
@@ -178,6 +178,33 @@ describe('startSagaService', () => {
       );
       expect(service.url).toMatch(/^http:\/\//u);
       await service.close();
+    }
+  });
+
+  it('permits a non-loopback bind when the deployment sets the unsafe-bind acknowledgment', async () => {
+    // Containers bind 0.0.0.0 in their own namespace; the port publish is the
+    // exposure boundary there, asserted via SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK.
+    vi.stubEnv('SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK', '1');
+    try {
+      const service = await startSagaService(
+        {
+          databaseUrl: 'postgres://test/saga',
+          databaseUrlSource: 'environment',
+          environment: 'test',
+          logLevel: 'info',
+          service: { host: '0.0.0.0', port: 0 },
+          secrets: { openaiApiKey: undefined },
+        },
+        {
+          database: {} as never,
+          recordRun: () => Effect.void,
+          validateDatabase: async () => undefined,
+        },
+      );
+      expect(service.url).toMatch(/^http:\/\//u);
+      await service.close();
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

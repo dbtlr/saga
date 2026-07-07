@@ -142,12 +142,19 @@ export async function startSagaService(
   };
 }
 
-function assertLoopbackBind(host: string): void {
-  if (!LOOPBACK_HOSTS.has(host)) {
-    throw new Error(
-      `refusing to bind saga service to non-loopback host ${host}: only 127.0.0.1, ::1, or localhost are permitted until service auth exists (ADR-0051). Set SAGA_SERVICE_HOST to a loopback address.`,
-    );
+// Containers must bind 0.0.0.0 inside their own network namespace; there the
+// exposure boundary is the port publish, not the bind. The deployment asserts
+// that responsibility explicitly with this variable. Dies at the auth phase
+// (ADR-0051): once auth exists, non-loopback binds require auth instead.
+const UNSAFE_BIND_ENV = 'SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK';
+
+function assertLoopbackBind(host: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (LOOPBACK_HOSTS.has(host) || env[UNSAFE_BIND_ENV] === '1') {
+    return;
   }
+  throw new Error(
+    `refusing to bind saga service to non-loopback host ${host}: only 127.0.0.1, ::1, or localhost are permitted until service auth exists (ADR-0051). Set SAGA_SERVICE_HOST to a loopback address, or set ${UNSAFE_BIND_ENV}=1 when the exposure boundary is external (e.g. a container port publish).`,
+  );
 }
 
 function toHealthJobStatus(status: JobStatus): HealthJobStatus {
