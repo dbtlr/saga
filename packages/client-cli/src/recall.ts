@@ -117,12 +117,14 @@ async function searchRecallCommand(
       'raw',
     ]),
     sessionId: firstFlag(parsed.flags, ['session-id', 'session']),
-    vectorCandidateLimit: parsePositiveIntegerFlag(
-      parsed.flags['vector-candidates'],
-      'vector-candidates',
-    ),
+    // --vector-candidates is still validated for parity (below) but never
+    // forwarded: mode is pinned 'lexical', so a vectorCandidateLimit would be
+    // dead weight the service ignores.
     workspaceId,
   };
+  // Validate the accepted-but-dead vector flags so bad input still errors like
+  // the original surface, without forwarding a value the lexical path ignores.
+  parsePositiveIntegerFlag(parsed.flags['vector-candidates'], 'vector-candidates');
 
   const result = await resolveClient(context).recall(request);
   const posture = CLIENT_LEXICAL_POSTURE;

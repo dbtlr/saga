@@ -567,9 +567,12 @@ function buildStoreInput(
     harnessSessionId: snapshot.harnessSessionId,
     host: snapshot.host,
     locator: snapshot.locator,
-    metadata: snapshot.metadata,
+    // Re-inject the server-assigned raw event id the client cannot supply, so
+    // client-captured metadata/provenance match the db path (apps/cli's
+    // buildAmbientRawSessionImportInput stamps triggerRawEventId/rawEventId).
+    metadata: { ...snapshot.metadata, triggerRawEventId: rawEventRow.id },
     model: snapshot.model,
-    provenance: snapshot.provenance,
+    provenance: { ...snapshot.provenance, rawEventId: rawEventRow.id },
     rawContent: snapshot.rawContent,
     sourceBindingId: envelope.sourceBindingId,
     status: snapshot.status,
@@ -637,7 +640,11 @@ function coerceSnapshot(raw: unknown): IngestSnapshot {
       activity === undefined
         ? undefined
         : {
-            hookEventName: optionalString(
+            // Preserve '' verbatim (like the db path's bare `typeof x ===
+            // 'string'`): the client mirrors that normalization for hookEventName,
+            // so rejecting an empty string here would 400 a session the db path
+            // stores, breaking client↔db parity.
+            hookEventName: optionalStringAllowEmpty(
               activity.hookEventName,
               'snapshot.activity.hookEventName',
             ),
@@ -770,6 +777,19 @@ function optionalString(value: unknown, label: string): string | undefined {
   }
   if (typeof value !== 'string' || value.trim() === '') {
     throw new HttpError(400, 'bad_request', `${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+// Like optionalString but preserves an empty/whitespace string verbatim, for the
+// fields whose db-path normalization keeps '' (e.g. hookEventName). Still rejects
+// a non-string so a malformed body is a clean 400.
+function optionalStringAllowEmpty(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    throw new HttpError(400, 'bad_request', `${label} must be a string`);
   }
   return value;
 }

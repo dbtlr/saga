@@ -14,6 +14,7 @@ import {
   listPendingLifecycleSettlements,
   listRawSessionRecordsAwaitingDerivation,
   makeDatabase,
+  rawSessionRecords,
   runMigrations,
   sessionSegments,
   sessionTurns,
@@ -103,6 +104,41 @@ function projectSegments(rows: readonly (typeof sessionSegments.$inferSelect)[])
       tokenStart: row.tokenStart,
     })),
   );
+}
+
+// The session-level ROW fields (status/model/title) the client path must match
+// the db-path oracle on. harnessMetadata is stored on the raw_session_record
+// (metadata.harness), so it is asserted by projectRawRecord below, not here.
+function projectSessionRow(row: typeof sessions.$inferSelect): unknown {
+  return jsonify({ model: row.model, status: row.status, title: row.title });
+}
+
+// The raw_session_records session-level provenance + metadata (which embeds
+// harnessMetadata under `harness`). Normalize the per-capture volatile fields so
+// two structurally identical captures compare equal WITHOUT masking the bug
+// fixes 4/5 target: a missing provenance.rawEventId / metadata.triggerRawEventId
+// key (fix 4) or a dropped empty-string hookEventName (fix 5) still diverges,
+// because we only rewrite the VALUE of a key that is present.
+function projectRawRecord(row: typeof rawSessionRecords.$inferSelect): unknown {
+  const provenance: Record<string, unknown> = { ...row.provenance };
+  if ('rawEventId' in provenance) {
+    provenance.rawEventId = '<raw-event-id>';
+  }
+  if ('transcriptPath' in provenance) {
+    provenance.transcriptPath = '<transcript-path>';
+  }
+
+  const metadata: Record<string, unknown> = { ...row.metadata };
+  if ('triggerRawEventId' in metadata) {
+    metadata.triggerRawEventId = '<raw-event-id>';
+  }
+  // Legitimately per-capture (locator- and transcript-derived), not what fixes
+  // 4/5 touch; turns/segments already prove derivation parity.
+  delete metadata.normalization;
+  delete metadata.sourceLocatorHash;
+  delete metadata.contentBytes;
+
+  return jsonify({ metadata, provenance });
 }
 
 function codexTranscript(sessionId: string, projectRoot: string): string {
@@ -242,6 +278,38 @@ describePostgres('client ingest → extraction parity', () => {
       .orderBy(asc(sessionTurns.ordinal));
   };
 
+  const loadSession = async (harnessSessionId: string): Promise<typeof sessions.$inferSelect> => {
+    const [row] = await svc()
+      .db.select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.workspaceId, workspaceId()),
+          eq(sessions.harnessSessionId, harnessSessionId),
+        ),
+      )
+      .limit(1);
+    if (row === undefined) {
+      throw new Error(`session ${harnessSessionId} not found`);
+    }
+    return row;
+  };
+
+  const loadActiveRawRecord = async (
+    harnessSessionId: string,
+  ): Promise<typeof rawSessionRecords.$inferSelect> => {
+    const session = await loadSession(harnessSessionId);
+    const [row] = await svc()
+      .db.select()
+      .from(rawSessionRecords)
+      .where(and(eq(rawSessionRecords.sessionId, session.id), eq(rawSessionRecords.isActive, true)))
+      .limit(1);
+    if (row === undefined) {
+      throw new Error(`active raw_session_record for ${harnessSessionId} not found`);
+    }
+    return row;
+  };
+
   const loadSegments = async (
     harnessSessionId: string,
   ): Promise<(typeof sessionSegments.$inferSelect)[]> => {
@@ -352,6 +420,16 @@ describePostgres('client ingest → extraction parity', () => {
     expect(projectSegments(await loadSegments('ingest-codex-session'))).toStrictEqual(
       projectSegments(await loadSegments('oracle-codex-session')),
     );
+
+    // Session-level parity: the session row and the raw_session_record's
+    // provenance/metadata (which the client cannot supply verbatim) must match
+    // the db-path oracle.
+    expect(projectSessionRow(await loadSession('ingest-codex-session'))).toStrictEqual(
+      projectSessionRow(await loadSession('oracle-codex-session')),
+    );
+    expect(projectRawRecord(await loadActiveRawRecord('ingest-codex-session'))).toStrictEqual(
+      projectRawRecord(await loadActiveRawRecord('oracle-codex-session')),
+    );
   });
 
   test('a Claude hook captured through the client derives to the same turns/segments as apps/cli captureHook', async () => {
@@ -389,6 +467,53 @@ describePostgres('client ingest → extraction parity', () => {
     expect(projectTurns(ingestTurns)).toStrictEqual(projectTurns(oracleTurns));
     expect(projectSegments(await loadSegments('ingest-claude-session'))).toStrictEqual(
       projectSegments(await loadSegments('oracle-claude-session')),
+    );
+
+    expect(projectSessionRow(await loadSession('ingest-claude-session'))).toStrictEqual(
+      projectSessionRow(await loadSession('oracle-claude-session')),
+    );
+    expect(projectRawRecord(await loadActiveRawRecord('ingest-claude-session'))).toStrictEqual(
+      projectRawRecord(await loadActiveRawRecord('oracle-claude-session')),
+    );
+  });
+
+  test('an empty hook_event_name captured through the client matches the db path session-level fields (item 5)', async () => {
+    // apps/cli's db path preserves an empty-string hook_event_name verbatim (bare
+    // `typeof x === 'string'`); the client used to trim it to undefined via
+    // readHookString, dropping the field from activity/harnessMetadata/provenance.
+    const oracleTranscript = join(projectRoot, 'oracle-empty-codex.jsonl');
+    writeFileSync(oracleTranscript, codexTranscript('oracle-empty-session', projectRoot));
+    const oracle = await cliCaptureHook('codex', {
+      cwd: projectRoot,
+      hook_event_name: '',
+      session_id: 'oracle-empty-session',
+      transcript_path: oracleTranscript,
+    });
+    expect(oracle.mode).toBe('captured');
+
+    const ingestTranscript = join(projectRoot, 'ingest-empty-codex.jsonl');
+    writeFileSync(ingestTranscript, codexTranscript('ingest-empty-session', projectRoot));
+    const captured = await clientCaptureHook(
+      'codex',
+      {
+        cwd: projectRoot,
+        hook_event_name: '',
+        session_id: 'ingest-empty-session',
+        transcript_path: ingestTranscript,
+      },
+      { client: apiClient() },
+      { binding: clientBinding('codex') },
+    );
+    expect(captured.mode).toBe('captured');
+    expect(captured.ackStatus).toBe('stored');
+
+    await runExtractionOnce();
+
+    expect(projectSessionRow(await loadSession('ingest-empty-session'))).toStrictEqual(
+      projectSessionRow(await loadSession('oracle-empty-session')),
+    );
+    expect(projectRawRecord(await loadActiveRawRecord('ingest-empty-session'))).toStrictEqual(
+      projectRawRecord(await loadActiveRawRecord('oracle-empty-session')),
     );
   });
 

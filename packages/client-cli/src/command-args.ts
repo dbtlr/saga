@@ -31,8 +31,12 @@ export function parseLocalOptions(
       continue;
     }
 
-    const [rawName, inlineValue] = arg.slice(2).split('=', 2);
-    const name = rawName ?? '';
+    // Split on the FIRST '=' only, so values containing '=' survive intact
+    // (split('=', 2) would drop everything after the second '=').
+    const body = arg.slice(2);
+    const eq = body.indexOf('=');
+    const name = eq === -1 ? body : body.slice(0, eq);
+    const inlineValue = eq === -1 ? undefined : body.slice(eq + 1);
     if (spec.booleanFlags.has(name)) {
       if (inlineValue !== undefined) {
         throw new Error(`--${name} does not take a value`);

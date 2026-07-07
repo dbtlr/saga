@@ -102,13 +102,7 @@ export async function ingestHook(
   context: ClientCommandContext = {},
   input: IngestHookOptions = {},
 ): Promise<string> {
-  const parsedHookInput = parseHookInput(await readHookInput(input));
-  const hookInput =
-    input.inputPath === undefined || input.inputPath === '-'
-      ? parsedHookInput
-      : markManualHookInput(source, parsedHookInput);
-  const capture = input.capture ?? ((event) => captureHook(source, event, context, input));
-  const result = await capture(hookInput);
+  const result = await runHookCapture(source, context, input);
 
   // Default (records) is the harness invocation: return the hook JSON contract
   // exactly — harnesses depend on { continue: true } (and the systemMessage skip
@@ -149,6 +143,29 @@ export async function ingestHook(
     },
     options.format,
   );
+}
+
+// Read + parse the hook stdin/file and run the capture, translating ANY failure
+// (including malformed/non-JSON stdin) into the same skip result a capture
+// failure produces. The parse used to run outside this guard, so a bad stdin
+// threw and broke the harness { continue: true } contract.
+async function runHookCapture(
+  source: HarnessSource,
+  context: ClientCommandContext,
+  input: IngestHookOptions,
+): Promise<HookIngestResult> {
+  let hookInput: HarnessHookInput;
+  try {
+    const parsedHookInput = parseHookInput(await readHookInput(input));
+    hookInput =
+      input.inputPath === undefined || input.inputPath === '-'
+        ? parsedHookInput
+        : markManualHookInput(source, parsedHookInput);
+  } catch (error) {
+    return { accepted: true, error: boundedErrorMessage(error), mode: 'skipped', source };
+  }
+  const capture = input.capture ?? ((event) => captureHook(source, event, context, input));
+  return capture(hookInput);
 }
 
 export async function inspectRecentRawEvents(
@@ -310,7 +327,13 @@ function buildIngestSnapshot(input: {
   }
 
   const rawContent = readFileSync(resolvedTranscriptPath, 'utf8');
-  const hookEventName = readHookString(input.hookInput.hook_event_name);
+  // Preserve '' verbatim (matching apps/cli's db path, which uses a bare
+  // `typeof x === 'string'` here rather than the trimming readHookString) so the
+  // activity/harnessMetadata/provenance hookEventName stays byte-identical.
+  const hookEventName =
+    typeof input.hookInput.hook_event_name === 'string'
+      ? input.hookInput.hook_event_name
+      : undefined;
   const sessionStartSource =
     readHookString(input.hookInput.source) ?? readHookString(input.hookInput.session_start_source);
 
