@@ -30,6 +30,10 @@ COPY packages ./packages
 
 ENV SAGA_ENV=production
 ENV SAGA_SERVICE_HOST=0.0.0.0
+# The image is a committed install shape whose exposure boundary is the
+# container port publish, not the in-namespace 0.0.0.0 bind, so it carries the
+# non-loopback acknowledgment the bind gate requires (ADR-0051; SGA-242).
+ENV SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK=1
 ENV SAGA_SERVICE_PORT=4766
 
 EXPOSE 4766

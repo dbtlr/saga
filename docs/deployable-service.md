@@ -78,7 +78,10 @@ Common runtime settings:
 - `SAGA_ENV=production`
 - `SAGA_LOG_LEVEL=info`
 - `SAGA_SERVICE_HOST=0.0.0.0`
+- `SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK=1`
 - `SAGA_SERVICE_PORT=4766`
+
+A non-loopback `SAGA_SERVICE_HOST` requires `SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK=1`: until service auth exists the bind gate refuses non-loopback hosts, and a container/hosted deployment acknowledges that its port publish (the deployment perimeter), not the in-namespace bind, is the exposure boundary (ADR-0051).
 
 Secrets must be injected by the deployment environment. Do not bake real secrets into the image or compose files.
 
