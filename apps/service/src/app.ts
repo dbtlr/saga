@@ -19,12 +19,14 @@ import {
   storeRawSessionRecord,
 } from '@saga/db';
 import type { DatabaseService, RawEvent, RawSessionImportInput } from '@saga/db';
+import type { JsonRpcRequest } from '@saga/mcp';
 import { Cause, Effect, Exit, Option } from 'effect';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 
 import type { JobStatus } from './jobs/job-runner.js';
+import { createServiceMcpServer } from './mcp.js';
 
 export type HealthJobStatus = Omit<JobStatus, 'lastRunAt'> & { lastRunAt: string | null };
 
@@ -214,6 +216,39 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         results.push(await ingestOneItem(database, item, index));
       }
       return c.json({ results });
+    },
+  );
+
+  // The service-hosted HTTP MCP (SGA-238), running IN PARALLEL with apps/cli's
+  // stdio MCP (the strangler twin; the swap is SGA-249). A single JSON-RPC request
+  // rides the POST body and is answered by a per-request @saga/mcp server whose
+  // three tools are wired to the shared database and the duplicated presentation
+  // (mcp.ts / mcp-presentation.ts). It sits behind the same loopback guard as /v1;
+  // bearer verification is deferred to SGA-242, so a client-sent Authorization
+  // header is ignored for now (consistent with /v1). The workspace is scoped via
+  // the `workspaceId` query parameter — optional here because initialize/tools/list
+  // never touch the database; a tools/call without it returns a JSON-RPC error.
+  app.post(
+    '/mcp',
+    bodyLimit({
+      maxSize: MAX_RECALL_BODY_BYTES,
+      onError: (c) => c.json(errorBody('bad_request', 'request body too large'), 413),
+    }),
+    async (c) => {
+      const database = requireDatabase();
+      const request = coerceJsonRpcRequest(await readJsonBody(c));
+      const server = createServiceMcpServer({
+        database,
+        workspaceId: c.req.query('workspaceId'),
+      });
+      const response = await server.handle(request);
+      // A JSON-RPC notification (no id) yields no response object. Per the MCP
+      // Streamable HTTP transport, acknowledge it with 202 and an empty body
+      // rather than a JSON-RPC envelope.
+      if (response === undefined) {
+        return c.body(null, 202);
+      }
+      return c.json(response);
     },
   );
 
@@ -659,6 +694,25 @@ function optionalRecord(value: unknown, label: string): Record<string, unknown> 
     return undefined;
   }
   return requireRecord(value, label);
+}
+
+// Validate the POST /mcp body into a JsonRpcRequest before handing it to the
+// @saga/mcp core. A structurally-invalid request (not JSON-RPC 2.0, or missing a
+// string method) is a 400; method-not-found and tool-level failures flow back as
+// proper JSON-RPC error responses from the core, not HTTP errors.
+function coerceJsonRpcRequest(body: Record<string, unknown>): JsonRpcRequest {
+  if (body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
+    throw new HttpError(400, 'bad_request', 'expected a JSON-RPC 2.0 request object');
+  }
+  const id = body.id;
+  if (id !== undefined && id !== null && typeof id !== 'string' && typeof id !== 'number') {
+    throw new HttpError(
+      400,
+      'bad_request',
+      'JSON-RPC request id must be a string, number, or null',
+    );
+  }
+  return { id, jsonrpc: '2.0', method: body.method, params: body.params };
 }
 
 async function readJsonBody(c: Context): Promise<Record<string, unknown>> {
