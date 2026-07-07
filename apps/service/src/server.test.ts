@@ -60,7 +60,7 @@ describe('startSagaService', () => {
         },
       },
       {
-        jobs: [{ interval: Duration.millis(5), name: 'heartbeat', run: Effect.void }],
+        jobs: [() => ({ interval: Duration.millis(5), name: 'heartbeat', run: Effect.void })],
         recordRun: () => Effect.void,
         validateDatabase: async () => undefined,
       },
@@ -118,7 +118,7 @@ describe('startSagaService', () => {
             secrets: { openaiApiKey: undefined },
           },
           {
-            jobs: [{ interval: Duration.millis(1), name: 'counter', run: Effect.void }],
+            jobs: [() => ({ interval: Duration.millis(1), name: 'counter', run: Effect.void })],
             recordRun,
             validateDatabase: async () => undefined,
           },
@@ -176,8 +176,11 @@ describe('startSagaService', () => {
           validateDatabase: async () => undefined,
         },
       );
-      expect(service.url).toMatch(/^http:\/\//u);
-      await service.close();
+      try {
+        expect(service.url).toMatch(/^http:\/\//u);
+      } finally {
+        await service.close();
+      }
     }
   });
 
@@ -201,8 +204,11 @@ describe('startSagaService', () => {
           validateDatabase: async () => undefined,
         },
       );
-      expect(service.url).toMatch(/^http:\/\//u);
-      await service.close();
+      try {
+        expect(service.url).toMatch(/^http:\/\//u);
+      } finally {
+        await service.close();
+      }
     } finally {
       vi.unstubAllEnvs();
     }

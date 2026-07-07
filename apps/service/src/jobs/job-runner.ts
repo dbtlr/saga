@@ -1,3 +1,4 @@
+import type { DatabaseService } from '@saga/db';
 import type { Duration } from 'effect';
 import { Cause, Effect, Exit, Fiber, Option, Schedule } from 'effect';
 import type { RuntimeFiber } from 'effect/Fiber';
@@ -12,6 +13,11 @@ export type Job = {
   name: string;
   run: Effect.Effect<void, unknown>;
 };
+
+// A job is built from a context resolved only after the shared pool exists, so a
+// future extraction job can reach the same DatabaseService the /v1 handlers use.
+// The service resolves these post-listen; job internals stay pool-agnostic.
+export type JobFactory = (ctx: { database: DatabaseService }) => Job;
 
 export type JobOutcome = 'succeeded' | 'failed';
 

@@ -11,9 +11,14 @@ import { Effect } from 'effect';
 import { createSagaApp } from './app.js';
 import type { HealthJobStatus } from './app.js';
 import { describeError } from './errors.js';
-import { heartbeatJob } from './jobs/heartbeat.js';
+import { heartbeatJobFactory } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
-import type { Job, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
+import type {
+  JobFactory,
+  JobRunnerHandle,
+  JobRunRecorder,
+  JobStatus,
+} from './jobs/job-runner.js';
 import { VERSION } from './version.js';
 
 export { describeError as describeReadinessCause } from './errors.js';
@@ -40,7 +45,8 @@ export type SagaServiceDependencies = {
   // own so a request and a direct db call share one connection). When supplied,
   // the service uses it but does not own its lifecycle and will not close it.
   database?: DatabaseService | undefined;
-  jobs?: readonly Job[] | undefined;
+  // Resolved post-listen, once the shared pool exists, so a job can reach it.
+  jobs?: readonly JobFactory[] | undefined;
   recordRun?: JobRunRecorder | undefined;
   validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
 };
@@ -53,7 +59,7 @@ export async function startSagaService(
   await (dependencies.validateDatabase ?? validateDatabaseReady)(config);
   const startedAt = Date.now();
 
-  const jobs = dependencies.jobs ?? [heartbeatJob];
+  const jobFactories = dependencies.jobs ?? [heartbeatJobFactory];
   // The database connection and runner fibers are acquired only after the port
   // is bound, so a failed listen can never leak them. Until then /health reports
   // an empty jobs list and /v1 handlers get a clean 503. An injected database is
@@ -91,11 +97,14 @@ export async function startSagaService(
       );
       apiDatabase = ownedDatabase;
     }
+    const database = apiDatabase;
     let recordRun = dependencies.recordRun;
     if (recordRun === undefined) {
-      const service = apiDatabase;
-      recordRun = (run) => recordJobRun(service, run).pipe(Effect.asVoid);
+      recordRun = (run) => recordJobRun(database, run).pipe(Effect.asVoid);
     }
+    // Resolve jobs now that the shared pool exists, handing each factory the
+    // same DatabaseService the /v1 handlers use.
+    const jobs = jobFactories.map((make) => make({ database }));
     runner = startJobRunner({ jobs, recordRun });
   } catch (cause) {
     if (runner !== undefined) {
@@ -113,10 +122,19 @@ export async function startSagaService(
     close: async () => {
       // Every step runs even if an earlier one rejects, so the listening socket
       // is always released; the first error is surfaced after cleanup completes.
+      // Order matters: stop the runner first (no job then needs the pool), then
+      // drain the HTTP server so in-flight /v1 reads finish against a live pool,
+      // and only then close the pool. Closing the pool before draining the server
+      // would 500 requests still executing during shutdown.
       const errors: unknown[] = [];
       try {
-        // Interrupt job fibers cleanly before releasing their connection.
+        // Interrupt job fibers cleanly; they hold the pool the reads still need.
         await startedRunner.stop();
+      } catch (cause) {
+        errors.push(cause);
+      }
+      try {
+        await close(server);
       } catch (cause) {
         errors.push(cause);
       }
@@ -126,11 +144,6 @@ export async function startSagaService(
         } catch (cause) {
           errors.push(cause);
         }
-      }
-      try {
-        await close(server);
-      } catch (cause) {
-        errors.push(cause);
       }
       if (errors.length > 0) {
         throw errors[0];
@@ -145,7 +158,8 @@ export async function startSagaService(
 // Containers must bind 0.0.0.0 inside their own network namespace; there the
 // exposure boundary is the port publish, not the bind. The deployment asserts
 // that responsibility explicitly with this variable. Dies at the auth phase
-// (ADR-0051): once auth exists, non-loopback binds require auth instead.
+// (ADR-0051, tracked as SGA-242): once auth exists this escape is deleted and
+// non-loopback binds require auth instead.
 const UNSAFE_BIND_ENV = 'SAGA_SERVICE_UNSAFE_ALLOW_NONLOOPBACK';
 
 function assertLoopbackBind(host: string, env: NodeJS.ProcessEnv = process.env): void {
