@@ -61,6 +61,7 @@
         "@hono/node-server": "^2.0.6",
         "@saga/contracts": "workspace:*",
         "@saga/db": "workspace:*",
+        "@saga/mcp": "workspace:*",
         "@saga/runtime": "workspace:*",
         "effect": "^3.21.4",
         "hono": "^4.12.27",
