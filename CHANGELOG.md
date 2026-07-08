@@ -187,6 +187,21 @@ release. When a release is cut, this section is promoted to
 
 ### Changed
 
+- **`saga` client commands route through the service; `saga mcp` is a stdio→HTTP
+  bridge** (SGA-249, ADR-0046). The strangler cutover: `saga recall`,
+  `saga sessions recent|show`, `saga ingest`, and `saga doctor` now go through the
+  service over `@saga/api-client` instead of opening Postgres directly — no
+  client-role command touches the database. `saga mcp` stops being a db-backed
+  stdio MCP server and becomes a zero-logic bridge that resolves the workspace live
+  from `.saga.local.json` and forwards JSON-RPC to `<service>/mcp`; the harness
+  `.mcp.json` is unchanged (`{command, args:["mcp"]}`), and the credential-holding
+  stdio server is deleted. `saga doctor` reports service reachability + migrations
+  from the service's `/v1/info` (not a local database), keeping the host-ops checks
+  (service process, embeddings, convergence). New `--service-url` / `--auth-token`
+  global flags (falling back to `SAGA_SERVICE_URL` / `SAGA_AUTH_TOKEN` / config).
+  Host-ops commands (`init`, `service`, `start`, `self-update`, `harness`) stay
+  local.
+
 - **Service-side vector recall egress** (SGA-253, ADR-0032). The service now
   resolves a recall query embedding under installation policy and drives the
   pgvector path, so `POST /v1/recall` and the service-hosted HTTP MCP
@@ -222,6 +237,15 @@ release. When a release is cut, this section is promoted to
   flags any integration still pointing at a checkout and names the command that
   fixes it. Removed the unused, config-unaware `db:migrate` script — the
   sanctioned apply paths are `saga self-update` and `@saga/service migrate`.
+
+### Removed
+
+- **`saga index` and the `saga sessions` write subcommands** (SGA-249). `saga index`
+  dissolves — embedding index fill is a service-side job (SGA-204 direction). The
+  admin/governance `saga sessions import|delete|redact` subcommands are removed from
+  the client surface: `import` dissolves, and `delete`/`redact` return as
+  service-backed commands in a later slice (SGA-255). `saga sessions` now exposes
+  only `recent` and `show`.
 
 ### Fixed
 
