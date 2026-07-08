@@ -129,6 +129,12 @@ describePostgres('service /v1 read parity', () => {
     handle = await startSagaService(testConfig(url.toString()), {
       database: service,
       recordRun: () => Effect.void,
+      // Inject a deterministic lexical resolver so these read-parity tests never
+      // perform remote egress or depend on ambient OPENAI_API_KEY; the vector path
+      // is covered by recall-vector.postgres.test.ts.
+      resolveRecallEmbedding: async () => ({
+        posture: { mode: 'lexical', reason: 'disabled-by-policy' },
+      }),
       validateDatabase: async () => undefined,
     });
     client = new SagaApiClient({ baseUrl: handle.url });
@@ -188,16 +194,20 @@ describePostgres('service /v1 read parity', () => {
     expect(viaApi.length).toBeGreaterThan(0);
   });
 
-  test('matches searchSessionRecall via /v1/recall (modulo per-call searchedAt)', async () => {
+  test('matches searchSessionRecall via /v1/recall (modulo per-call searchedAt + posture)', async () => {
     const direct = await Effect.runPromise(
       searchSessionRecall(service ?? fail(), { query: recallQuery, workspaceId }),
     );
     const viaApi = await (client ?? fail()).recall({ query: recallQuery, workspaceId });
 
+    // The service stamps the resolved posture onto the response; the db result carries
+    // none, so assert it separately (the injected resolver is lexical here), then strip
+    // it before comparing the rest.
+    expect(viaApi.search).toStrictEqual({ mode: 'lexical', reason: 'disabled-by-policy' });
     // searchedAt is stamped per call, so it legitimately differs between the two
     // invocations; assert it is a valid instant, then compare the rest.
     expect(new Date(viaApi.searchedAt).toISOString()).toBe(viaApi.searchedAt);
-    const { searchedAt: _apiAt, ...apiRest } = viaApi;
+    const { search: _search, searchedAt: _apiAt, ...apiRest } = viaApi;
     const { searchedAt: _dbAt, ...dbRest } = jsonify(
       redactAgentFacingSessionValue(direct),
     ) as Record<string, unknown>;

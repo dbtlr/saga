@@ -30,22 +30,18 @@ const SESSION_BOOKKEEPING_BLOB_KEYS = new Set([
   'turnContexts',
 ]);
 
-// The service MCP recall path is LEXICAL-ONLY for now (SGA-238): vector query
-// egress is deferred to a later slice, so the posture is a fixed lexical stance
-// rather than the CLI's env/policy-resolved posture. The parity test drives the
-// stdio server with this same posture so the presentation output stays comparable.
+// The recall posture the service stamps onto a search response: `vector` when the
+// query embedding was resolved and the pgvector path ran, `lexical` when embeddings
+// were off (by policy or a forced request), `degraded` when embeddings were enabled
+// but a credential/provider failure fell back to lexical (SGA-253, ADR-0032). The
+// posture is resolved per request (see recall-embedding.ts), matching the stdio
+// server; the wire mirror in @saga/api-client is pinned equal by wire-parity.types.ts.
 export type RecallSearchMode = 'vector' | 'lexical' | 'degraded';
 
 export type RecallSearchPosture = {
   mode: RecallSearchMode;
   reason?: string;
   detail?: string;
-};
-
-export const SERVICE_LEXICAL_POSTURE: RecallSearchPosture = {
-  detail: 'vector recall query egress is deferred to a later slice',
-  mode: 'lexical',
-  reason: 'service-lexical-only',
 };
 
 export function formatRecallSearchPosture(posture: RecallSearchPosture): string {

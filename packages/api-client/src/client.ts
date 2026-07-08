@@ -9,7 +9,7 @@ import type {
   RawEvent,
   RecallContextExpansion,
   RecallRequest,
-  RecallSearchResult,
+  RecallResponse,
   RecentSessionRecord,
   ServiceInfo,
   SessionDetail,
@@ -61,8 +61,8 @@ export class SagaApiClient {
     return this.#request<ServiceInfo>('GET', '/v1/info');
   }
 
-  recall(request: RecallRequest): Promise<RecallSearchResult> {
-    return this.#request<RecallSearchResult>('POST', '/v1/recall', { body: request });
+  recall(request: RecallRequest): Promise<RecallResponse> {
+    return this.#request<RecallResponse>('POST', '/v1/recall', { body: request });
   }
 
   // The write path (SGA-238): stores raw events and optional session snapshots.

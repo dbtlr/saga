@@ -18,9 +18,16 @@ import type { RuntimeConfig } from '@saga/runtime';
 import { Effect } from 'effect';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
-import { SERVICE_LEXICAL_POSTURE } from './mcp-presentation.js';
 import { startSagaService } from './server.js';
 import type { SagaServiceHandle } from './server.js';
+
+// A deterministic lexical resolver injected into the service so this test never
+// performs remote egress and never depends on ambient OPENAI_API_KEY. The service's
+// recall posture is now resolver-provided (SGA-253), not a hardcoded stance, so the
+// presentation stays lexical here — matching the stdio oracle (which resolves to
+// lexical `disabled-by-policy` from its empty SAGA_HOME) modulo the posture value,
+// which is normalized in the byte comparison and asserted separately below.
+const INJECTED_LEXICAL_POSTURE = { mode: 'lexical', reason: 'disabled-by-policy' } as const;
 
 // STRANGLER TWIN PARITY (SGA-238, reconciled at SGA-249). The service MCP must
 // produce byte-identical output to apps/cli's stdio MCP for the same seeded data.
@@ -57,10 +64,11 @@ function testConfig(url: string): RuntimeConfig {
 }
 
 // The two search-only divergences: `searchedAt` is stamped per call, and the
-// recall posture is environment-resolved (the stdio server reads local policy and
-// lands on lexical `disabled-by-policy`, while the service is lexical-only by
-// decree). Neutralize both — the posture is asserted separately — so the rest of
-// the compaction/redaction/markdown pipeline is compared exactly.
+// recall posture is environment-resolved on the oracle (it reads local policy and
+// lands on lexical `disabled-by-policy`) but injected on the service. Both are
+// lexical, but the exact posture value differs, so neutralize both here — the
+// posture is asserted separately — and compare the rest of the
+// compaction/redaction/markdown pipeline exactly.
 function normalizeSearch(response: unknown): unknown {
   const clone = jsonify(response) as {
     result?: {
@@ -227,6 +235,7 @@ describePostgres('service MCP parity with the stdio MCP', () => {
     handle = await startSagaService(testConfig(scopedUrl), {
       database: service,
       recordRun: () => Effect.void,
+      resolveRecallEmbedding: async () => ({ posture: { ...INJECTED_LEXICAL_POSTURE } }),
       validateDatabase: async () => undefined,
     });
 
@@ -360,12 +369,13 @@ describePostgres('service MCP parity with the stdio MCP', () => {
   test('search_sessions matches (modulo per-call searchedAt + posture)', async () => {
     const viaService = await postMcp(requests.search);
     expect(normalizeSearch(oracleResponse(4))).toStrictEqual(normalizeSearch(viaService));
-    // The lexical-only posture is stamped on the service structured content and its
-    // markdown; the searchedAt is a valid instant.
+    // The resolver-provided posture is stamped on the service structured content
+    // (proving it flows from the resolver, not a hardcode); the searchedAt is a
+    // valid instant.
     const structured = viaService.result as {
       structuredContent: { search: unknown; searchedAt: string };
     };
-    expect(structured.structuredContent.search).toStrictEqual(jsonify(SERVICE_LEXICAL_POSTURE));
+    expect(structured.structuredContent.search).toStrictEqual(jsonify(INJECTED_LEXICAL_POSTURE));
     expect(new Date(structured.structuredContent.searchedAt).toISOString()).toBe(
       structured.structuredContent.searchedAt,
     );

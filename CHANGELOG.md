@@ -187,6 +187,20 @@ release. When a release is cut, this section is promoted to
 
 ### Changed
 
+- **Service-side vector recall egress** (SGA-253, ADR-0032). The service now
+  resolves a recall query embedding under installation policy and drives the
+  pgvector path, so `POST /v1/recall` and the service-hosted HTTP MCP
+  `search_sessions` return vector results with a real posture
+  (`vector`/`lexical`/`degraded` + reason) when remote embeddings are enabled,
+  and lexical otherwise — matching the stdio MCP instead of the previous
+  lexical-only stance. The query text never leaves the machine unless policy
+  enables remote embeddings. `POST /v1/recall` now carries the resolved posture
+  on a `search` field; `@saga/api-client`'s `recall()` returns it. `@saga/client-cli`
+  `recall search` stops forcing lexical — `--no-embeddings` forces it,
+  `--vector-candidates` bounds the vector set, and the effective mode is reported
+  from the service. Closes the gap that would otherwise have regressed every
+  embeddings-enabled install from vector to lexical when the client/service swap
+  (SGA-249) routes recall through the service.
 - **BREAKING: the database environment variable is now `SAGA_DATABASE_URL`**
   (SGA-224, ADR-0044/0038). `DATABASE_URL` / `DATABASE_URL_FILE` are no longer
   read; set `SAGA_DATABASE_URL` / `SAGA_DATABASE_URL_FILE` instead (deploy env
