@@ -8,7 +8,6 @@ function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandl
   return {
     doctor: async () => 'doctor',
     harness: async () => 'harness',
-    index: async () => 'index',
     ingest: async () => 'ingest',
     init: async () => 'init',
     mcp: async () => 'mcp',
@@ -30,9 +29,11 @@ describe('parseArgs', () => {
       command: 'doctor',
       options: {
         ascii: true,
+        authToken: undefined,
         color: 'never',
         format: 'json',
         help: false,
+        serviceUrl: undefined,
         version: false,
       },
     });
@@ -55,9 +56,11 @@ describe('parseArgs', () => {
       command: 'sessions',
       options: {
         ascii: false,
+        authToken: undefined,
         color: 'auto',
         format: 'json',
         help: false,
+        serviceUrl: undefined,
         version: false,
       },
     });
@@ -83,7 +86,6 @@ describe('run', () => {
       'harness',
       'mcp',
       'ingest',
-      'index',
       'recall',
       'sessions',
       'self-update',
@@ -296,9 +298,11 @@ describe('validateCommand', () => {
         command: 'service',
         options: {
           ascii: false,
+          authToken: undefined,
           color: 'auto',
           format: 'records',
           help: false,
+          serviceUrl: undefined,
           version: false,
         },
       }),
@@ -312,9 +316,11 @@ describe('validateCommand', () => {
         command: 'harness',
         options: {
           ascii: false,
+          authToken: undefined,
           color: 'auto',
           format: 'records',
           help: false,
+          serviceUrl: undefined,
           version: false,
         },
       }),

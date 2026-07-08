@@ -1,20 +1,30 @@
-import type { ColorMode, GlobalOptions, OutputFormat } from '@saga/client-cli';
+import { runIngestCommand, runRecallCommand, runSessionsCommand } from '@saga/client-cli';
+import type {
+  ClientCommandContext,
+  ColorMode,
+  GlobalOptions as BaseGlobalOptions,
+  OutputFormat,
+} from '@saga/client-cli';
 
 import { runDoctor } from './doctor.js';
 import { runHarnessCommand } from './harness.js';
-import { runIndexCommand } from './index-command.js';
-import { runIngestCommand } from './ingest.js';
 import { runInit } from './init.js';
 import { runMcpCommand } from './mcp.js';
-import { runRecallCommand } from './recall.js';
 import { errorLine, renderOptionsFromGlobals } from './render.js';
 import { runSelfUpdateCommand } from './self-update.js';
 import { runServiceCommand } from './service.js';
-import { runSessionsCommand } from './sessions.js';
 import { runStartCommand } from './start.js';
 import { VERSION } from './version.js';
 
-export type { ColorMode, GlobalOptions, OutputFormat } from '@saga/client-cli';
+export type { ColorMode, OutputFormat } from '@saga/client-cli';
+
+// The dual-role CLI's global options extend the shared client options with the
+// service-connection flags the migrated client commands (recall/sessions/ingest/
+// doctor) and the MCP bridge resolve their service target from (SGA-249).
+export type GlobalOptions = BaseGlobalOptions & {
+  authToken: string | undefined;
+  serviceUrl: string | undefined;
+};
 
 export type ParsedCommand = {
   args: string[];
@@ -39,19 +49,18 @@ export const COMMANDS = {
     description: 'install or inspect harness integrations',
     subcommands: ['install', 'uninstall', 'status'],
   },
-  mcp: { description: 'launch the stdio MCP adapter' },
+  mcp: { description: 'bridge the stdio MCP transport to the Saga service' },
   ingest: {
     description: 'manually ingest source data for debugging',
     subcommands: ['claude-hook', 'codex-hook', 'recent'],
   },
-  index: { description: 'index active session segments into recall embeddings' },
   recall: {
     description: 'search and expand captured session memory',
     subcommands: ['search', 'show'],
   },
   sessions: {
-    description: 'import and inspect raw session records',
-    subcommands: ['delete', 'import', 'recent', 'redact', 'show'],
+    description: 'inspect captured session records',
+    subcommands: ['recent', 'show'],
   },
   'self-update': { description: 'download, verify, and install the latest saga binary' },
 } as const satisfies Record<string, CommandDefinition>;
@@ -69,9 +78,11 @@ const isCommandName = (name: string): name is CommandName => Object.hasOwn(COMMA
 
 const DEFAULT_OPTIONS: GlobalOptions = {
   ascii: false,
+  authToken: undefined,
   color: 'auto',
   format: 'records',
   help: false,
+  serviceUrl: undefined,
   version: false,
 };
 
@@ -87,7 +98,6 @@ export class UsageError extends Error {
 export type CommandHandlers = {
   doctor: typeof runDoctor;
   harness: typeof runHarnessCommand;
-  index: typeof runIndexCommand;
   ingest: typeof runIngestCommand;
   init: typeof runInit;
   mcp: typeof runMcpCommand;
@@ -101,7 +111,6 @@ export type CommandHandlers = {
 export const DEFAULT_HANDLERS: CommandHandlers = {
   doctor: runDoctor,
   harness: runHarnessCommand,
-  index: runIndexCommand,
   ingest: runIngestCommand,
   init: runInit,
   mcp: runMcpCommand,
@@ -127,6 +136,8 @@ options:
   -f, --format <fmt>   records|json|jsonl|ids
       --color <mode>   auto|always|never
       --ascii          disable color/icons
+      --service-url <url>  Saga service base URL (else SAGA_SERVICE_URL / config)
+      --auth-token <tok>   bearer token for the service (else SAGA_AUTH_TOKEN / config)
   -h, --help           show help
       --version        show version
 
@@ -222,6 +233,26 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       continue;
     }
 
+    if (arg === '--service-url') {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        throw new UsageError('--service-url expects a value');
+      }
+      options.serviceUrl = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--auth-token') {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        throw new UsageError('--auth-token expects a value');
+      }
+      options.authToken = value;
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith('-') && positionals.length === 0) {
       throw new UsageError(`unknown option: ${arg}`);
     }
@@ -256,12 +287,21 @@ export async function run(
 
     validateCommand(parsed);
     const renderOptions = renderOptionsFromGlobals(parsed.options);
+    // The execution context for the migrated client commands: the service
+    // connection resolved from the global flags (falling back to env/config inside
+    // @saga/client-cli). Built once and shared by recall/sessions/ingest/doctor.
+    const context: ClientCommandContext = {
+      apiClient: {
+        authToken: parsed.options.authToken,
+        serviceUrl: parsed.options.serviceUrl,
+      },
+    };
     if (parsed.command === 'init') {
       write(await handlers.init(parsed.args, renderOptions));
       return 0;
     }
     if (parsed.command === 'doctor') {
-      write(await handlers.doctor(parsed.args, renderOptions));
+      write(await handlers.doctor(parsed.args, renderOptions, context));
       return 0;
     }
     if (parsed.command === 'harness') {
@@ -269,22 +309,20 @@ export async function run(
       return 0;
     }
     if (parsed.command === 'ingest') {
-      write(await handlers.ingest(parsed.args, renderOptions));
-      return 0;
-    }
-    if (parsed.command === 'index') {
-      write(await handlers.index(parsed.args, renderOptions));
+      write(await handlers.ingest(parsed.args, renderOptions, context));
       return 0;
     }
     if (parsed.command === 'mcp') {
-      const output = await handlers.mcp(parsed.args, renderOptions, write);
+      const output = await handlers.mcp(parsed.args, renderOptions, write, {
+        service: { authToken: parsed.options.authToken, serviceUrl: parsed.options.serviceUrl },
+      });
       if (output !== undefined && output !== '') {
         write(output);
       }
       return 0;
     }
     if (parsed.command === 'recall') {
-      write(await handlers.recall(parsed.args, renderOptions));
+      write(await handlers.recall(parsed.args, renderOptions, context));
       return 0;
     }
     if (parsed.command === 'service') {
@@ -292,7 +330,7 @@ export async function run(
       return 0;
     }
     if (parsed.command === 'sessions') {
-      write(await handlers.sessions(parsed.args, renderOptions));
+      write(await handlers.sessions(parsed.args, renderOptions, context));
       return 0;
     }
     if (parsed.command === 'start') {

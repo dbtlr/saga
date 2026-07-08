@@ -1,493 +1,193 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { RecallSearchInput, RecallSearchResult } from '@saga/db';
-import { describe, expect, it } from 'vitest';
+import type { JsonRpcRequest, JsonRpcResponse } from '@saga/mcp';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { writeBindingFile } from './init.js';
-import { redactMcpStructuredOutput, runMcpCommand, searchProjectSessions } from './mcp.js';
+import { runMcpCommand } from './mcp.js';
+import type { McpRequestForwarder } from './mcp.js';
 
 async function* chunks(text: string) {
   yield text;
 }
 
-describe('runMcpCommand', () => {
-  it('responds to newline-delimited JSON-RPC requests', async () => {
-    const output: string[] = [];
+const RENDER_OPTIONS = { ascii: false, color: 'never', format: 'records', isTty: false } as const;
 
-    await runMcpCommand(
-      [],
-      { ascii: true, color: 'never', format: 'records', isTty: false },
-      (text) => output.push(text),
-      chunks(`${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'tools/list' })}\n`),
-    );
+// Hoisted so lint doesn't flag them as scope-free closures recreated per test.
+const NOTIFICATION_FORWARDER: McpRequestForwarder = async () => undefined;
+const THROWING_FORWARDER: McpRequestForwarder = async () => {
+  throw new Error('service unreachable');
+};
 
-    expect(output).toHaveLength(1);
-    expect(output[0]).toContain('list_recent_sessions');
-    expect(output[0]).toContain('search_sessions');
-    expect(output[0]).toContain('get_session_context');
-    expect(output[0]).not.toContain('get_active_context');
-    expect(output[0]).not.toContain('search_memory');
-    expect(output[0]).not.toContain('resolve_saga_link');
-  });
-
-  it('streams a response before stdin closes', async () => {
-    const output: string[] = [];
-    let release: (() => void) | undefined;
-    async function* openStream() {
-      yield `${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'tools/list' })}\n`;
-      await new Promise<void>((resolve) => {
-        release = resolve;
-      });
-    }
-
-    const running = runMcpCommand(
-      [],
-      { ascii: true, color: 'never', format: 'records', isTty: false },
-      (text) => output.push(text),
-      openStream(),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(output[0]).toContain('list_recent_sessions');
-    release?.();
-    await running;
-  });
-
-  it('returns JSON-RPC parse errors for malformed frames', async () => {
-    const output: string[] = [];
-
-    await runMcpCommand(
-      [],
-      { ascii: true, color: 'never', format: 'records', isTty: false },
-      (text) => output.push(text),
-      chunks('not-json\n'),
-    );
-
-    expect(JSON.parse(output[0] ?? '{}')).toMatchObject({
-      error: {
-        code: -32700,
-      },
-      id: null,
-      jsonrpc: '2.0',
-    });
-  });
-
-  it('returns JSON-RPC invalid request errors for invalid ids', async () => {
-    const output: string[] = [];
-
-    await runMcpCommand(
-      [],
-      { ascii: true, color: 'never', format: 'records', isTty: false },
-      (text) => output.push(text),
-      chunks(`${JSON.stringify({ id: {}, jsonrpc: '2.0', method: 'tools/list' })}\n`),
-    );
-
-    expect(JSON.parse(output[0] ?? '{}')).toMatchObject({
-      error: {
-        code: -32600,
-        message: 'JSON-RPC request id must be a string, number, or null',
-      },
-      id: null,
-      jsonrpc: '2.0',
-    });
-  });
-
-  it('rejects non-integer limit and window tool arguments', async () => {
-    const cases = [
-      {
-        arguments: { limit: 1.5, query: 'recall' },
-        message: 'search_sessions limit must be a positive integer',
-        name: 'search_sessions',
-      },
-      {
-        arguments: { segmentId: 'segment-id', windowTurns: 1.5 },
-        message: 'get_session_context windowTurns must be a non-negative integer',
-        name: 'get_session_context',
-      },
-      {
-        arguments: { afterTurns: 2.5, segmentId: 'segment-id' },
-        message: 'get_session_context afterTurns must be a non-negative integer',
-        name: 'get_session_context',
-      },
-      {
-        arguments: { beforeTurns: 0.5, segmentId: 'segment-id' },
-        message: 'get_session_context beforeTurns must be a non-negative integer',
-        name: 'get_session_context',
-      },
-      {
-        arguments: { limit: 2.5 },
-        message: 'list_recent_sessions limit must be a positive integer',
-        name: 'list_recent_sessions',
-      },
-    ] as const;
-
-    for (const entry of cases) {
-      const output: string[] = [];
-      await runMcpCommand(
-        [],
-        { ascii: true, color: 'never', format: 'records', isTty: false },
-        (text) => output.push(text),
-        chunks(
-          `${JSON.stringify({
-            id: 1,
-            jsonrpc: '2.0',
-            method: 'tools/call',
-            params: { arguments: entry.arguments, name: entry.name },
-          })}\n`,
-        ),
-      );
-      expect(JSON.parse(output[0] ?? '{}')).toMatchObject({
-        error: {
-          message: entry.message,
-        },
-      });
-    }
-  });
-});
-
-describe('searchProjectSessions', () => {
-  it('passes the resolved query embedding and reports vector mode', async () => {
-    const projectRoot = boundMcpProject();
-    let capturedInput: RecallSearchInput | undefined;
-
-    const result = await searchProjectSessions(
-      { query: 'semantic needle' },
-      {
-        cwd: projectRoot,
-        resolveRecallEmbedding: async (query) => {
-          expect(query).toBe('semantic needle');
-          return {
-            posture: { mode: 'vector' },
-            queryEmbedding: {
-              dimensions: 3,
-              model: 'test-embedding',
-              provider: 'openai',
-              vector: [1, 0, 0],
-            },
-          };
-        },
-        searchRecall: async (input) => {
-          capturedInput = input;
-          return emptyRecallResult('semantic needle');
-        },
-      },
-    );
-
-    expect(capturedInput?.queryEmbedding).toMatchObject({
-      dimensions: 3,
-      model: 'test-embedding',
-      provider: 'openai',
-      vector: [1, 0, 0],
-    });
-    expect(capturedInput?.workspaceId).toBe('workspace-id');
-    expect(result.markdown).toContain('- Mode: vector');
-    expect(result.recall).toMatchObject({
-      search: { mode: 'vector' },
-    });
-  });
-
-  it('withholds the query embedding and reports a degraded posture', async () => {
-    const projectRoot = boundMcpProject();
-    let capturedInput: RecallSearchInput | undefined;
-
-    const result = await searchProjectSessions(
-      { query: 'semantic needle' },
-      {
-        cwd: projectRoot,
-        resolveRecallEmbedding: async () => ({
-          posture: {
-            detail: 'OpenAI embeddings request failed with status 500',
-            mode: 'degraded',
-            reason: 'embedding-error',
-          },
-        }),
-        searchRecall: async (input) => {
-          capturedInput = input;
-          return emptyRecallResult('semantic needle');
-        },
-      },
-    );
-
-    expect(capturedInput?.queryEmbedding).toBeUndefined();
-    expect(result.markdown).toContain('- Mode: degraded (embedding-error)');
-    expect(result.recall).toMatchObject({
-      search: {
-        detail: 'OpenAI embeddings request failed with status 500',
-        mode: 'degraded',
-        reason: 'embedding-error',
-      },
-    });
-  });
-
-  it('reports a lexical posture when a policy-disabled resolver is injected', async () => {
-    const projectRoot = boundMcpProject();
-
-    const result = await searchProjectSessions(
-      { query: 'lexical recall' },
-      {
-        cwd: projectRoot,
-        resolveRecallEmbedding: async () => ({
-          posture: { mode: 'lexical', reason: 'disabled-by-policy' },
-        }),
-        searchRecall: async () => emptyRecallResult('lexical recall'),
-      },
-    );
-
-    expect(result.markdown).toContain('- Mode: lexical (disabled-by-policy)');
-    expect(result.recall).toMatchObject({
-      search: { mode: 'lexical', reason: 'disabled-by-policy' },
-    });
-  });
-
-  it('does not attempt embedding resolution when only searchRecall is injected', async () => {
-    const projectRoot = boundMcpProject();
-
-    const result = await searchProjectSessions(
-      { query: 'lexical recall' },
-      {
-        cwd: projectRoot,
-        searchRecall: async (input) => {
-          expect(input.queryEmbedding).toBeUndefined();
-          return emptyRecallResult('lexical recall');
-        },
-      },
-    );
-
-    expect(result.markdown).toContain('- Mode: lexical (not-attempted)');
-    expect(result.recall).toMatchObject({
-      search: { mode: 'lexical', reason: 'not-attempted' },
-    });
-  });
-});
-
-function boundMcpProject(): string {
-  const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-search-'));
+// A temp project with a workspace binding so the bridge resolves a workspace id LIVE.
+function boundProject(workspaceId: string): string {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-bridge-'));
   writeBindingFile(projectRoot, {
-    host: {
-      generatedAt: '2026-06-22T00:00:00.000Z',
-      id: 'host-id',
-      label: 'test-host',
-    },
-    project: {
-      gitRemote: undefined,
-      root: projectRoot,
-    },
+    project: { gitRemote: undefined, root: projectRoot },
     schemaVersion: 1,
-    service: {
-      databaseUrl: 'environment',
-    },
-    sourceBinding: {
-      id: 'source-id',
-    },
-    workspace: {
-      handle: 'saga',
-      id: 'workspace-id',
-    },
+    service: { databaseUrl: 'environment' },
+    sourceBinding: { id: 'source-id' },
+    workspace: { handle: 'saga', id: workspaceId },
   });
   return projectRoot;
 }
 
-function emptyRecallResult(query: string): RecallSearchResult {
-  return {
-    intervals: [],
-    matchCount: 0,
-    query,
-    searchedAt: '2026-06-22T10:00:00.000Z',
-    sessions: [],
-    workspaceId: 'workspace-id',
+const created: string[] = [];
+afterEach(() => {
+  while (created.length > 0) {
+    const dir = created.pop();
+    if (dir !== undefined) {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  }
+});
+
+// Records every (request, workspaceId) the bridge forwards and returns a canned
+// response, standing in for the live service.
+function recordingForwarder(): {
+  calls: { request: JsonRpcRequest; workspaceId: string | undefined }[];
+  forward: McpRequestForwarder;
+} {
+  const calls: { request: JsonRpcRequest; workspaceId: string | undefined }[] = [];
+  const forward: McpRequestForwarder = async (request, workspaceId) => {
+    calls.push({ request, workspaceId });
+    return { id: request.id ?? null, jsonrpc: '2.0', result: { ok: true } };
   };
+  return { calls, forward };
 }
 
-describe('redactMcpStructuredOutput', () => {
-  it('removes unsafe locator keys and redacts local path values', () => {
-    const redacted = redactMcpStructuredOutput({
-      rawSessionRecord: {
-        id: 'raw-1',
-        metadata: {
-          capturedText:
-            'Use /work/saga, /home/drew/work/saga, /custom-root/saga, C:\\Users\\drew\\.codex\\transcripts\\session.jsonl, and file:///tmp/saga/session.jsonl but keep https://example.com/docs/path and saga:context/workflow.',
-          embedded: 'cwd=/work/saga log=/custom-root/saga/session.log',
-          genericInputPath: '/custom-root/saga/session.jsonl',
-          inputPath: '/Volumes/data/workspaces/saga/session.jsonl',
-          linuxInputPath: '/work/saga/session.jsonl',
-          nested: {
-            sourceLocator: 'file:///Volumes/data/workspaces/saga/session.jsonl',
-          },
-          nonLocalId: 'github/dbtlr/saga',
-          pseudoSchemes: 'cwd:/work/saga log:/custom-root/saga/session.log',
-          referenceUrl: 'https://example.com/docs/path?target=saga',
-          safeGithubUri: 'github://dbtlr/saga/pull/12',
-          safeMimirUri: 'mimir://project/SGA-130',
-          safeNornUri: 'norn://workspace/notes/saga',
-          sagaLink: 'saga:context/workflow',
-          sourceLocatorHash: 'sha256:local-path-hash',
-        },
-        provenance: {
-          homeProjectRoot: '/home/drew/work/saga',
-          projectRoot: '/Users/drew/work/saga',
-          transcript:
-            'loaded from file:///tmp/saga/session.jsonl cwd=/work/saga windows=C:\\Users\\drew\\.codex\\transcripts\\session.jsonl',
-          windowsTranscriptPath: 'C:\\Users\\drew\\.codex\\transcripts\\session.jsonl',
-        },
-        sourceLocator: 'file:///Volumes/data/workspaces/saga/session.jsonl',
-      },
-      session: {
-        id: 'session-1',
-        sourceLocator: 'file:///Volumes/data/workspaces/saga/session.jsonl',
-      },
-      sourceBinding: {
-        config: {
-          token: 'secret-token',
-        },
-        displayName: 'Codex',
-        enabled: true,
-        id: 'source-1',
-        sourceType: 'codex',
-        sourceUri: 'codex://local',
-      },
-      target: {
-        apiUrl: 'https://api.github.com/repos/dbtlr/saga/pulls/12',
-        sourceUri: 'codex://local/session/abc',
-      },
+describe('runMcpCommand bridge', () => {
+  it('forwards a request with the live-resolved workspace id and relays the response', async () => {
+    const projectRoot = boundProject('11111111-1111-1111-1111-111111111111');
+    created.push(projectRoot);
+    const { calls, forward } = recordingForwarder();
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      cwd: projectRoot,
+      forward,
+      stdin: chunks(`${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'tools/list' })}\n`),
     });
 
-    expect(redacted).toMatchObject({
-      rawSessionRecord: {
-        id: 'raw-1',
-        metadata: {
-          capturedText:
-            'Use [local-path-redacted], [local-path-redacted], [local-path-redacted], [local-path-redacted], and [local-path-redacted] but keep https://example.com/docs/path and saga:context/workflow.',
-          embedded: 'cwd=[local-path-redacted] log=[local-path-redacted]',
-          genericInputPath: '[local-path-redacted]',
-          inputPath: '[local-path-redacted]',
-          linuxInputPath: '[local-path-redacted]',
-          nested: {},
-          nonLocalId: 'github/dbtlr/saga',
-          pseudoSchemes: 'cwd:[local-path-redacted] log:[local-path-redacted]',
-          referenceUrl: 'https://example.com/docs/path?target=saga',
-          safeGithubUri: 'github://dbtlr/saga/pull/12',
-          safeMimirUri: 'mimir://project/SGA-130',
-          safeNornUri: 'norn://workspace/notes/saga',
-          sagaLink: 'saga:context/workflow',
-        },
-        provenance: {
-          homeProjectRoot: '[local-path-redacted]',
-          projectRoot: '[local-path-redacted]',
-          transcript:
-            'loaded from [local-path-redacted] cwd=[local-path-redacted] windows=[local-path-redacted]',
-          windowsTranscriptPath: '[local-path-redacted]',
-        },
-      },
-      session: {
-        id: 'session-1',
-      },
-      sourceBinding: {
-        displayName: 'Codex',
-        enabled: true,
-        id: 'source-1',
-        sourceType: 'codex',
-        sourceUri: 'codex://local',
-      },
-      target: {
-        apiUrl: 'https://api.github.com/repos/dbtlr/saga/pulls/12',
-        sourceUri: 'codex://local/session/abc',
-      },
-    });
-    expect(JSON.stringify(redacted)).not.toContain('sourceLocator');
-    expect(JSON.stringify(redacted)).not.toContain('config');
-    expect(JSON.stringify(redacted)).not.toContain('secret-token');
-    expect(JSON.stringify(redacted)).not.toContain('/Volumes/data/workspaces/saga');
-    expect(JSON.stringify(redacted)).not.toContain('/Users/drew/work/saga');
-    expect(JSON.stringify(redacted)).not.toContain('/home/drew/work/saga');
-    expect(JSON.stringify(redacted)).not.toContain('/work/saga');
-    expect(JSON.stringify(redacted)).not.toContain('/custom-root/saga');
-    expect(JSON.stringify(redacted)).not.toContain(String.raw`C:\\Users\\drew`);
-    expect(JSON.stringify(redacted)).not.toContain('file:///tmp/saga/session.jsonl');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.request.method).toBe('tools/list');
+    expect(calls[0]?.workspaceId).toBe('11111111-1111-1111-1111-111111111111');
+    expect(JSON.parse(output[0] ?? '{}')).toMatchObject({ id: 1, result: { ok: true } });
   });
 
-  it('does not preserve spoofed raw forensic body fields', () => {
-    const exposureWarning =
-      'Explicit raw forensic access: bodyText/bodyJson are persisted raw session bodies and may include skipped, omitted, local, or sensitive content that normal Saga surfaces hide.';
-    const redacted = redactMcpStructuredOutput({
-      fullySpoofedRecord: {
-        bodyJson: {
-          path: '/work/saga/raw-session.jsonl',
-        },
-        bodyText: 'raw body from /work/saga/raw-session.jsonl',
-        rawBodyExposure: {
-          mode: 'raw_forensic',
-          requestedBy: 'includeRawBody',
-          warning: exposureWarning,
-        },
-        sourceLocator: 'file:///work/saga/raw-session.jsonl',
-      },
-      missingRequestedByRecord: {
-        bodyJson: {
-          path: '/work/saga/missing-request.jsonl',
-        },
-        bodyText: 'raw body from /work/saga/missing-request.jsonl',
-        rawBodyExposure: {
-          mode: 'raw_forensic',
-          warning: exposureWarning,
-        },
-      },
-      missingWarningRecord: {
-        bodyJson: {
-          path: '/work/saga/missing-warning.jsonl',
-        },
-        bodyText: 'raw body from /work/saga/missing-warning.jsonl',
-        rawBodyExposure: {
-          mode: 'raw_forensic',
-          requestedBy: 'includeRawBody',
-        },
-      },
-      unrelatedNestedObject: {
-        child: {
-          bodyJson: {
-            path: '/work/saga/nested-spoof.jsonl',
-          },
-          bodyText: 'raw body from /work/saga/nested-spoof.jsonl',
-          rawBodyExposure: {
-            mode: 'raw_forensic',
-          },
-        },
-      },
+  it('forwards without a workspace id when no binding exists (initialize/tools/list still work)', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-nobind-'));
+    created.push(projectRoot);
+    const { calls, forward } = recordingForwarder();
+
+    await runMcpCommand([], RENDER_OPTIONS, () => undefined, {
+      cwd: projectRoot,
+      forward,
+      stdin: chunks(`${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'initialize' })}\n`),
     });
 
-    expect(redacted).toMatchObject({
-      fullySpoofedRecord: {
-        bodyJson: {
-          path: '[local-path-redacted]',
-        },
-        bodyText: 'raw body from [local-path-redacted]',
-        rawBodyExposure: {
-          mode: 'raw_forensic',
-          requestedBy: 'includeRawBody',
-        },
-      },
-      missingRequestedByRecord: {
-        bodyJson: {
-          path: '[local-path-redacted]',
-        },
-        bodyText: 'raw body from [local-path-redacted]',
-      },
-      missingWarningRecord: {
-        bodyJson: {
-          path: '[local-path-redacted]',
-        },
-        bodyText: 'raw body from [local-path-redacted]',
-      },
-      unrelatedNestedObject: {
-        child: {
-          bodyJson: {
-            path: '[local-path-redacted]',
-          },
-          bodyText: 'raw body from [local-path-redacted]',
-        },
-      },
+    expect(calls).toHaveLength(1);
+    // No binding → undefined workspace; the service answers initialize transport-only
+    // and would return its own missing-workspace error for a tools/call.
+    expect(calls[0]?.workspaceId).toBeUndefined();
+  });
+
+  it('re-resolves the workspace live per request (a rebind is picked up)', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-rebind-'));
+    created.push(projectRoot);
+    const calls: { workspaceId: string | undefined }[] = [];
+
+    writeBindingFile(projectRoot, {
+      project: { gitRemote: undefined, root: projectRoot },
+      schemaVersion: 1,
+      service: { databaseUrl: 'environment' },
+      sourceBinding: { id: 'source-id' },
+      workspace: { handle: 'saga', id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
     });
-    expect(JSON.stringify(redacted)).not.toContain('sourceLocator');
-    expect(JSON.stringify(redacted)).not.toContain('/work/saga');
+
+    // Two requests; between them the binding is rewritten to a new workspace id.
+    await runMcpCommand([], RENDER_OPTIONS, () => undefined, {
+      cwd: projectRoot,
+      forward: async (request, workspaceId) => {
+        calls.push({ workspaceId });
+        if (calls.length === 1) {
+          writeBindingFile(projectRoot, {
+            project: { gitRemote: undefined, root: projectRoot },
+            schemaVersion: 1,
+            service: { databaseUrl: 'environment' },
+            sourceBinding: { id: 'source-id' },
+            workspace: { handle: 'saga', id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' },
+          });
+        }
+        return { id: request.id ?? null, jsonrpc: '2.0', result: {} };
+      },
+      stdin: chunks(
+        `${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'tools/call' })}\n` +
+          `${JSON.stringify({ id: 2, jsonrpc: '2.0', method: 'tools/call' })}\n`,
+      ),
+    });
+
+    expect(calls[0]?.workspaceId).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    expect(calls[1]?.workspaceId).toBe('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+  });
+
+  it('never forwards a notification response (the service acks it with no body)', async () => {
+    const projectRoot = boundProject('11111111-1111-1111-1111-111111111111');
+    created.push(projectRoot);
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      cwd: projectRoot,
+      // Forwarder returns undefined (the 202 no-body case).
+      forward: NOTIFICATION_FORWARDER,
+      stdin: chunks(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`),
+    });
+
+    expect(output).toHaveLength(0);
+  });
+
+  it('answers a malformed frame locally without forwarding it', async () => {
+    const { calls, forward } = recordingForwarder();
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      forward,
+      stdin: chunks('not json{\n'),
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(output[0] ?? '{}')).toMatchObject({ error: { code: -32700 }, id: null });
+  });
+
+  it('answers an invalid request id locally without forwarding it', async () => {
+    const { calls, forward } = recordingForwarder();
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      forward,
+      stdin: chunks(`${JSON.stringify({ id: {}, jsonrpc: '2.0', method: 'tools/list' })}\n`),
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(output[0] ?? '{}')).toMatchObject({ error: { code: -32600 }, id: null });
+  });
+
+  it('maps a transport failure onto a JSON-RPC error for the request id', async () => {
+    const projectRoot = boundProject('11111111-1111-1111-1111-111111111111');
+    created.push(projectRoot);
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      cwd: projectRoot,
+      forward: THROWING_FORWARDER,
+      stdin: chunks(`${JSON.stringify({ id: 7, jsonrpc: '2.0', method: 'tools/list' })}\n`),
+    });
+
+    const parsed = JSON.parse(output[0] ?? '{}') as JsonRpcResponse;
+    expect(parsed.id).toBe(7);
+    expect(parsed.error?.code).toBe(-32000);
+    expect(parsed.error?.message).toContain('service unreachable');
   });
 });
