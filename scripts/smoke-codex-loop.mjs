@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const cliBin = join(repoRoot, 'apps/cli/bin/saga.js');
+const serviceEntry = join(repoRoot, 'apps/service/src/main.ts');
 const requireFromCli = createRequire(new URL('../apps/cli/package.json', import.meta.url));
 const postgresModule = await import(pathToFileURL(requireFromCli.resolve('postgres')).href);
 const postgres = postgresModule.default;
@@ -22,6 +24,7 @@ if (adminDatabaseUrl === undefined || adminDatabaseUrl === '') {
 const databaseName = `saga_codex_smoke_${Date.now().toString(36)}_${process.pid.toString(36)}`;
 const adminSql = postgres(adminDatabaseUrl, { max: 1 });
 let workspacePath;
+let serviceProcess;
 let failed = true;
 
 try {
@@ -47,13 +50,20 @@ try {
     env,
   });
 
-  const status = JSON.parse(
-    run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'harness', 'status', 'codex'], {
-      cwd: workspacePath,
-      env,
-    }),
-  );
-  assertCodexHarnessStatus(status);
+  // Boot the service against the seeded database on a free port (the config gate
+  // rejects port 0); main.ts prints the bound URL, which we parse before requests.
+  // Booted BEFORE the codex hook runs: the hook POSTs to SAGA_SERVICE_URL and
+  // silently no-ops under the {continue:true} contract when the service is down.
+  // `saga ingest recent` / `saga sessions recent` (both API-backed) resolve the
+  // same service from SAGA_SERVICE_URL, so the same env carries it through all three.
+  const port = await freePort();
+  const started = await startService({
+    ...env,
+    SAGA_SERVICE_HOST: '127.0.0.1',
+    SAGA_SERVICE_PORT: String(port),
+  });
+  serviceProcess = started.process;
+  const serviceEnv = { ...env, SAGA_SERVICE_URL: started.url };
 
   writeFileSync(
     join(workspacePath, '.codex', 'smoke-transcript.jsonl'),
@@ -67,25 +77,35 @@ try {
   );
   const hookResult = run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
-    env,
+    env: serviceEnv,
     input: JSON.stringify(codexHookPayload(workspacePath)),
   });
   assertHookResult(hookResult);
 
+  // Codex's pending-trust gate only flips to configured once a real hook raw_event
+  // is on record (harness.ts activation evidence), so this check has to run after
+  // the hook fires, not right after install. It queries Postgres directly
+  // (SAGA_DATABASE_URL) — `harness status` is a host-ops command, not API-backed —
+  // so the plain env works here too.
+  const status = JSON.parse(
+    run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'harness', 'status', 'codex'], {
+      cwd: workspacePath,
+      env,
+    }),
+  );
+  assertCodexHarnessStatus(status);
+
   const recent = JSON.parse(
     run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'ingest', 'recent'], {
       cwd: workspacePath,
-      env,
+      env: serviceEnv,
     }),
   );
   assertRecentEvents(recent);
 
-  const sessions = JSON.parse(
-    run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'sessions', 'recent'], {
-      cwd: workspacePath,
-      env,
-    }),
-  );
+  // /v1/ingest stores the raw event synchronously, but the session is derived
+  // asynchronously by the service's extraction job; poll until it lands.
+  const sessions = await pollForCapturedSession(serviceEnv);
   assertCapturedSession(sessions);
 
   console.log('codex hook capture smoke passed');
@@ -93,6 +113,9 @@ try {
   console.log(`sessions: ${sessions.length.toString()}`);
   failed = false;
 } finally {
+  if (serviceProcess !== undefined) {
+    serviceProcess.kill('SIGTERM');
+  }
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
   await adminSql.end({ timeout: 5 });
 
@@ -138,6 +161,87 @@ function codexHookPayload(projectRoot) {
     transcript_path: join(projectRoot, '.codex', 'smoke-transcript.jsonl'),
     turn_id: 'codex-loop-smoke-turn-1',
   };
+}
+
+// Ask the OS for an ephemeral port, then hand it to the service. A brief race
+// window exists between close and the service's bind, acceptable for a smoke.
+function freePort() {
+  return new Promise((_resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => _resolve(port));
+    });
+  });
+}
+
+// Boot apps/service/main.ts under bun with cwd at the seeded workspace (a git repo
+// with no .env), so its runtime config resolves the database strictly from the env
+// we pass. Resolves once the listening URL is printed; rejects on early exit.
+function startService(env) {
+  return new Promise((_resolve, reject) => {
+    const child = spawn('bun', [serviceEntry], {
+      cwd: workspacePath,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const deadline = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`service did not report a listening URL in time\n${stdout}\n${stderr}`));
+    }, 60_000);
+
+    const listeningPattern = /listening on (http:\/\/\S+)/u;
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      const match = listeningPattern.exec(stdout);
+      if (match !== null) {
+        clearTimeout(deadline);
+        _resolve({ process: child, url: match[1] });
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.once('exit', (code) => {
+      clearTimeout(deadline);
+      reject(new Error(`service exited early (code ${String(code)})\n${stdout}\n${stderr}`));
+    });
+  });
+}
+
+// Polls `saga sessions recent` until the captured session shows up (extraction
+// runs asynchronously after /v1/ingest returns) or the deadline passes.
+async function pollForCapturedSession(env, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const intervalMs = options.intervalMs ?? 500;
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    const sessions = JSON.parse(
+      run(process.execPath, [cliBin, '--format', 'json', '--ascii', 'sessions', 'recent'], {
+        cwd: workspacePath,
+        env,
+      }),
+    );
+    last = sessions;
+    if (
+      Array.isArray(sessions) &&
+      sessions.some((row) => row?.session?.harnessSessionId === 'codex-loop-smoke-session')
+    ) {
+      return sessions;
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error(
+    `timed out waiting for the captured session to be extracted: ${JSON.stringify(last, null, 2)}`,
+  );
+}
+
+function sleep(ms) {
+  return new Promise((_resolve) => setTimeout(_resolve, ms));
 }
 
 function run(command, args, options) {

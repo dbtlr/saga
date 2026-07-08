@@ -60,6 +60,24 @@ try {
     cwd: workspacePath,
     env,
   });
+
+  const binding = JSON.parse(readFileSync(join(workspacePath, '.saga.local.json'), 'utf8'));
+  const workspaceId = binding.workspace.id;
+
+  // Boot the service against the seeded database on a free port (the config gate
+  // rejects port 0); main.ts prints the bound URL, which we parse before requests.
+  // Booted BEFORE the codex hook runs: the hook POSTs to SAGA_SERVICE_URL and
+  // silently no-ops under the {continue:true} contract when the service is down.
+  const port = await freePort();
+  const started = await startService({
+    ...env,
+    SAGA_SERVICE_HOST: '127.0.0.1',
+    SAGA_SERVICE_PORT: String(port),
+  });
+  serviceProcess = started.process;
+  const baseUrl = started.url;
+  const serviceEnv = { ...env, SAGA_SERVICE_URL: baseUrl };
+
   writeFileSync(
     join(workspacePath, '.codex', 'mcp-http-smoke-transcript.jsonl'),
     [
@@ -76,23 +94,9 @@ try {
   );
   run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
-    env,
+    env: serviceEnv,
     input: JSON.stringify(codexHookPayload(workspacePath)),
   });
-
-  const binding = JSON.parse(readFileSync(join(workspacePath, '.saga.local.json'), 'utf8'));
-  const workspaceId = binding.workspace.id;
-
-  // Boot the service against the seeded database on a free port (the config gate
-  // rejects port 0); main.ts prints the bound URL, which we parse before requests.
-  const port = await freePort();
-  const started = await startService({
-    ...env,
-    SAGA_SERVICE_HOST: '127.0.0.1',
-    SAGA_SERVICE_PORT: String(port),
-  });
-  serviceProcess = started.process;
-  const baseUrl = started.url;
 
   const initialize = await postMcp(baseUrl, workspaceId, {
     id: 1,
@@ -108,21 +112,21 @@ try {
   });
   assertToolList(toolList);
 
+  // Ingest stores the raw event synchronously, but the extraction job derives
+  // turns/segments asynchronously — storeRawSessionRecord creates the `sessions`
+  // row up front, so list_recent_sessions is visible immediately and isn't a
+  // reliable derivation signal. search_sessions only matches once segments exist,
+  // so poll it until the transcript is indexed.
+  const search = await pollForSearchMatch(baseUrl, workspaceId, 'dogfood capture');
+  const segmentId = assertSearchSessionsResponse(search);
+
   const recent = await postMcp(baseUrl, workspaceId, {
-    id: 3,
+    id: 4,
     jsonrpc: '2.0',
     method: 'tools/call',
     params: { arguments: { limit: 5 }, name: 'list_recent_sessions' },
   });
   assertRecentSessionsResponse(recent);
-
-  const search = await postMcp(baseUrl, workspaceId, {
-    id: 4,
-    jsonrpc: '2.0',
-    method: 'tools/call',
-    params: { arguments: { limit: 5, query: 'dogfood capture' }, name: 'search_sessions' },
-  });
-  const segmentId = assertSearchSessionsResponse(search);
 
   const context = await postMcp(baseUrl, workspaceId, {
     id: 5,
@@ -237,6 +241,36 @@ function startService(env) {
       reject(new Error(`service exited early (code ${String(code)})\n${stdout}\n${stderr}`));
     });
   });
+}
+
+// Polls search_sessions until it returns a matched segment (proof the extraction
+// job has derived turns/segments from the stored raw event) or the deadline
+// passes. A search match is a stronger derivation signal than list_recent_sessions,
+// whose backing `sessions` row is written synchronously by ingest.
+async function pollForSearchMatch(baseUrl, workspaceId, query, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const intervalMs = options.intervalMs ?? 500;
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    const response = await postMcp(baseUrl, workspaceId, {
+      id: 3,
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { arguments: { limit: 5, query }, name: 'search_sessions' },
+    });
+    last = response;
+    const segmentId = response?.result?.structuredContent?.sessions?.[0]?.matches?.[0]?.segment?.id;
+    if (typeof segmentId === 'string' && segmentId !== '') {
+      return response;
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error(`timed out waiting for search_sessions to index "${query}": ${json(last)}`);
+}
+
+function sleep(ms) {
+  return new Promise((_resolve) => setTimeout(_resolve, ms));
 }
 
 async function postMcp(baseUrl, workspaceId, request) {

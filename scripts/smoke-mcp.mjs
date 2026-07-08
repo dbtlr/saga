@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const cliBin = join(repoRoot, 'apps/cli/bin/saga.js');
+const serviceEntry = join(repoRoot, 'apps/service/src/main.ts');
 const requireFromCli = createRequire(new URL('../apps/cli/package.json', import.meta.url));
 const postgresModule = await import(pathToFileURL(requireFromCli.resolve('postgres')).href);
 const postgres = postgresModule.default;
@@ -26,6 +28,7 @@ const databaseName = `saga_mcp_smoke_${Date.now().toString(36)}_${process.pid.to
 const adminSql = postgres(adminDatabaseUrl, { max: 1 });
 let workspacePath;
 let sagaHomePath;
+let serviceProcess;
 let failed = true;
 
 try {
@@ -51,6 +54,22 @@ try {
     cwd: workspacePath,
     env,
   });
+
+  // Boot the service against the seeded database on a free port (the config gate
+  // rejects port 0); main.ts prints the bound URL, which we parse before requests.
+  // Booted BEFORE the codex hook runs: the hook POSTs to SAGA_SERVICE_URL and
+  // silently no-ops under the {continue:true} contract when the service is down.
+  // `saga mcp` (the bridge exercised below) also resolves the service from
+  // SAGA_SERVICE_URL, so the same env carries it through both.
+  const port = await freePort();
+  const started = await startService({
+    ...env,
+    SAGA_SERVICE_HOST: '127.0.0.1',
+    SAGA_SERVICE_PORT: String(port),
+  });
+  serviceProcess = started.process;
+  const serviceEnv = { ...env, SAGA_SERVICE_URL: started.url };
+
   writeFileSync(
     join(workspacePath, '.codex', 'mcp-smoke-transcript.jsonl'),
     [
@@ -67,36 +86,36 @@ try {
   );
   run(join(workspacePath, '.codex', 'saga-codex-hook.sh'), [], {
     cwd: workspacePath,
-    env,
+    env: serviceEnv,
     input: JSON.stringify(codexHookPayload(workspacePath)),
   });
 
   const binding = JSON.parse(readFileSync(join(workspacePath, '.saga.local.json'), 'utf8'));
 
-  const responses = runMcpRequests(workspacePath, env, [
+  const toolListResponses = runMcpRequests(workspacePath, serviceEnv, [
     { id: 1, jsonrpc: '2.0', method: 'tools/list' },
+  ]);
+  assertToolList(toolListResponses.get(1));
+
+  // Ingest stores the raw event synchronously, but the extraction job derives
+  // turns/segments asynchronously — storeRawSessionRecord creates the `sessions`
+  // row up front, so list_recent_sessions is visible immediately and isn't a
+  // reliable derivation signal. search_sessions only matches once segments exist,
+  // so poll it until the transcript is indexed.
+  const searchResponse = await pollForSearchMatch(workspacePath, serviceEnv, 'dogfood capture');
+  const segmentId = assertSearchSessionsResponse(searchResponse);
+
+  const recentResponses = runMcpRequests(workspacePath, serviceEnv, [
     {
       id: 2,
       jsonrpc: '2.0',
       method: 'tools/call',
       params: { arguments: { limit: 5 }, name: 'list_recent_sessions' },
     },
-    {
-      id: 3,
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: {
-        arguments: { limit: 5, query: 'dogfood capture' },
-        name: 'search_sessions',
-      },
-    },
   ]);
+  assertRecentSessionsResponse(recentResponses.get(2));
 
-  assertToolList(responses.get(1));
-  assertRecentSessionsResponse(responses.get(2));
-  const segmentId = assertSearchSessionsResponse(responses.get(3));
-
-  const contextResponses = runMcpRequests(workspacePath, env, [
+  const contextResponses = runMcpRequests(workspacePath, serviceEnv, [
     {
       id: 4,
       jsonrpc: '2.0',
@@ -123,6 +142,9 @@ try {
   console.log(`tools: ${SESSION_TOOLS.join(', ')}`);
   failed = false;
 } finally {
+  if (serviceProcess !== undefined) {
+    serviceProcess.kill('SIGTERM');
+  }
   await adminSql.unsafe(`drop database if exists "${databaseName}" with (force)`);
   await adminSql.end({ timeout: 5 });
 
@@ -171,6 +193,89 @@ function codexHookPayload(projectRoot) {
     transcript_path: join(projectRoot, '.codex', 'mcp-smoke-transcript.jsonl'),
     turn_id: 'mcp-smoke-turn-1',
   };
+}
+
+// Ask the OS for an ephemeral port, then hand it to the service. A brief race
+// window exists between close and the service's bind, acceptable for a smoke.
+function freePort() {
+  return new Promise((_resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => _resolve(port));
+    });
+  });
+}
+
+// Boot apps/service/main.ts under bun with cwd at the seeded workspace (a git repo
+// with no .env), so its runtime config resolves the database strictly from the env
+// we pass. Resolves once the listening URL is printed; rejects on early exit.
+function startService(env) {
+  return new Promise((_resolve, reject) => {
+    const child = spawn('bun', [serviceEntry], {
+      cwd: workspacePath,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const deadline = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`service did not report a listening URL in time\n${stdout}\n${stderr}`));
+    }, 60_000);
+
+    const listeningPattern = /listening on (http:\/\/\S+)/u;
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      const match = listeningPattern.exec(stdout);
+      if (match !== null) {
+        clearTimeout(deadline);
+        _resolve({ process: child, url: match[1] });
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.once('exit', (code) => {
+      clearTimeout(deadline);
+      reject(new Error(`service exited early (code ${String(code)})\n${stdout}\n${stderr}`));
+    });
+  });
+}
+
+// Polls search_sessions (via the stdio bridge, one fresh `saga mcp` process per
+// attempt) until it returns a matched segment (proof the extraction job has
+// derived turns/segments from the stored raw event) or the deadline passes. A
+// search match is a stronger derivation signal than list_recent_sessions, whose
+// backing `sessions` row is written synchronously by ingest.
+async function pollForSearchMatch(cwd, env, query, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const intervalMs = options.intervalMs ?? 500;
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    const responses = runMcpRequests(cwd, env, [
+      {
+        id: 3,
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { arguments: { limit: 5, query }, name: 'search_sessions' },
+      },
+    ]);
+    const response = responses.get(3);
+    last = response;
+    const segmentId = response?.result?.structuredContent?.sessions?.[0]?.matches?.[0]?.segment?.id;
+    if (typeof segmentId === 'string' && segmentId !== '') {
+      return response;
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error(`timed out waiting for search_sessions to index "${query}": ${json(last)}`);
+}
+
+function sleep(ms) {
+  return new Promise((_resolve) => setTimeout(_resolve, ms));
 }
 
 function runMcpRequests(cwd, env, requests) {
