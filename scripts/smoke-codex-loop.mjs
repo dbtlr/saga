@@ -209,6 +209,12 @@ function startService(env) {
       clearTimeout(deadline);
       reject(new Error(`service exited early (code ${String(code)})\n${stdout}\n${stderr}`));
     });
+    // A spawn failure (e.g. bun not on PATH) is emitted as an 'error' event, not an
+    // exit; without this the promise never settles and the finally cleanup never runs.
+    child.once('error', (error) => {
+      clearTimeout(deadline);
+      reject(error);
+    });
   });
 }
 

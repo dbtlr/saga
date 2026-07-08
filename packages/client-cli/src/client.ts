@@ -24,6 +24,13 @@ export function resolveServiceUrl(options: ResolveApiClientOptions = {}): string
   return resolveServiceUrlFromConfig(loadClientConfig(options), options);
 }
 
+// The co-located service's default loopback bind (matches @saga/runtime's service
+// host/port defaults). On a combined install (topology-1) the service runs on the
+// same host, so when no URL is configured anywhere the client falls back to it rather
+// than failing — a fresh install works out of the box, and a remote client that must
+// point elsewhere still overrides via --service-url / SAGA_SERVICE_URL / config.
+const DEFAULT_LOCAL_SERVICE_URL = 'http://127.0.0.1:4766';
+
 // Resolve the URL from an already-loaded config, so callers that also need other
 // config fields load the file exactly once.
 function resolveServiceUrlFromConfig(
@@ -33,9 +40,7 @@ function resolveServiceUrlFromConfig(
   const env = options.env ?? process.env;
   const serviceUrl = options.serviceUrl ?? env.SAGA_SERVICE_URL ?? config.service?.url;
   if (serviceUrl === undefined || serviceUrl === '') {
-    throw new Error(
-      'no saga service URL configured: pass --service-url, set SAGA_SERVICE_URL, or run `saga init`',
-    );
+    return DEFAULT_LOCAL_SERVICE_URL;
   }
   return serviceUrl;
 }

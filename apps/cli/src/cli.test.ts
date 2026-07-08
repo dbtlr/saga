@@ -1,7 +1,9 @@
+import type { ClientCommandContext } from '@saga/client-cli';
 import { describe, expect, it } from 'vitest';
 
 import type { CommandHandlers } from './cli.js';
 import { COMMANDS, HELP_TEXT, parseArgs, run, validateCommand } from './cli.js';
+import type { McpBridgeDependencies } from './mcp.js';
 import { VERSION } from './version.js';
 
 function commandHandlers(overrides: Partial<CommandHandlers> = {}): CommandHandlers {
@@ -207,6 +209,43 @@ describe('run', () => {
       run(['recall', 'search', 'lexical', 'recall'], (text) => output.push(text), handlers),
     ).resolves.toBe(0);
     expect(output).toStrictEqual(['recall search,lexical,recall']);
+  });
+
+  it('threads --service-url/--auth-token into the client command context', async () => {
+    let captured: ClientCommandContext | undefined;
+    const handlers = commandHandlers({
+      recall: async (_args, _options, context) => {
+        captured = context;
+        return 'ok';
+      },
+    });
+
+    await expect(
+      run(
+        ['--service-url', 'http://svc:9999', '--auth-token', 'tok', 'recall', 'search', 'x'],
+        () => undefined,
+        handlers,
+      ),
+    ).resolves.toBe(0);
+    expect(captured?.apiClient).toStrictEqual({ authToken: 'tok', serviceUrl: 'http://svc:9999' });
+  });
+
+  it('threads the service connection into the mcp bridge deps', async () => {
+    let captured: McpBridgeDependencies | undefined;
+    const handlers = commandHandlers({
+      mcp: async (_args, _options, _write, dependencies) => {
+        captured = dependencies;
+        return undefined;
+      },
+    });
+
+    await expect(
+      run(['--service-url', 'http://svc:9999', 'mcp'], () => undefined, handlers),
+    ).resolves.toBe(0);
+    expect(captured?.service).toStrictEqual({
+      authToken: undefined,
+      serviceUrl: 'http://svc:9999',
+    });
   });
 
   it('does not pass trailing global format flags to sessions handlers', async () => {
