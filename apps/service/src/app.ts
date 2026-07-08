@@ -163,6 +163,9 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
     async (c) => {
       const database = requireDatabase();
       const body = await readJsonBody(c);
+      // Validate EVERY body field BEFORE resolving the embedding, so a request that
+      // is going to 400 never egresses the query text to the remote provider
+      // (ADR-0032) — matching the MCP path's workspace-first ordering.
       const query = requireString(body.query, 'query');
       const mode = optionalString(body.mode, 'mode');
       if (mode !== undefined && mode !== 'lexical') {
@@ -171,7 +174,21 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
         // service's installation policy, not requested by the client (SGA-253).
         throw new HttpError(400, 'bad_request', "mode must be 'lexical'");
       }
-      // A forced 'lexical' request skips resolution entirely (no egress); otherwise
+      const searchArguments = {
+        activityIntervalId: optionalString(body.activityIntervalId, 'activityIntervalId'),
+        limit: optionalPositiveInt(body.limit, 'limit'),
+        minTrigramScore: optionalScore(body.minTrigramScore, 'minTrigramScore'),
+        query,
+        rawSessionRecordId: optionalString(body.rawSessionRecordId, 'rawSessionRecordId'),
+        sessionId: optionalString(body.sessionId, 'sessionId'),
+        vectorCandidateLimit: optionalPositiveInt(
+          body.vectorCandidateLimit,
+          'vectorCandidateLimit',
+        ),
+        workspaceId: requireString(body.workspaceId, 'workspaceId'),
+      };
+      // Only now — after the whole request is known valid — resolve the embedding. A
+      // forced 'lexical' request skips resolution entirely (no egress); otherwise
       // resolve under installation policy. Only a `vector` posture carries the query
       // embedding into searchSessionRecall — the ungated embeddingProvider seam is
       // never used.
@@ -182,20 +199,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       const queryEmbedding =
         resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
       const result = await runRead(
-        searchSessionRecall(database, {
-          activityIntervalId: optionalString(body.activityIntervalId, 'activityIntervalId'),
-          limit: optionalPositiveInt(body.limit, 'limit'),
-          minTrigramScore: optionalScore(body.minTrigramScore, 'minTrigramScore'),
-          query,
-          queryEmbedding,
-          rawSessionRecordId: optionalString(body.rawSessionRecordId, 'rawSessionRecordId'),
-          sessionId: optionalString(body.sessionId, 'sessionId'),
-          vectorCandidateLimit: optionalPositiveInt(
-            body.vectorCandidateLimit,
-            'vectorCandidateLimit',
-          ),
-          workspaceId: requireString(body.workspaceId, 'workspaceId'),
-        }),
+        searchSessionRecall(database, { ...searchArguments, queryEmbedding }),
       );
       // Stamp the resolved posture onto the response (the db result carries none),
       // mirroring the CLI/MCP `search` field so the client can report the mode.
