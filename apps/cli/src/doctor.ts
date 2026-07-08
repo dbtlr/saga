@@ -17,7 +17,8 @@ import type {
 } from '@saga/runtime';
 
 import { isCompiledBinary, stableBinPath } from './binary.js';
-import { staleHarnessReferences } from './harness.js';
+import { inspectHarnesses, staleHarnessReferences } from './harness.js';
+import type { HarnessIntegrationState } from './harness.js';
 import { formatCommandOutput } from './output.js';
 import { recordBlock } from './render.js';
 import type { RenderOptions } from './render.js';
@@ -55,13 +56,21 @@ export async function doctorProject(
   const cwd = input.cwd ?? context.cwd ?? process.cwd();
   const projectRoot = findProjectRoot(cwd);
 
-  // The client-role checks: environment (node/bun), workspace binding, service
-  // reachability + migrations + extraction (over /v1/info), and filesystem harness
-  // state. None open Postgres.
-  const checks = await clientDoctorProject(context, { cwd });
+  // The client-role checks (environment, workspace binding, service reachability +
+  // migrations + extraction over /v1/info) run concurrently with the launchd process
+  // probe — they are independent, so a slow/unreachable service doesn't serialize
+  // both timeouts. None open Postgres.
+  const [clientChecks, service] = await Promise.all([
+    clientDoctorProject(context, { cwd }),
+    inspectService(),
+  ]);
 
-  // Host-ops additions a combined install owns locally.
-  const service = await inspectService();
+  // The combined-install doctor owns the RICHER harness diagnostic: the client doctor's
+  // harness rows only test hook-file existence, so drop them and use the filesystem
+  // divergence/staleness/mcp-drift check (no db) that flags a broken integration.
+  const checks = clientChecks.filter((check) => !check.label.startsWith('harness'));
+
+  checks.push(...checkHarnesses(projectRoot));
   checks.push({
     detail: `${service.process}; ${service.health}`,
     label: 'service process',
@@ -75,6 +84,59 @@ export async function doctorProject(
   }
 
   return checks;
+}
+
+// The FILESYSTEM harness integration state (no db, no activation evidence): flags a
+// harness whose hook shim or `.mcp.json` entry has drifted (divergent/invalid/stale)
+// as a failure, and a missing/divergent MCP entry as a warning — the diagnostic that
+// surfaces silently-broken capture. Activation evidence (a db read) is deferred to the
+// service (the client doctor notes it); this keeps the host-ops divergence signal.
+function checkHarnesses(projectRoot: string): DoctorCheck[] {
+  let statuses;
+  try {
+    statuses = inspectHarnesses({ cwd: projectRoot });
+  } catch (error) {
+    return [
+      {
+        detail: `skipped because harness state could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        label: 'harness',
+        status: 'fail',
+      },
+    ];
+  }
+  return statuses.flatMap((harness) => {
+    const checks: DoctorCheck[] = [
+      {
+        detail:
+          harness.nextStep === undefined
+            ? `${harness.state}; ${harness.stateDetail}`
+            : `${harness.state}; ${harness.stateDetail}; next step: ${harness.nextStep}`,
+        label: `harness:${harness.target}`,
+        status: harnessDoctorStatus(harness.state),
+      },
+    ];
+    if (
+      harness.binding === 'installed' &&
+      (harness.mcp === 'missing' || harness.mcp === 'divergent')
+    ) {
+      checks.push({
+        detail: `${harness.mcp}; ${harness.mcpDetail}`,
+        label: `harness:${harness.target}:mcp`,
+        status: 'warn',
+      });
+    }
+    return checks;
+  });
+}
+
+function harnessDoctorStatus(state: HarnessIntegrationState): DoctorStatus {
+  if (state === 'configured') {
+    return 'ok';
+  }
+  if (state === 'divergent' || state === 'invalid' || state === 'stale') {
+    return 'fail';
+  }
+  return 'warn';
 }
 
 /**

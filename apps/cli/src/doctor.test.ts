@@ -68,6 +68,9 @@ describe('doctorProject (dual-role: client checks + host-ops)', () => {
     // Host-ops additions this dual-role doctor layers on.
     expect(labels).toContain('service process');
     expect(labels).toContain('embeddings');
+    // The richer filesystem harness diagnostic (integration state + mcp drift), not the
+    // client doctor's existence-only check, so a divergent harness can be flagged.
+    expect(labels.some((label) => label.startsWith('harness:'))).toBe(true);
 
     // The service reachability reports the fake service as healthy.
     expect(checks).toContainEqual(expect.objectContaining({ label: 'service', status: 'ok' }));

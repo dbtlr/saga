@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -172,6 +172,64 @@ describe('runMcpCommand bridge', () => {
 
     expect(calls).toHaveLength(0);
     expect(JSON.parse(output[0] ?? '{}')).toMatchObject({ error: { code: -32600 }, id: null });
+  });
+
+  it('the real forwarder answers with a JSON-RPC error (never crashes) when the service is unreachable', async () => {
+    const projectRoot = boundProject('11111111-1111-1111-1111-111111111111');
+    created.push(projectRoot);
+    const output: string[] = [];
+
+    // No injected forward: the REAL forwarder is built and resolves lazily. Point it at
+    // a dead port so the fetch fails fast; runMcpCommand must NOT throw (the old eager
+    // resolution crashed the process with a non-JSON-RPC stdout line) — it answers the
+    // request with a JSON-RPC error frame.
+    await expect(
+      runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+        cwd: projectRoot,
+        service: { env: {}, serviceUrl: 'http://127.0.0.1:1' },
+        stdin: chunks(`${JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'tools/list' })}\n`),
+      }),
+    ).resolves.toBeUndefined();
+    const parsed = JSON.parse(output[0] ?? '{}') as JsonRpcResponse;
+    expect(parsed.id).toBe(1);
+    expect(parsed.error?.code).toBe(-32000);
+  });
+
+  it('never emits a response frame for a notification, even on transport failure', async () => {
+    const projectRoot = boundProject('11111111-1111-1111-1111-111111111111');
+    created.push(projectRoot);
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      cwd: projectRoot,
+      forward: THROWING_FORWARDER,
+      // A notification (no id) whose forward throws must produce NO output.
+      stdin: chunks(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`),
+    });
+
+    expect(output).toHaveLength(0);
+  });
+
+  it('reports a corrupt binding as a local error, not a service failure', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-mcp-badbind-'));
+    created.push(projectRoot);
+    // A malformed .saga.local.json so readBindingFile throws.
+    writeFileSync(join(projectRoot, '.saga.local.json'), '{ not json');
+    const { calls, forward } = recordingForwarder();
+    const output: string[] = [];
+
+    await runMcpCommand([], RENDER_OPTIONS, (text) => output.push(text), {
+      cwd: projectRoot,
+      forward,
+      stdin: chunks(`${JSON.stringify({ id: 3, jsonrpc: '2.0', method: 'tools/call' })}\n`),
+    });
+
+    // The request never reached the service (local failure), and the message blames the
+    // binding, not the transport.
+    expect(calls).toHaveLength(0);
+    const parsed = JSON.parse(output[0] ?? '{}') as JsonRpcResponse;
+    expect(parsed.id).toBe(3);
+    expect(parsed.error?.message).toContain('workspace binding');
   });
 
   it('maps a transport failure onto a JSON-RPC error for the request id', async () => {
