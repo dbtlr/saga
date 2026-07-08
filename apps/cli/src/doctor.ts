@@ -6,15 +6,26 @@
 // the launchd service process state, the local embedding posture, and the ADR-0044
 // convergence guide. No client-role path here opens Postgres.
 
+import { join } from 'node:path';
+
 import { doctorProject as clientDoctorProject } from '@saga/client-cli';
 import type { ClientCommandContext, DoctorCheck, DoctorStatus } from '@saga/client-cli';
 import type { MigrationStatus } from '@saga/db';
-import { findProjectRoot, inspectEmbeddingWorkflow } from '@saga/runtime';
+import {
+  DATABASE_URL_ENV,
+  findProjectRoot,
+  inspectEmbeddingWorkflow,
+  installationConfigLocation,
+  loadRuntimeConfig,
+} from '@saga/runtime';
 import type {
   EmbeddingCredentialResolutionOptions,
   EmbeddingPolicyResolutionOptions,
   EmbeddingWorkflowBoundary,
+  LoadRuntimeConfigOptions,
+  RuntimeConfig,
 } from '@saga/runtime';
+import { Effect } from 'effect';
 
 import { isCompiledBinary, stableBinPath } from './binary.js';
 import { inspectHarnesses, staleHarnessReferences } from './harness.js';
@@ -51,6 +62,7 @@ export async function doctorProject(
     cwd?: string;
     embeddingAuth?: EmbeddingCredentialResolutionOptions;
     embeddingPolicy?: EmbeddingPolicyResolutionOptions;
+    runtimeConfig?: Omit<LoadRuntimeConfigOptions, 'cwd'>;
   } = {},
 ): Promise<DoctorCheck[]> {
   const cwd = input.cwd ?? context.cwd ?? process.cwd();
@@ -58,11 +70,12 @@ export async function doctorProject(
 
   // The client-role checks (environment, workspace binding, service reachability +
   // migrations + extraction over /v1/info) run concurrently with the launchd process
-  // probe — they are independent, so a slow/unreachable service doesn't serialize
-  // both timeouts. None open Postgres.
-  const [clientChecks, service] = await Promise.all([
+  // probe and the local DATABASE_URL config-source resolution — they are independent,
+  // so a slow/unreachable service doesn't serialize their timeouts. None open Postgres.
+  const [clientChecks, service, databaseConfig] = await Promise.all([
     clientDoctorProject(context, { cwd }),
     inspectService(),
+    checkDatabaseConfig(projectRoot, input.runtimeConfig ?? {}),
   ]);
 
   // The combined-install doctor owns the RICHER harness diagnostic: the client doctor's
@@ -71,6 +84,10 @@ export async function doctorProject(
   const checks = clientChecks.filter((check) => !check.label.startsWith('harness'));
 
   checks.push(...checkHarnesses(projectRoot));
+  // A HOST-OPS check: where the co-located service's DATABASE_URL resolves from
+  // (ADR-0044/0038 precedence). It reads config only — it never opens a connection, so
+  // no client-role Postgres access is introduced.
+  checks.push(databaseConfig);
   checks.push({
     detail: `${service.process}; ${service.health}`,
     label: 'service process',
@@ -137,6 +154,59 @@ function harnessDoctorStatus(state: HarnessIntegrationState): DoctorStatus {
     return 'fail';
   }
   return 'warn';
+}
+
+// Report where DATABASE_URL resolves from (ADR-0044/0038 precedence), for the
+// co-located service. loadRuntimeConfig reads env/config files only — it opens NO
+// Postgres connection — so this stays a host-ops config check, not client-role db access.
+async function checkDatabaseConfig(
+  projectRoot: string,
+  runtimeConfig: Omit<LoadRuntimeConfigOptions, 'cwd'>,
+): Promise<DoctorCheck> {
+  let config: RuntimeConfig;
+  try {
+    config = await Effect.runPromise(loadRuntimeConfig({ ...runtimeConfig, cwd: projectRoot }));
+  } catch (error) {
+    return {
+      detail: error instanceof Error ? error.message : String(error),
+      label: 'database config',
+      status: 'fail',
+    };
+  }
+
+  if (config.databaseUrlSource === 'missing') {
+    const installationConfig = installationConfigLocation({
+      env: runtimeConfig.env ?? process.env,
+      ...(runtimeConfig.homeDir === undefined ? {} : { homeDir: runtimeConfig.homeDir }),
+    });
+    const guidance = `${DATABASE_URL_ENV} is not configured; set it in the environment, in ${join(projectRoot, '.env.local')}, or as database.url in ${installationConfig.displayPath}`;
+    return {
+      detail:
+        config.installationConfigIssue === undefined
+          ? guidance
+          : `${guidance}; ${config.installationConfigIssue}`,
+      label: 'database config',
+      status: 'fail',
+    };
+  }
+
+  const sourceDetail: Record<Exclude<RuntimeConfig['databaseUrlSource'], 'missing'>, string> = {
+    environment: `${DATABASE_URL_ENV} from environment`,
+    'installation-config': `${DATABASE_URL_ENV} from installation config`,
+    'project-env-file': `${DATABASE_URL_ENV} from project env file`,
+  };
+  if (config.installationConfigIssue !== undefined) {
+    return {
+      detail: `${sourceDetail[config.databaseUrlSource]}; ${config.installationConfigIssue}`,
+      label: 'database config',
+      status: 'warn',
+    };
+  }
+  return {
+    detail: sourceDetail[config.databaseUrlSource],
+    label: 'database config',
+    status: 'ok',
+  };
 }
 
 /**
