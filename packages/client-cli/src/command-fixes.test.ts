@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLocalOptions } from './command-args.js';
 import { doctorProject } from './doctor.js';
 import { ingestClaudeHook, ingestCodexHook } from './ingest.js';
+import { runRecallCommand } from './recall.js';
 
 const RECORDS_OPTIONS = {
   ascii: true,
@@ -32,6 +33,31 @@ describe('ingest hook parse failure honors the harness contract', () => {
     const parsed = JSON.parse(output) as { continue: boolean; systemMessage?: string };
     expect(parsed.continue).toBe(true);
     expect(parsed.systemMessage).toContain('Saga Codex capture skipped:');
+  });
+});
+
+// Regression: the recall command now renders the service-supplied posture
+// (result.search). A response missing that field — an older/skewed service — must
+// degrade to a lexical render, not crash dereferencing an undefined posture.
+describe('recall search tolerates a response without a posture (version skew)', () => {
+  it('renders lexical instead of throwing when the service omits `search`', async () => {
+    const recallResult = {
+      intervals: [],
+      matchCount: 0,
+      query: 'q',
+      searchedAt: '2026-06-21T14:00:00.000Z',
+      sessions: [],
+      workspaceId: 'ws-1',
+      // no `search` field — a pre-SGA-253 service or a skewed deployment
+    };
+    const partialClient = { recall: async () => recallResult } as unknown as SagaApiClient;
+
+    const output = await runRecallCommand(['search', 'q'], RECORDS_OPTIONS, {
+      client: partialClient,
+      workspaceId: 'ws-1',
+    });
+
+    expect(output).toContain('lexical');
   });
 });
 

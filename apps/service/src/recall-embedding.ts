@@ -18,6 +18,7 @@ import type {
   EmbeddingPolicyResolutionOptions,
 } from '@saga/runtime';
 
+import { truncate } from './mcp-presentation.js';
 import type { RecallSearchPosture } from './mcp-presentation.js';
 
 // The resolved query embedding plus the posture the service stamps onto the recall
@@ -27,17 +28,6 @@ export type ResolvedRecallEmbedding = {
   posture: RecallSearchPosture;
   queryEmbedding?: RecallQueryEmbedding | undefined;
 };
-
-// Posture when embedding resolution is deliberately skipped because an injected
-// searchRecall seam is in use without an injected resolver (a dependency-injection
-// path only; never a real search). Mirrors the CLI sentinel of the same name.
-export const RECALL_EMBEDDING_NOT_ATTEMPTED: ResolvedRecallEmbedding = Object.freeze({
-  posture: Object.freeze({
-    detail: 'embedding resolution not attempted',
-    mode: 'lexical',
-    reason: 'not-attempted',
-  }),
-});
 
 // Posture when a request explicitly asks for lexical recall (the API `mode:'lexical'`
 // force, the wire equivalent of the CLI's `--no-embeddings`). No egress is attempted.
@@ -129,11 +119,4 @@ export async function resolveServiceRecallEmbedding(
       },
     };
   }
-}
-
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }

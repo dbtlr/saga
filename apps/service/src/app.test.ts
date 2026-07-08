@@ -205,3 +205,57 @@ describe('createSagaApp Host allowlist (DNS-rebinding guard)', () => {
     }
   });
 });
+
+describe('createSagaApp recall egress ordering (SGA-253)', () => {
+  it('does not resolve (egress) the query embedding when workspaceId is missing', async () => {
+    let resolverCalls = 0;
+    const app = makeApp({
+      getDatabase: () => stubDatabase,
+      resolveRecallEmbedding: async () => {
+        resolverCalls += 1;
+        return { posture: { mode: 'lexical' } };
+      },
+    });
+
+    const response = await app.request('/v1/recall', {
+      body: JSON.stringify({ query: 'sensitive query text' }), // no workspaceId
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).error.message).toContain('workspaceId');
+    // ADR-0032: a request that is going to 400 must never egress the query text to
+    // the embedding provider. Validation precedes resolution.
+    expect(resolverCalls).toBe(0);
+  });
+
+  it('sanitizes a resolver throw on the MCP search path (no raw message leak)', async () => {
+    const app = makeApp({
+      getDatabase: () => stubDatabase,
+      resolveRecallEmbedding: async () => {
+        throw new Error('leaky /Users/drew/.saga/config.json parse failure');
+      },
+    });
+    const workspaceId = '00000000-0000-0000-0000-000000000001';
+
+    const response = await app.request(`/mcp?workspaceId=${workspaceId}`, {
+      body: JSON.stringify({
+        id: 1,
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { arguments: { query: 'q' }, name: 'search_sessions' },
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { error?: { code: number; message: string } };
+    // The resolver throw is sanitized like every other failure on this handler:
+    // a static -32000 message, never the raw error text (which carries a fs path).
+    expect(body.error?.code).toBe(-32000);
+    expect(body.error?.message).toBe('internal error');
+    expect(body.error?.message).not.toContain('/Users/');
+  });
+});

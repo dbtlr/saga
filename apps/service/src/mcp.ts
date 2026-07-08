@@ -90,8 +90,11 @@ async function searchServiceSessions(
   // Query embedding resolution is gated by installation policy (ADR-0032): the query
   // text never reaches a remote provider unless remote embeddings are enabled. Only a
   // `vector` posture carries the embedding through; never pass the ungated
-  // RecallSearchInput.embeddingProvider seam here.
-  const resolved = await dependencies.resolveRecallEmbedding(input.query);
+  // RecallSearchInput.embeddingProvider seam here. A throw from the resolver is
+  // sanitized like every db failure on this handler (runMcpRead): logged server-side
+  // and collapsed to a static message, so no raw error text (e.g. a config path)
+  // reaches the MCP client via the @saga/mcp core's verbatim -32000 message.
+  const resolved = await resolveRecallEmbeddingSafely(dependencies, input.query);
   const queryEmbedding = resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
   const searchInput: RecallSearchInput = {
     activityIntervalId: input.activityIntervalId,
@@ -150,6 +153,20 @@ function requireWorkspace(workspaceId: string | undefined): string {
     throw new Error('workspaceId query parameter must be a valid UUID');
   }
   return workspaceId;
+}
+
+// Resolve the query embedding, sanitizing any throw the way runMcpRead sanitizes a
+// db defect: log the real cause server-side, surface a static message. The @saga/mcp
+// core copies a thrown error's `.message` verbatim into its -32000 response, so an
+// unsanitized resolver throw (e.g. an unexpected fs/config fault) would leak raw text
+// to the client; this keeps the failure shape identical to every other on this path.
+async function resolveRecallEmbeddingSafely(dependencies: ServiceMcpDependencies, query: string) {
+  try {
+    return await dependencies.resolveRecallEmbedding(query);
+  } catch (cause) {
+    console.error(cause);
+    throw new Error('internal error', { cause });
+  }
 }
 
 // The defect-hardened runner the MCP handlers use, mirroring the /v1 routes'

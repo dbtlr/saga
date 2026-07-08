@@ -114,8 +114,10 @@ async function searchRecallCommand(
 
   const result = await resolveClient(context).recall(request);
   // The service reports the mode it actually ran (vector/lexical/degraded) on the
-  // response; render and echo that rather than assuming a fixed stance.
-  const posture = result.search;
+  // response; render and echo that rather than assuming a fixed stance. Fall back to
+  // a bare lexical posture if the field is absent — a client may out-run its service
+  // across a version skew, and a missing posture must not crash the whole command.
+  const posture: RecallSearchPosture = result.search ?? { mode: 'lexical' };
 
   return formatCommandOutput(
     {
@@ -123,7 +125,7 @@ async function searchRecallCommand(
         .flatMap((group) => group.matches.map((match) => match.segment.id))
         .join('\n'),
       records: renderRecallSearch(result, posture, options),
-      value: result,
+      value: { ...result, search: posture },
     },
     options.format,
   );

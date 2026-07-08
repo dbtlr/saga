@@ -373,7 +373,7 @@ function stripSearchMarkup(value: string): string {
   return value.replaceAll(/<\/?b>/g, '');
 }
 
-function truncate(value: string, maxLength: number): string {
+export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }
