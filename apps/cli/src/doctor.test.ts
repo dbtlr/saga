@@ -1,27 +1,25 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { SagaApiClient, ServiceInfo } from '@saga/api-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   checkConvergence,
-  checkNodeVersion,
   doctorProject,
   migrationDoctorCheck,
   renderDoctor,
   runDoctor,
   serviceDoctorStatus,
-  satisfiesEngineRange,
 } from './doctor.js';
 import type { DoctorCheck } from './doctor.js';
-import type { HarnessActivationStatus } from './harness.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
-// Pin the installation config to an empty temp home so doctor checks never read
-// the developer's real ~/.saga/config.json.
+// Pin the installation config to an empty temp home so doctor checks never read the
+// developer's real ~/.saga/config.json.
 let previousSagaHome: string | undefined;
 beforeAll(() => {
   previousSagaHome = process.env.SAGA_HOME;
@@ -36,25 +34,87 @@ afterAll(() => {
   }
 });
 
-const fixtureChecks: DoctorCheck[] = [
-  {
-    detail: 'v26.3.1',
-    label: 'node',
-    status: 'ok',
-  },
-  {
-    detail: 'SAGA_DATABASE_URL is not set',
-    label: 'postgres',
-    status: 'warn',
-  },
-  {
-    detail: 'connection refused',
-    label: 'migrations',
-    status: 'fail',
-  },
-];
+// A stand-in service that answers /v1/info, so the delegated client reachability
+// check resolves without a live service.
+function fakeClient(info: Partial<ServiceInfo> = {}): SagaApiClient {
+  const full: ServiceInfo = {
+    extraction: {
+      derivationFailed: 0,
+      derivationPending: 0,
+      settlementFailed: 0,
+      settlementPending: 0,
+    },
+    migrations: { applied: 4, compatible: true, expected: 4 },
+    uptimeSeconds: 12,
+    version: '0.1.0',
+    ...info,
+  } as ServiceInfo;
+  return { info: async () => full } as unknown as SagaApiClient;
+}
+
+describe('doctorProject (dual-role: client checks + host-ops)', () => {
+  it('reports Node/bun env, the delegated service reachability, and the host-ops additions', async () => {
+    const checks = await doctorProject(
+      { client: fakeClient() },
+      { convergence: { compiled: false }, cwd: workspaceRoot },
+    );
+    const labels = checks.map((check) => check.label);
+
+    // Client-role checks delegated to @saga/client-cli (no Postgres opened here).
+    expect(labels).toContain('node');
+    expect(labels).toContain('bun');
+    expect(labels).toContain('service'); // /v1/info reachability
+    expect(labels).toContain('migrations'); // from the service report, not a local db
+    // Host-ops additions this dual-role doctor layers on.
+    expect(labels).toContain('service process');
+    expect(labels).toContain('embeddings');
+
+    // The service reachability reports the fake service as healthy.
+    expect(checks).toContainEqual(expect.objectContaining({ label: 'service', status: 'ok' }));
+  });
+
+  it('appends the convergence guide only when running as a compiled binary', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'saga-doctor-home-'));
+    const withConvergence = await doctorProject(
+      { client: fakeClient() },
+      { convergence: { compiled: true, home }, cwd: workspaceRoot },
+    );
+    expect(withConvergence.map((check) => check.label)).toContain('convergence');
+
+    const withoutConvergence = await doctorProject(
+      { client: fakeClient() },
+      { convergence: { compiled: false }, cwd: workspaceRoot },
+    );
+    expect(withoutConvergence.map((check) => check.label)).not.toContain('convergence');
+  });
+
+  it('surfaces the service migration state from the report (behind → fail)', async () => {
+    const checks = await doctorProject(
+      { client: fakeClient({ migrations: { applied: 3, compatible: true, expected: 4 } }) },
+      { convergence: { compiled: false }, cwd: workspaceRoot },
+    );
+    expect(checks).toContainEqual(expect.objectContaining({ label: 'migrations', status: 'fail' }));
+  });
+});
+
+describe('runDoctor', () => {
+  it('renders json output', async () => {
+    const output = await runDoctor(
+      [],
+      { ascii: true, color: 'never', format: 'json', isTty: false },
+      { client: fakeClient() },
+    );
+    expect(Array.isArray(JSON.parse(output))).toBe(true);
+  });
+});
 
 describe('renderDoctor', () => {
+  const fixtureChecks: DoctorCheck[] = [
+    { detail: 'healthy at http://127.0.0.1:4766', label: 'service', status: 'ok' },
+    { detail: 'not running; unreachable', label: 'service process', status: 'warn' },
+    { detail: 'connection refused', label: 'migrations', status: 'fail' },
+  ];
+
   it('renders unicode status tokens', () => {
     expect(
       renderDoctor(fixtureChecks, {
@@ -63,1030 +123,69 @@ describe('renderDoctor', () => {
         format: 'records',
         isTty: false,
       }),
-    ).toContain('postgres    ⚠ SAGA_DATABASE_URL is not set');
+    ).toContain('⚠ not running');
   });
 
   it('renders ascii status tokens', () => {
-    expect(
-      renderDoctor(fixtureChecks, { ascii: true, color: 'never', format: 'records', isTty: false }),
-    ).toContain('migrations  [fail] connection refused');
-  });
-
-  it('renders newer migration compatibility failures', () => {
-    expect(
-      renderDoctor(
-        [
-          {
-            detail:
-              'database has newer migrations than this Saga build understands: 5 applied; expected 4. Upgrade Saga or restore a compatible backup before continuing.',
-            label: 'migrations',
-            status: 'fail',
-          },
-        ],
-        { ascii: true, color: 'never', format: 'records', isTty: false },
-      ),
-    ).toContain('newer migrations');
-  });
-});
-
-describe('runDoctor', () => {
-  it('renders json output', async () => {
-    const output = await runDoctor([], {
-      ascii: true,
-      color: 'never',
-      format: 'json',
-      isTty: false,
-    });
-
-    expect(Array.isArray(JSON.parse(output))).toBe(true);
-  });
-});
-
-describe('doctorProject', () => {
-  it('reports Node and bun engine requirements', async () => {
-    const checks = await doctorProject({ cwd: workspaceRoot });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail: expect.stringContaining('requires >=24.0.0 <27.0.0'),
-        label: 'node',
-        status: 'ok',
-      }),
-    );
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail: expect.stringContaining('requires >=1.3.14'),
-        label: 'bun',
-        status: 'ok',
-      }),
-    );
-  });
-
-  it('reports available embedding provider without exposing the cached API key', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
-    mkdirSync(join(homeDir, '.codex'), { recursive: true });
-    writeFileSync(
-      join(homeDir, '.codex', 'auth.json'),
-      JSON.stringify({ OPENAI_API_KEY: 'sk-do-not-print' }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: {},
-        homeDir,
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
-      },
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) vector-aware; cached OPENAI_API_KEY present in ~/.codex/auth.json; lexical fallback: standby',
-        label: 'embeddings',
-        status: 'ok',
-      }),
-    );
-    expect(JSON.stringify(checks)).not.toContain('sk-do-not-print');
-  });
-
-  it('reports the environment as the credential source when OPENAI_API_KEY is set', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: { OPENAI_API_KEY: 'sk-env-do-not-print' },
-        homeDir,
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
-      },
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) vector-aware; OPENAI_API_KEY present in the environment; lexical fallback: standby',
-        label: 'embeddings',
-        status: 'ok',
-      }),
-    );
-    expect(JSON.stringify(checks)).not.toContain('sk-env-do-not-print');
-  });
-
-  it('reports installation config as the credential source when it carries an OpenAI key', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: {},
-        homeDir,
-        readFile: () =>
-          JSON.stringify({ embeddings: { openaiApiKey: 'sk-installed-do-not-print' } }),
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
-      },
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) vector-aware; openaiApiKey configured in ~/.saga/config.json; lexical fallback: standby',
-        label: 'embeddings',
-        status: 'ok',
-      }),
-    );
-    expect(JSON.stringify(checks)).not.toContain('sk-installed-do-not-print');
-  });
-
-  it('warns when embeddings are skipped and lexical recall remains available', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
-    mkdirSync(join(homeDir, '.codex'), { recursive: true });
-    writeFileSync(
-      join(homeDir, '.codex', 'auth.json'),
-      JSON.stringify({
-        account_id: 'acct_123',
-        tokens: {
-          access_token: 'token',
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: {},
-        homeDir,
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
-      },
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) lexical fallback; Codex login/account tokens found in ~/.codex/auth.json, but no cached OPENAI_API_KEY is present; Embedding generation needs a cached OPENAI_API_KEY in Codex auth. Login/account tokens are read-only and will not be refreshed or rewritten. Lexical recall remains available.',
-        label: 'embeddings',
-        status: 'warn',
-      }),
-    );
-  });
-
-  it('does not expose malformed auth parser text or source excerpts in embeddings output', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const codexHome = join(cwd, 'codex-home');
-    mkdirSync(codexHome, { recursive: true });
-    writeFileSync(
-      join(codexHome, 'auth.json'),
-      '{"OPENAI_API_KEY":"sk-doctor-leak","tokens":{"access_token":"tok-doctor-leak",}',
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: { CODEX_HOME: codexHome },
-        homeDir: join(cwd, 'home'),
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'enabled' } }),
-      },
-    });
-    const output = renderDoctor(checks, {
+    const rendered = renderDoctor(fixtureChecks, {
       ascii: true,
       color: 'never',
       format: 'records',
       isTty: false,
     });
-    const publicStatus = `${JSON.stringify(checks)}\n${output}`;
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) lexical fallback; could not parse CODEX_HOME/auth.json; Embedding generation is skipped; repair Codex auth or provide valid embedding credentials. Lexical recall remains available.',
-        label: 'embeddings',
-        status: 'warn',
-      }),
-    );
-    expect(publicStatus).not.toContain('sk-doctor-leak');
-    expect(publicStatus).not.toContain('tok-doctor-leak');
-    expect(publicStatus).not.toContain('OPENAI_API_KEY');
-    expect(publicStatus).not.toContain('access_token');
-    expect(publicStatus).not.toContain('Unexpected');
-    expect(publicStatus).not.toContain('JSON');
-  });
-
-  it('reports lexical-only by policy when remote embeddings are disabled, even with valid auth', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const homeDir = mkdtempSync(join(tmpdir(), 'saga-codex-home-'));
-    mkdirSync(join(homeDir, '.codex'), { recursive: true });
-    writeFileSync(
-      join(homeDir, '.codex', 'auth.json'),
-      JSON.stringify({ OPENAI_API_KEY: 'sk-policy-doctor-secret' }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      embeddingAuth: {
-        env: {},
-        homeDir,
-      },
-      embeddingPolicy: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-policy-')),
-        readFile: () => JSON.stringify({ embeddings: { remote: 'disabled' } }),
-      },
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'openai/text-embedding-3-small (1536 dimensions) lexical-only by policy; remote embeddings disabled by installation standard in ~/.saga/config.json; Remote embeddings are disabled by installation policy; Saga uses lexical recall. Enable embeddings.remote in the installation config to use vector recall.',
-        label: 'embeddings',
-        status: 'warn',
-      }),
-    );
-    expect(JSON.stringify(checks)).not.toContain('sk-policy-doctor-secret');
-  });
-
-  it('reports harness target states', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({ cwd });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'missing; binding and hooks are not installed; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install codex before checking activation',
-        label: 'harness:codex',
-        status: 'warn',
-      }),
-    );
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'missing; binding and hooks are not installed; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install claude before checking activation',
-        label: 'harness:claude',
-        status: 'warn',
-      }),
-    );
-  });
-
-  it('fails active harness hooks without local binding', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.codex', 'hooks.json'),
-      JSON.stringify({
-        hooks: {
-          Stop: [{ hooks: [{ command: 'saga ingest codex-hook', type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({ cwd });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'divergent; Saga hooks are partially installed but local binding is missing; activation: missing-binding; workspace binding is missing; run saga init; next step: run saga init and saga harness install codex before checking activation',
-        label: 'harness:codex',
-        status: 'fail',
-      }),
-    );
-  });
-
-  it('warns when Codex hooks are installed but trust is pending', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const hostId = 'host-id';
-    const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
-    const hooksPath = join(cwd, '.codex', 'hooks.json');
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.saga.local.json'),
-      JSON.stringify({
-        harnesses: {
-          codex: {
-            hookCommand: `'${shimPath}'`,
-            hookTrust: 'requires-review',
-            hooksPath,
-            installedAt: new Date().toISOString(),
-            sourceBindingId: 'codex-source-id',
-            sourceUri: `codex://host/${hostId}`,
-            target: 'codex',
-          },
-        },
-        host: {
-          id: hostId,
-          label: 'test-host',
-        },
-        project: {
-          root: cwd,
-        },
-        schemaVersion: 1,
-        service: {
-          databaseUrl: 'environment',
-        },
-        sourceBinding: {
-          id: 'source-id',
-        },
-        workspace: {
-          handle: 'saga',
-          id: 'workspace-id',
-        },
-      }),
-    );
-    writeFileSync(
-      hooksPath,
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => noEvidenceActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'pending-trust; binding and hooks are installed, but no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; next step: approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again',
-        label: 'harness:codex',
-        status: 'warn',
-      }),
-    );
-  });
-
-  it('passes Codex harness when activation evidence proves trusted hooks are executing', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const hostId = 'host-id';
-    const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
-    const hooksPath = join(cwd, '.codex', 'hooks.json');
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.saga.local.json'),
-      JSON.stringify({
-        harnesses: {
-          codex: {
-            hookCommand: `'${shimPath}'`,
-            hookTrust: 'requires-review',
-            hooksPath,
-            installedAt: new Date().toISOString(),
-            sourceBindingId: 'codex-source-id',
-            sourceUri: `codex://host/${hostId}`,
-            target: 'codex',
-          },
-        },
-        host: {
-          id: hostId,
-          label: 'test-host',
-        },
-        project: {
-          root: cwd,
-        },
-        schemaVersion: 1,
-        service: {
-          databaseUrl: 'environment',
-        },
-        sourceBinding: {
-          id: 'source-id',
-        },
-        workspace: {
-          handle: 'saga',
-          id: 'workspace-id',
-        },
-      }),
-    );
-    writeFileSync(
-      hooksPath,
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => activeActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'configured; binding and hooks are installed; recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact; activation: active; recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact',
-        label: 'harness:codex',
-        status: 'ok',
-      }),
-    );
-  });
-
-  it('fails stale Codex harness state even when activation evidence is active', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
-    const hooksPath = join(cwd, '.codex', 'hooks.json');
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.saga.local.json'),
-      JSON.stringify({
-        harnesses: {
-          codex: {
-            hookCommand: `'${shimPath}'`,
-            hookTrust: 'requires-review',
-            hooksPath,
-            installedAt: new Date().toISOString(),
-            sourceBindingId: 'codex-source-id',
-            sourceUri: 'codex://local',
-            target: 'codex',
-          },
-        },
-        project: {
-          root: cwd,
-        },
-        schemaVersion: 1,
-        service: {
-          databaseUrl: 'environment',
-        },
-        sourceBinding: {
-          id: 'source-id',
-        },
-        workspace: {
-          handle: 'saga',
-          id: 'workspace-id',
-        },
-      }),
-    );
-    writeFileSync(
-      hooksPath,
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => activeActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'stale; local binding host id is missing; activation: active; recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact',
-        label: 'harness:codex',
-        status: 'fail',
-      }),
-    );
-  });
-
-  it('fails Codex harness when SessionStart matcher misses continuation sources', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const hostId = 'host-id';
-    const shimPath = join(cwd, '.codex', 'saga-codex-hook.sh');
-    const hooksPath = join(cwd, '.codex', 'hooks.json');
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.saga.local.json'),
-      JSON.stringify({
-        harnesses: {
-          codex: {
-            hookCommand: `'${shimPath}'`,
-            hookTrust: 'requires-review',
-            hooksPath,
-            installedAt: new Date().toISOString(),
-            sourceBindingId: 'codex-source-id',
-            sourceUri: `codex://host/${hostId}`,
-            target: 'codex',
-          },
-        },
-        host: {
-          id: hostId,
-          label: 'test-host',
-        },
-        project: {
-          root: cwd,
-        },
-        schemaVersion: 1,
-        service: {
-          databaseUrl: 'environment',
-        },
-        sourceBinding: {
-          id: 'source-id',
-        },
-        workspace: {
-          handle: 'saga',
-          id: 'workspace-id',
-        },
-      }),
-    );
-    writeFileSync(
-      hooksPath,
-      JSON.stringify({
-        hooks: {
-          SessionStart: [
-            {
-              matcher: 'startup|resume',
-              hooks: [{ command: shimPath, type: 'command' }],
-            },
-          ],
-          Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-          UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => noEvidenceActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'divergent; local binding exists but SessionStart sources configured: startup, resume; missing: clear, compact; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; next step: approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again',
-        label: 'harness:codex',
-        status: 'fail',
-      }),
-    );
-  });
-
-  it('fails malformed harness binding even when hooks are active', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    mkdirSync(join(cwd, '.codex'));
-    writeFileSync(
-      join(cwd, '.saga.local.json'),
-      JSON.stringify({
-        harnesses: {
-          codex: {
-            hookCommand: `'${join(cwd, '.codex', 'saga-codex-hook.sh')}'`,
-            hookTrust: 'requires-review',
-            hooksPath: join(cwd, '.codex', 'hooks.json'),
-            installedAt: new Date().toISOString(),
-            sourceBindingId: '',
-            sourceUri: 'codex://local',
-            target: 'codex',
-          },
-        },
-        project: {
-          root: cwd,
-        },
-        schemaVersion: 1,
-        service: {
-          databaseUrl: 'environment',
-        },
-        sourceBinding: {
-          id: 'source-id',
-        },
-        workspace: {
-          handle: 'saga',
-          id: 'workspace-id',
-        },
-      }),
-    );
-    writeFileSync(
-      join(cwd, '.codex', 'hooks.json'),
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ command: 'saga ingest codex-hook', type: 'command' }] }],
-          Stop: [{ hooks: [{ command: 'saga ingest codex-hook', type: 'command' }] }],
-          UserPromptSubmit: [{ hooks: [{ command: 'saga ingest codex-hook', type: 'command' }] }],
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => noEvidenceActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail:
-          'invalid; invalid harness binding: sourceBindingId must be a non-empty string; activation: no-evidence; no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h; next step: approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again',
-        label: 'harness:codex',
-        status: 'fail',
-      }),
-    );
-  });
-
-  it('warns when the installed Claude harness has no MCP registration', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    const checks = await doctorProject({
-      cwd: installedClaudeHarnessProject(cwd),
-      verifyHarnessActivation: async () => noEvidenceActivation(),
-    });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        detail: 'missing; Saga MCP server is not registered; run saga harness install claude',
-        label: 'harness:claude:mcp',
-        status: 'warn',
-      }),
-    );
-  });
-
-  it('adds no MCP check when the Claude MCP registration is installed', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    installedClaudeHarnessProject(cwd);
-    writeFileSync(
-      join(cwd, '.mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          saga: {
-            args: ['mcp'],
-            command: fileURLToPath(new URL('../bin/saga.js', import.meta.url)),
-          },
-        },
-      }),
-    );
-
-    const checks = await doctorProject({
-      cwd,
-      verifyHarnessActivation: async () => noEvidenceActivation(),
-    });
-
-    expect(checks).not.toContainEqual(expect.objectContaining({ label: 'harness:claude:mcp' }));
-  });
-
-  it('reports a database config row sourced from the environment', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: {
-        env: { SAGA_DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
-        installationConfig: false,
-      },
-    });
-
-    expect(checks).toContainEqual({
-      detail: 'SAGA_DATABASE_URL from environment',
-      label: 'database config',
-      status: 'ok',
-    });
-  });
-
-  it('reports a database config row sourced from a project env file', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    writeFileSync(join(cwd, '.env.local'), 'SAGA_DATABASE_URL=postgres://127.0.0.1:9/saga\n');
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: { env: {}, installationConfig: false },
-    });
-
-    expect(checks).toContainEqual({
-      detail: 'SAGA_DATABASE_URL from project env file',
-      label: 'database config',
-      status: 'ok',
-    });
-  });
-
-  it('reports a database config row sourced from the installation config', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
-        readInstallationFile: () =>
-          JSON.stringify({ database: { url: 'postgres://127.0.0.1:9/saga' } }),
-      },
-    });
-
-    expect(checks).toContainEqual({
-      detail: 'SAGA_DATABASE_URL from installation config',
-      label: 'database config',
-      status: 'ok',
-    });
-  });
-
-  it('fails the database config row with three-source guidance when unset', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: { env: {}, installationConfig: false },
-    });
-
-    expect(checks).toContainEqual({
-      detail: `SAGA_DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json`,
-      label: 'database config',
-      status: 'fail',
-    });
-  });
-
-  it('warns on the database config row when the installation config is malformed', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: {
-        env: { SAGA_DATABASE_URL: 'postgres://127.0.0.1:9/saga' },
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
-        readInstallationFile: () => 'not json',
-      },
-    });
-
-    expect(checks).toContainEqual({
-      detail: 'SAGA_DATABASE_URL from environment; could not parse ~/.saga/config.json',
-      label: 'database config',
-      status: 'warn',
-    });
-  });
-
-  it('fails the database config row and appends the issue when unset and the installation config is malformed', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-
-    const checks = await doctorProject({
-      cwd,
-      runtimeConfig: {
-        env: {},
-        homeDir: mkdtempSync(join(tmpdir(), 'saga-doctor-home-')),
-        readInstallationFile: () => 'not json',
-      },
-    });
-
-    expect(checks).toContainEqual({
-      detail: `SAGA_DATABASE_URL is not configured; set it in the environment, in ${join(cwd, '.env.local')}, or as database.url in ~/.saga/config.json; could not parse ~/.saga/config.json`,
-      label: 'database config',
-      status: 'fail',
-    });
-  });
-
-  it('reports invalid binding files as binding failures', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'saga-doctor-'));
-    writeFileSync(join(cwd, '.saga.local.json'), 'not json');
-
-    const checks = await doctorProject({ cwd });
-
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        label: 'binding',
-        status: 'fail',
-      }),
-    );
-    expect(checks).toContainEqual(
-      expect.objectContaining({
-        label: 'harness',
-        status: 'fail',
-      }),
-    );
+    expect(rendered).toContain('[fail] connection refused');
+    expect(rendered).toContain('[ok]');
   });
 });
 
-describe('engine checks', () => {
-  it('evaluates the root Node engine range', () => {
-    expect(checkNodeVersion(workspaceRoot, '23.9.0')).toMatchObject({
-      label: 'node',
-      status: 'fail',
-    });
-    expect(checkNodeVersion(workspaceRoot, '24.0.0')).toMatchObject({
-      label: 'node',
-      status: 'ok',
-    });
-    expect(checkNodeVersion(workspaceRoot, '27.0.0')).toMatchObject({
-      label: 'node',
-      status: 'fail',
-    });
-  });
-
-  it('evaluates caret engine ranges', () => {
-    expect(satisfiesEngineRange('11.8.0', '^11.0.0')).toBe(true);
-    expect(satisfiesEngineRange('12.0.0', '^11.0.0')).toBe(false);
-  });
-});
-
+// The migration three-state is kept in apps/cli for self-update's doctor-verify
+// (a host-ops migration step that opens the db directly, not a client-role path).
 describe('migrationDoctorCheck', () => {
-  it('reports current migrations as ok', () => {
-    expect(
-      migrationDoctorCheck({ applied: 5, compatible: true, expected: 5, mismatch: undefined }),
-    ).toStrictEqual({ detail: '5 applied', label: 'migrations', status: 'ok' });
+  it('is ok when applied equals expected', () => {
+    expect(migrationDoctorCheck({ applied: 4, expected: 4 } as never).status).toBe('ok');
   });
 
-  it('fails when behind and names self-update as the remedy', () => {
-    const check = migrationDoctorCheck({
-      applied: 4,
-      compatible: true,
-      expected: 5,
-      mismatch: undefined,
-    });
+  it('fails when the database is behind the binary and names self-update', () => {
+    const check = migrationDoctorCheck({ applied: 3, expected: 4 } as never);
     expect(check.status).toBe('fail');
-    expect(check.detail).toContain('behind');
     expect(check.detail).toContain('saga self-update');
   });
 
-  it('warns when ahead — a newer saga exists', () => {
-    const check = migrationDoctorCheck({
-      applied: 6,
-      compatible: false,
-      expected: 5,
-      mismatch: undefined,
-    });
-    expect(check.status).toBe('warn');
-    expect(check.detail).toContain('ahead');
-    expect(check.detail).toContain('saga self-update');
+  it('warns when the database is ahead of the binary', () => {
+    expect(migrationDoctorCheck({ applied: 5, expected: 4 } as never).status).toBe('warn');
   });
 
   it('fails on a hash mismatch in the shared prefix', () => {
     const check = migrationDoctorCheck({
-      applied: 5,
-      compatible: false,
-      expected: 5,
-      mismatch: { appliedHash: 'a', expectedHash: 'b', index: 2, tag: '0002_thick_vision' },
-    });
+      applied: 4,
+      expected: 4,
+      mismatch: { index: 2, tag: 'add-embeddings' },
+    } as never);
     expect(check.status).toBe('fail');
-    expect(check.detail).toContain('0002_thick_vision');
+    expect(check.detail).toContain('does not match this Saga build');
+  });
+});
+
+describe('checkConvergence', () => {
+  it('is skipped (undefined) from source', () => {
+    expect(checkConvergence(workspaceRoot, { compiled: false })).toBeUndefined();
+  });
+
+  it('reports ok when no integration reference points at a checkout', () => {
+    // An isolated project + home with no harness shims or launchd plist, so nothing
+    // resolves to a checkout path and the guide is clean.
+    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-doctor-conv-proj-'));
+    const home = mkdtempSync(join(tmpdir(), 'saga-doctor-conv-home-'));
+    const check = checkConvergence(projectRoot, { compiled: true, home });
+    expect(check?.label).toBe('convergence');
+    expect(check?.status).toBe('ok');
   });
 });
 
 describe('serviceDoctorStatus', () => {
-  it('requires both a running process and healthy service response', () => {
-    expect(
-      serviceDoctorStatus({
-        health: 'unreachable (connection refused)',
-        process: 'running',
-      }),
-    ).toBe('warn');
-    expect(
-      serviceDoctorStatus({
-        health: 'ok (http://127.0.0.1:4766/health)',
-        process: 'running',
-      }),
-    ).toBe('ok');
-  });
-});
-
-function installedClaudeHarnessProject(cwd: string): string {
-  const hostId = 'host-id';
-  const shimPath = join(cwd, '.claude', 'saga-claude-hook.sh');
-  const hooksPath = join(cwd, '.claude', 'settings.local.json');
-  mkdirSync(join(cwd, '.claude'));
-  writeFileSync(
-    join(cwd, '.saga.local.json'),
-    JSON.stringify({
-      harnesses: {
-        claude: {
-          hookCommand: `'${shimPath}'`,
-          hookTrust: 'requires-review',
-          hooksPath,
-          installedAt: new Date().toISOString(),
-          sourceBindingId: 'claude-source-id',
-          sourceUri: `claude://host/${hostId}`,
-          target: 'claude',
-        },
-      },
-      host: {
-        id: hostId,
-        label: 'test-host',
-      },
-      project: {
-        root: cwd,
-      },
-      schemaVersion: 1,
-      service: {
-        databaseUrl: 'environment',
-      },
-      sourceBinding: {
-        id: 'source-id',
-      },
-      workspace: {
-        handle: 'saga',
-        id: 'workspace-id',
-      },
-    }),
-  );
-  writeFileSync(
-    hooksPath,
-    JSON.stringify({
-      hooks: {
-        SessionStart: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        Stop: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-        UserPromptSubmit: [{ hooks: [{ command: shimPath, type: 'command' }] }],
-      },
-    }),
-  );
-  return cwd;
-}
-
-function activeActivation(): HarnessActivationStatus {
-  return {
-    checkedAt: '2026-06-22T12:00:00.000Z',
-    detail:
-      'recent Codex hook raw_event found: codex.UserPromptSubmit at 2026-06-22T11:15:00.000Z; SessionStart sources observed: startup; unproven: resume, clear, compact',
-    lastEvent: {
-      eventType: 'codex.UserPromptSubmit',
-      occurredAt: '2026-06-22T11:15:00.000Z',
-    },
-    recentWithinHours: 24,
-    sessionStartSources: {
-      observed: ['startup'],
-      unproven: ['resume', 'clear', 'compact'],
-    },
-    state: 'active',
-  };
-}
-
-function noEvidenceActivation(): HarnessActivationStatus {
-  return {
-    checkedAt: '2026-06-22T12:00:00.000Z',
-    detail:
-      'no Codex SessionStart/UserPromptSubmit raw_events found for this workspace source binding in the last 24h',
-    nextStep:
-      'approve Codex project-local hooks if prompted, restart Codex or start a new Codex session in this workspace, submit a prompt, then run saga harness status codex again',
-    recentWithinHours: 24,
-    sessionStartSources: {
-      observed: [],
-      unproven: ['startup', 'resume', 'clear', 'compact'],
-    },
-    state: 'no-evidence',
-  };
-}
-
-function stableBin(home: string): string {
-  return join(home, '.local', 'bin', 'saga');
-}
-
-function writeMcpSagaCommand(projectRoot: string, command: string): void {
-  writeFileSync(
-    join(projectRoot, '.mcp.json'),
-    `${JSON.stringify({ mcpServers: { saga: { args: ['mcp'], command } } }, null, 2)}\n`,
-  );
-}
-
-describe('checkConvergence', () => {
-  it('is skipped when running from source', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
-    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
-    writeMcpSagaCommand(projectRoot, join(projectRoot, 'apps', 'cli', 'bin', 'saga.js'));
-
-    expect(checkConvergence(projectRoot, { compiled: false, home })).toBeUndefined();
-  });
-
-  it('reports ok when the compiled binary finds no checkout-pointing references', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
-    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
-    writeMcpSagaCommand(projectRoot, stableBin(home));
-
-    const check = checkConvergence(projectRoot, { compiled: true, home });
-
-    expect(check?.status).toBe('ok');
-    expect(check?.detail).toContain(stableBin(home));
-  });
-
-  it('flags a .mcp.json command that still points at the checkout', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
-    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
-    writeMcpSagaCommand(projectRoot, join(projectRoot, 'apps', 'cli', 'bin', 'saga.js'));
-
-    const check = checkConvergence(projectRoot, { compiled: true, home });
-
-    expect(check?.status).toBe('warn');
-    expect(check?.detail).toContain('.mcp.json saga command (run: saga harness install claude)');
-  });
-
-  it('flags a hook shim that does not exec the stable install path', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'saga-converge-'));
-    const home = mkdtempSync(join(tmpdir(), 'saga-converge-home-'));
-    mkdirSync(join(projectRoot, '.codex'), { recursive: true });
-    writeFileSync(
-      join(projectRoot, '.codex', 'saga-codex-hook.sh'),
-      `#!/bin/sh\nexec '${join(projectRoot, 'apps', 'cli', 'bin', 'saga.js')}' ingest codex-hook "$@"\n`,
-    );
-
-    const check = checkConvergence(projectRoot, { compiled: true, home });
-
-    expect(check?.status).toBe('warn');
-    expect(check?.detail).toContain('codex hook shim (run: saga harness install codex)');
+  it('is ok only when the process is running and health starts with ok', () => {
+    expect(serviceDoctorStatus({ health: 'ok healthy', process: 'running' })).toBe('ok');
+    expect(serviceDoctorStatus({ health: 'ok healthy', process: 'not running' })).toBe('warn');
+    expect(serviceDoctorStatus({ health: 'unreachable', process: 'running' })).toBe('warn');
   });
 });

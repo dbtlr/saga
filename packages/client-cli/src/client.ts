@@ -40,11 +40,25 @@ function resolveServiceUrlFromConfig(
   return serviceUrl;
 }
 
-export function resolveApiClient(options: ResolveApiClientOptions = {}): SagaApiClient {
+// The resolved service connection — base URL plus optional auth token — using the
+// same precedence as resolveApiClient. Exposed so callers that speak to the service
+// over a transport SagaApiClient does not model (e.g. the CLI's stdio→HTTP MCP
+// bridge POSTing to /mcp) can reach it without reconstructing the resolution rules.
+export type ServiceConnection = {
+  authToken: string | undefined;
+  baseUrl: string;
+};
+
+export function resolveServiceConnection(options: ResolveApiClientOptions = {}): ServiceConnection {
   const env = options.env ?? process.env;
   const config = loadClientConfig(options);
-  const serviceUrl = resolveServiceUrlFromConfig(config, options);
-  const authToken = options.authToken ?? env.SAGA_AUTH_TOKEN ?? config.authToken;
+  return {
+    authToken: options.authToken ?? env.SAGA_AUTH_TOKEN ?? config.authToken,
+    baseUrl: resolveServiceUrlFromConfig(config, options),
+  };
+}
 
-  return new SagaApiClient({ authToken, baseUrl: serviceUrl });
+export function resolveApiClient(options: ResolveApiClientOptions = {}): SagaApiClient {
+  const { authToken, baseUrl } = resolveServiceConnection(options);
+  return new SagaApiClient({ authToken, baseUrl });
 }
