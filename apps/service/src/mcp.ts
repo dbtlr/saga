@@ -5,9 +5,9 @@
 // same presentation pipeline (compaction + agent-facing redaction + markdown).
 // The stdio server resolves the workspace from the on-disk project binding; the
 // service is not project-bound, so the workspace id arrives out-of-band on the
-// POST /mcp request (a query parameter) and is closed over here. Recall is
-// LEXICAL-ONLY for now: vector query egress is deferred, so the posture is the
-// fixed SERVICE_LEXICAL_POSTURE rather than the CLI's env/policy-resolved stance.
+// POST /mcp request (a query parameter) and is closed over here. Recall resolves a
+// query embedding under installation policy (SGA-253): vector when embeddings are
+// enabled, lexical/degraded otherwise, with a real posture matching the stdio server.
 // The parity test (mcp.postgres.test.ts) pins this output to the stdio server's.
 
 import {
@@ -33,11 +33,17 @@ import {
   renderRecentSessionsMarkdown,
   renderSessionContextMarkdown,
   renderSessionSearchMarkdown,
-  SERVICE_LEXICAL_POSTURE,
 } from './mcp-presentation.js';
+import type { RecallEmbeddingResolver } from './recall-embedding.js';
 
 export type ServiceMcpDependencies = {
   database: DatabaseService;
+  // Resolves the query embedding for search_sessions under installation policy
+  // (SGA-253). Injected so the running service supplies the real policy-gated
+  // resolver and tests supply a deterministic one; a search never resolves an
+  // embedding until the workspace scope is validated, so a doomed request causes
+  // no query egress (matching the CLI ordering).
+  resolveRecallEmbedding: RecallEmbeddingResolver;
   // Scopes every tool call to a workspace; supplied out-of-band on the POST /mcp
   // request (a query parameter) since the service is not project-bound. Left
   // undefined for the transport-only methods (initialize / tools/list) that never
@@ -78,26 +84,31 @@ async function searchServiceSessions(
   dependencies: ServiceMcpDependencies,
   input: SearchSessionsInput,
 ) {
+  // Validate the workspace scope BEFORE resolving an embedding so a request that is
+  // going to fail cannot cause query egress, matching the CLI ordering.
   const workspaceId = requireWorkspace(dependencies.workspaceId);
-  // LEXICAL-ONLY: never resolve or pass a query embedding here — vector recall
-  // egress is a later slice. The posture is the fixed lexical stance, mirrored in
-  // both the markdown and the structured `search` field the CLI stamps.
-  const posture = SERVICE_LEXICAL_POSTURE;
+  // Query embedding resolution is gated by installation policy (ADR-0032): the query
+  // text never reaches a remote provider unless remote embeddings are enabled. Only a
+  // `vector` posture carries the embedding through; never pass the ungated
+  // RecallSearchInput.embeddingProvider seam here.
+  const resolved = await dependencies.resolveRecallEmbedding(input.query);
+  const queryEmbedding = resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
   const searchInput: RecallSearchInput = {
     activityIntervalId: input.activityIntervalId,
     limit: input.limit,
     minTrigramScore: input.minTrigramScore,
     query: input.query,
+    queryEmbedding,
     rawSessionRecordId: input.rawSessionRecordId,
     sessionId: input.sessionId,
     workspaceId,
   };
   const recall = await runMcpRead(() => searchSessionRecall(dependencies.database, searchInput));
   return {
-    markdown: renderSessionSearchMarkdown(recall, posture),
+    markdown: renderSessionSearchMarkdown(recall, resolved.posture),
     recall: redactMcpStructuredOutput({
       ...compactRecallSearchResult(recall),
-      search: posture,
+      search: resolved.posture,
     }),
   };
 }

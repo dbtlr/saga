@@ -13,6 +13,7 @@ import type {
   RecallContextExpansion as WireRecallContextExpansion,
   RecallExpandedSegment as WireRecallExpandedSegment,
   RecallExpandedTurn as WireRecallExpandedTurn,
+  RecallSearchPosture as WireRecallSearchPosture,
   RecallSearchResult as WireRecallSearchResult,
   RecentSessionRecord as WireRecentSessionRecord,
   SessionDetail as WireSessionDetail,
@@ -31,6 +32,8 @@ import type {
   RecentSessionRecord as DbRecentSessionRecord,
   SessionDetail as DbSessionDetail,
 } from '@saga/db';
+
+import type { RecallSearchPosture as ServiceRecallSearchPosture } from './mcp-presentation.js';
 
 // Map a db read shape onto its JSON-serialized form: Date -> string, recursing
 // through arrays and objects, leaving every other type as-is. Mirrors what
@@ -67,6 +70,12 @@ type _contextParity = Expect<WireMatchesDb<WireRecallContextExpansion, DbRecallC
 type _sessionDetailParity = Expect<WireMatchesDb<WireSessionDetail, DbSessionDetail>>;
 type _recentSessionParity = Expect<WireMatchesDb<WireRecentSessionRecord, DbRecentSessionRecord>>;
 type _recallResultParity = Expect<WireMatchesDb<WireRecallSearchResult, DbRecallSearchResult>>;
+
+// The recall posture is stamped by the service (not a @saga/db read shape), so it is
+// pinned directly against the service's own posture type rather than through the
+// db-parity guard: the /v1/recall response's `search` field and the service's
+// mcp-presentation posture must stay the same shape (SGA-253).
+type _recallPostureParity = Expect<Equal<WireRecallSearchPosture, ServiceRecallSearchPosture>>;
 
 // RawEvent is exact everywhere except trustLevel, which the wire type
 // deliberately narrows from the db column's bare `string` to the TrustLevel

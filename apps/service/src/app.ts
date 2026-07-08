@@ -27,6 +27,8 @@ import { bodyLimit } from 'hono/body-limit';
 
 import type { JobStatus } from './jobs/job-runner.js';
 import { createServiceMcpServer } from './mcp.js';
+import { RECALL_EMBEDDING_DISABLED_BY_FLAG } from './recall-embedding.js';
+import type { RecallEmbeddingResolver } from './recall-embedding.js';
 
 export type HealthJobStatus = Omit<JobStatus, 'lastRunAt'> & { lastRunAt: string | null };
 
@@ -42,6 +44,10 @@ export type SagaAppDependencies = {
   // A /v1 request that arrives before it is ready gets a clean 503.
   getDatabase: () => DatabaseService | undefined;
   jobStatus: () => HealthJobStatus[];
+  // Resolves a recall query embedding under installation policy (SGA-253, ADR-0032),
+  // shared by /v1/recall and the /mcp search tool. Injected so the running service
+  // supplies the real policy-gated resolver and tests supply a deterministic one.
+  resolveRecallEmbedding: RecallEmbeddingResolver;
   startedAt: number;
   version: string;
 };
@@ -160,16 +166,28 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       const query = requireString(body.query, 'query');
       const mode = optionalString(body.mode, 'mode');
       if (mode !== undefined && mode !== 'lexical') {
-        // Vector recall needs a query-embedding egress that arrives in a later
-        // slice; only the lexical path crosses this boundary today.
+        // The only explicit request mode is 'lexical' (force lexical, suppress any
+        // query-embedding egress). Vector-vs-lexical is otherwise decided by the
+        // service's installation policy, not requested by the client (SGA-253).
         throw new HttpError(400, 'bad_request', "mode must be 'lexical'");
       }
+      // A forced 'lexical' request skips resolution entirely (no egress); otherwise
+      // resolve under installation policy. Only a `vector` posture carries the query
+      // embedding into searchSessionRecall — the ungated embeddingProvider seam is
+      // never used.
+      const resolved =
+        mode === 'lexical'
+          ? RECALL_EMBEDDING_DISABLED_BY_FLAG
+          : await dependencies.resolveRecallEmbedding(query);
+      const queryEmbedding =
+        resolved.posture.mode === 'vector' ? resolved.queryEmbedding : undefined;
       const result = await runRead(
         searchSessionRecall(database, {
           activityIntervalId: optionalString(body.activityIntervalId, 'activityIntervalId'),
           limit: optionalPositiveInt(body.limit, 'limit'),
           minTrigramScore: optionalScore(body.minTrigramScore, 'minTrigramScore'),
           query,
+          queryEmbedding,
           rawSessionRecordId: optionalString(body.rawSessionRecordId, 'rawSessionRecordId'),
           sessionId: optionalString(body.sessionId, 'sessionId'),
           vectorCandidateLimit: optionalPositiveInt(
@@ -179,7 +197,9 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
           workspaceId: requireString(body.workspaceId, 'workspaceId'),
         }),
       );
-      return c.json(redactAgentFacingSessionValue(result));
+      // Stamp the resolved posture onto the response (the db result carries none),
+      // mirroring the CLI/MCP `search` field so the client can report the mode.
+      return c.json(redactAgentFacingSessionValue({ ...result, search: resolved.posture }));
     },
   );
 
@@ -252,6 +272,7 @@ export function createSagaApp(dependencies: SagaAppDependencies): Hono {
       }
       const server = createServiceMcpServer({
         database,
+        resolveRecallEmbedding: dependencies.resolveRecallEmbedding,
         workspaceId: c.req.query('workspaceId'),
       });
       const response = await server.handle(parsed.request);

@@ -205,10 +205,11 @@ export type SessionDetail = {
 
 // --- POST /v1/recall ---
 
-// Only the lexical recall path is reachable in this slice: vector recall needs a
-// query-embedding egress that arrives with the extraction job (a later slice), so
-// no embedding provider crosses this boundary yet. `mode` is accepted for wire
-// forward-compatibility but must be 'lexical' until then.
+// The request `mode`. Omit it for the default (vector recall when the service's
+// installation policy enables remote embeddings, lexical otherwise); pass 'lexical'
+// to force lexical and suppress any query-embedding egress (the wire equivalent of
+// the CLI's `--no-embeddings`). There is no explicit 'vector' request mode: the
+// service decides vector-vs-lexical from policy (SGA-253, ADR-0032).
 export type RecallMode = 'lexical';
 
 export type RecallRequest = {
@@ -278,6 +279,29 @@ export type RecallSearchResult = {
   searchedAt: string;
   sessions: RecallSearchSessionGroup[];
   workspaceId: string;
+};
+
+// The effective recall stance the service resolved for a request: `vector` when a
+// query embedding was generated and the pgvector path ran, `lexical` when embeddings
+// were off (by policy or a forced `mode:'lexical'`), `degraded` when embeddings were
+// enabled but a credential/provider failure fell back to lexical. This is the wire
+// mirror of the service's own posture type; the two are pinned equal by the service's
+// wire-parity guard. Kept a bare union (not the db read shape) — posture is stamped
+// by the service, not returned by @saga/db, so it sits outside the db-parity pin.
+export type RecallSearchMode = 'vector' | 'lexical' | 'degraded';
+
+export type RecallSearchPosture = {
+  mode: RecallSearchMode;
+  // present when mode !== 'vector'
+  reason?: string;
+  detail?: string;
+};
+
+// The POST /v1/recall response: the recall result plus the posture the service
+// stamped onto it (the db result carries no posture, so it rides as an envelope
+// field rather than widening RecallSearchResult and breaking its db-parity pin).
+export type RecallResponse = RecallSearchResult & {
+  search: RecallSearchPosture;
 };
 
 // --- GET /v1/sessions/:id/context ---

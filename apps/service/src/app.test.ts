@@ -11,6 +11,9 @@ function makeApp(overrides: Partial<SagaAppDependencies> = {}) {
   return createSagaApp({
     getDatabase: () => undefined,
     jobStatus: () => [],
+    // A lexical stub: these unit tests never reach a real recall, but the dependency
+    // is required, and a resolver that performs no egress keeps them hermetic.
+    resolveRecallEmbedding: async () => ({ posture: { mode: 'lexical', reason: 'test-stub' } }),
     startedAt: Date.now(),
     version: '9.9.9',
     ...overrides,

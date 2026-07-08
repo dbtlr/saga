@@ -15,6 +15,8 @@ import { extractionJobFactory } from './jobs/extraction.js';
 import { heartbeatJobFactory } from './jobs/heartbeat.js';
 import { startJobRunner } from './jobs/job-runner.js';
 import type { JobFactory, JobRunnerHandle, JobRunRecorder, JobStatus } from './jobs/job-runner.js';
+import { resolveServiceRecallEmbedding } from './recall-embedding.js';
+import type { RecallEmbeddingResolver } from './recall-embedding.js';
 import { VERSION } from './version.js';
 
 export { describeError as describeReadinessCause } from './errors.js';
@@ -44,6 +46,10 @@ export type SagaServiceDependencies = {
   // Resolved post-listen, once the shared pool exists, so a job can reach it.
   jobs?: readonly JobFactory[] | undefined;
   recordRun?: JobRunRecorder | undefined;
+  // Recall query-embedding resolver (SGA-253). Defaults to the real policy-gated
+  // resolver; tests inject a deterministic one to exercise the vector path without
+  // remote egress and independent of ambient credentials.
+  resolveRecallEmbedding?: RecallEmbeddingResolver | undefined;
   validateDatabase?: ((config: RuntimeConfig) => Promise<void>) | undefined;
 };
 
@@ -67,6 +73,8 @@ export async function startSagaService(
   const app = createSagaApp({
     getDatabase: () => apiDatabase,
     jobStatus: () => (runner === undefined ? [] : runner.status().map(toHealthJobStatus)),
+    resolveRecallEmbedding:
+      dependencies.resolveRecallEmbedding ?? ((query) => resolveServiceRecallEmbedding(query)),
     startedAt,
     version: VERSION,
   });

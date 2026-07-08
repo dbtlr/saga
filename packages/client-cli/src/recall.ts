@@ -5,6 +5,7 @@ import type {
   RecallExpandedTurn,
   RecallExpansionWarning,
   RecallRequest,
+  RecallSearchPosture,
   RecallSearchResult,
   RecallSegmentMatch,
 } from '@saga/api-client';
@@ -30,10 +31,10 @@ import { formatCommandOutput } from './output.js';
 import { recordBlock, separator } from './render.js';
 import type { RenderOptions } from './render.js';
 
-// Vector flags (`--vector-candidates`, `--no-embeddings`) are accepted so help
-// and usage match the original recall command, but the client is LEXICAL-ONLY:
-// vector query egress is deferred (SGA-253), so mode is forced to 'lexical' and
-// these flags never change behavior.
+// The service resolves vector-vs-lexical from installation policy (SGA-253), so
+// the client forwards intent rather than deciding: `--no-embeddings` forces
+// `mode:'lexical'`, `--vector-candidates` bounds the vector candidate set, and the
+// default lets the service choose. The effective mode comes back on the response.
 const SEARCH_FLAGS_WITH_VALUES = new Set([
   'activity',
   'activity-interval',
@@ -53,20 +54,6 @@ const SEARCH_FLAGS_WITH_VALUES = new Set([
 const SEARCH_BOOLEAN_FLAGS = new Set(['no-embeddings']);
 const SHOW_FLAGS_WITH_VALUES = new Set(['after', 'before', 'window', 'workspace', 'workspace-id']);
 const SHOW_BOOLEAN_FLAGS = new Set<string>();
-
-export type RecallSearchPosture = {
-  detail?: string;
-  mode: 'lexical';
-  reason?: string;
-};
-
-// The client recall surface is lexical-only; the posture is a fixed stance rather
-// than an env/policy-resolved one (the vector path arrives with SGA-253).
-export const CLIENT_LEXICAL_POSTURE: RecallSearchPosture = {
-  detail: 'vector recall query egress is deferred to a later slice',
-  mode: 'lexical',
-  reason: 'client-lexical-only',
-};
 
 export async function runRecallCommand(
   args: readonly string[],
@@ -107,8 +94,9 @@ async function searchRecallCommand(
     ]),
     limit: parsePositiveIntegerFlag(parsed.flags.limit, 'limit'),
     minTrigramScore: parseScoreFlag(parsed.flags['min-trigram'], 'min-trigram'),
-    // Forced lexical: the client never sends a query embedding (SGA-253).
-    mode: 'lexical',
+    // `--no-embeddings` forces lexical (suppressing query-embedding egress); otherwise
+    // the mode is left unset so the service resolves vector-vs-lexical from policy.
+    ...(parsed.booleans.has('no-embeddings') ? { mode: 'lexical' as const } : {}),
     query,
     rawSessionRecordId: firstFlag(parsed.flags, [
       'raw-session-record-id',
@@ -117,17 +105,17 @@ async function searchRecallCommand(
       'raw',
     ]),
     sessionId: firstFlag(parsed.flags, ['session-id', 'session']),
-    // --vector-candidates is still validated for parity (below) but never
-    // forwarded: mode is pinned 'lexical', so a vectorCandidateLimit would be
-    // dead weight the service ignores.
+    vectorCandidateLimit: parsePositiveIntegerFlag(
+      parsed.flags['vector-candidates'],
+      'vector-candidates',
+    ),
     workspaceId,
   };
-  // Validate the accepted-but-dead vector flags so bad input still errors like
-  // the original surface, without forwarding a value the lexical path ignores.
-  parsePositiveIntegerFlag(parsed.flags['vector-candidates'], 'vector-candidates');
 
   const result = await resolveClient(context).recall(request);
-  const posture = CLIENT_LEXICAL_POSTURE;
+  // The service reports the mode it actually ran (vector/lexical/degraded) on the
+  // response; render and echo that rather than assuming a fixed stance.
+  const posture = result.search;
 
   return formatCommandOutput(
     {
@@ -135,7 +123,7 @@ async function searchRecallCommand(
         .flatMap((group) => group.matches.map((match) => match.segment.id))
         .join('\n'),
       records: renderRecallSearch(result, posture, options),
-      value: { ...result, search: posture },
+      value: result,
     },
     options.format,
   );
